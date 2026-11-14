@@ -54,12 +54,23 @@ unsafe fn gnome_animations() -> Option<bool> {
         let get = gio.get::<unsafe extern "C" fn(Ptr, *const c_char) -> i32>(b"g_settings_get_boolean\0").ok()?;
         let schema_unref = gio.get::<unsafe extern "C" fn(Ptr)>(b"g_settings_schema_unref\0").ok()?;
         let unref = gio.get::<unsafe extern "C" fn(Ptr)>(b"g_object_unref\0").ok()?;
+        let bus_get = gio.get::<unsafe extern "C" fn(i32, Ptr, *mut Ptr) -> Ptr>(b"g_bus_get_sync\0").ok()?;
+        let exit_on_close = gio.get::<unsafe extern "C" fn(Ptr, i32)>(b"g_dbus_connection_set_exit_on_close\0").ok()?;
         let source = default();
         if source.is_null() { return None; }
         let schema = lookup(source, c"org.gnome.desktop.interface".as_ptr(), 1);
         if schema.is_null() { return None; }
         if has_key(schema, c"enable-animations".as_ptr()) == 0 { schema_unref(schema); return None; }
+        // GSettings' dconf backend can initialize GVfs, which acquires GIO's shared
+        // session bus with exit-on-close enabled. Desktop preferences are optional:
+        // set that connection's policy before constructing the backend, and keep our
+        // reference until construction finishes so it cannot be replaced in between.
+        // G_BUS_TYPE_SESSION = 2; null cancellable/error are allowed by GIO's API.
+        let bus = bus_get(2, std::ptr::null_mut(), std::ptr::null_mut());
+        if bus.is_null() { schema_unref(schema); return None; }
+        exit_on_close(bus, 0);
         let settings = new(schema, std::ptr::null_mut(), std::ptr::null());
+        unref(bus);
         schema_unref(schema);
         if settings.is_null() { return None; }
         let enabled = get(settings, c"enable-animations".as_ptr()) != 0;

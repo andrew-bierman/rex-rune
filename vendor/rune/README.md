@@ -15,6 +15,16 @@ paths so the whole dependency graph sees a single `rune`. Nothing outside the ve
 
 ## Changes
 
+- Linux's optional GNOME reduced-motion read clears exit-on-close on GIO's shared
+  session connection before constructing GSettings (dconf can initialize GVfs).
+  Losing the desktop bus must not raise SIGTERM and close terminals. Missing bus,
+  GIO or schema remains an unavailable preference, not a fatal error. The separate
+  portal colour watcher keeps its last value and logs its stopped subscription
+  once; it does not claim notification success or automatic appearance recovery.
+  macOS/Windows paths are unchanged. Cause, private regression invocation and
+  limits: [#79 notebook](../../docs/investigations/79-session-bus-loss.md).
+  Remove this patch when upstream protects this GSettings path from bus loss.
+
 - `Runtime::physical_key_input` is public so Rex's headless tests can inject the native
   physical/logical pair, base character, repeat and release without scripts or private
   runtime access. No dispatch behavior changes. `src/app/physical_input_tests.rs` checks

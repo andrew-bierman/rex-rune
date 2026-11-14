@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- **Losing the Linux desktop session bus no longer closes the app.** Rune's optional GNOME preference read no longer lets GIO terminate the process on bus loss. Terminals and keyboard input continue; the portal colour preference stays at its last value, with one diagnostic when updates stop. Notification recovery is unchanged. Checked with private X11/bus/Rex fixtures; Wayland desktop acceptance remains unverified. [Cause and checks](docs/investigations/79-session-bus-loss.md) (#79).
+
 ## 0.10.0 - 2026-11-13
 
 Native macOS notifications and a local app wrapper, separate left/right Option-key modes, each pane header's own program icon, and full Windows headless CI coverage. Published binaries remain Linux-only; no macOS or Windows distribution is introduced.
