@@ -2,9 +2,18 @@
 
 ## Unreleased
 
+## 0.10.1 - 2026-11-14
+
+A Linux desktop-bus-loss fix and more reliable headless test fixtures.
+
 ### Fixed
 
-- **Losing the Linux desktop session bus no longer closes the app.** Rune's optional GNOME preference read no longer lets GIO terminate the process on bus loss. Terminals and keyboard input continue; the portal colour preference stays at its last value, with one diagnostic when updates stop. Notification recovery is unchanged. Checked with private X11/bus/Rex fixtures; Wayland desktop acceptance remains unverified. [Cause and checks](docs/investigations/79-session-bus-loss.md) (#79).
+- **Losing the Linux desktop session bus no longer closes the app (#79, #134).** Rune's optional GNOME reduced-motion read now retains a protected shared GDBus connection beyond deferred GSettings/dconf/GVfs initialization, so bus loss no longer makes that connection send SIGTERM. Closed connections return an unavailable preference instead of cached success. Terminals and keyboard input continue; ordinary SIGTERM handling and the independent notification worker's recovery are unchanged. Checked with private exact-function and mutation tests and X11 PTY-survival fixtures. [Cause, checks and limits](docs/investigations/79-session-bus-loss.md).
+- **Headless test isolation (#133).** Real-font test helpers now scope their bundled fonts, and tab-icon fixtures use the actual tab-preference setter and exact prefetch assertions. This removes the identified font leak and tab-fixture timer flake without new ignores, global serialization, retries or weakened assertions. Test-only changes; no runtime behavior change. [Investigation and checks](docs/test-determinism.md).
+
+### Known limitations
+
+- After bus loss, GNOME preference sampling may remain unavailable until the app restarts. The portal colour preference keeps its last value; automatic appearance freshness or recovery is not added. Native Wayland, macOS and Windows were not manually verified for this fix; macOS and Windows code paths are unchanged.
 
 ## 0.10.0 - 2026-11-13
 
