@@ -1621,6 +1621,7 @@ mod tests {
 
     #[test]
     fn typing_styled_terminal_runs_never_creates_a_second_ui_line() {
+        let _families = rune::text::with_families("Inter", "IBM Plex Mono");
         let mut terminal = ghostty_vt::Terminal::new(ghostty_vt::TerminalOptions {
             cols: 253,
             rows: 4,
@@ -1628,13 +1629,12 @@ mod tests {
         })
         .unwrap();
         let mut renderer = rex_rune::terminal::Renderer::new().unwrap();
-        let fonts = crate::app::fonts::load("JetBrainsMono Nerd Font", &[]);
         let mut rt = Runtime::with_text(
             RowState { cells: vec![] },
             view,
             (2300., 100.),
             Env::new(true, 1.5),
-            rune::text::TextSystem::new_with_paths(fonts.files, fonts.paths, fonts.families),
+            bundled_row_fonts(),
         );
         // Shell prompts mix fallback glyphs, styles and ASCII. Rebuild on every keystroke,
         // including runs preceded by blanks, at the user's fractional display scale.
@@ -1665,6 +1665,28 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn scaled_rows_do_not_replace_the_callers_font_metrics() {
+        let _families = rune::text::with_families("Inter", "Inter");
+        let _text = rune::text::TextSystem::default();
+        let before = metrics(15.).cell;
+        let epoch = rune::text::font_epoch();
+        assert!(!scaled_rects("─█").is_empty());
+        assert_eq!(metrics(15.).cell, before);
+        assert_eq!(rune::text::font_epoch(), epoch);
+    }
+
+    #[test]
+    fn typing_rows_do_not_replace_the_callers_font_metrics() {
+        let _families = rune::text::with_families("Inter", "Inter");
+        let _text = rune::text::TextSystem::default();
+        let before = metrics(15.).cell;
+        let epoch = rune::text::font_epoch();
+        typing_styled_terminal_runs_never_creates_a_second_ui_line();
+        assert_eq!(metrics(15.).cell, before);
+        assert_eq!(rune::text::font_epoch(), epoch);
     }
 
     /// A fixed cell, since the measured one follows whichever fonts another test has loaded.
@@ -1763,6 +1785,13 @@ mod tests {
         assert_eq!(drawn_matches(term), [(4, 0, true)]);
     }
 
+    /// Real, supplied mono and symbol faces, not the installed font a test machine resolves.
+    /// Construct only under a family guard: TextSystem also registers measurement fonts.
+    fn bundled_row_fonts() -> rune::text::TextSystem {
+        let fonts = crate::app::fonts::load("IBM Plex Mono", &[]);
+        rune::text::TextSystem::new_with_paths(fonts.files, &[], fonts.families)
+    }
+
     /// A row at 1.5 device pixels per point, placed off the pixel grid.
     fn scaled_view(s: &RowState, _: &mut Cx<RowState>) -> El {
         let m = Metrics {
@@ -1778,6 +1807,7 @@ mod tests {
     /// The rectangles drawn for `text` in one row at 1.5 device pixels per point, in device
     /// pixels, sorted from the left. Every one has whole-pixel edges.
     fn scaled_rects(text: &str) -> Vec<[f32; 4]> {
+        let _families = rune::text::with_families("Inter", "IBM Plex Mono");
         let mut terminal = ghostty_vt::Terminal::new(ghostty_vt::TerminalOptions {
             cols: 40,
             rows: 2,
@@ -1789,7 +1819,6 @@ mod tests {
             .unwrap()
             .frame(&terminal)
             .unwrap();
-        let fonts = crate::app::fonts::load("JetBrainsMono Nerd Font", &[]);
         let mut rt = Runtime::with_text(
             RowState {
                 cells: frame.cells[0].clone(),
@@ -1797,7 +1826,7 @@ mod tests {
             scaled_view,
             (600., 100.),
             Env::new(true, 1.5),
-            rune::text::TextSystem::new_with_paths(fonts.files, fonts.paths, fonts.families),
+            bundled_row_fonts(),
         );
         rt.frame(1. / 60.);
         let mut rects: Vec<[f32; 4]> = rt

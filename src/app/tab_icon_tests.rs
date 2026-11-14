@@ -380,9 +380,18 @@ fn icon_counts_preserve_visibility_modes_and_sidebar_fallback() {
             five_programs(&mut ws);
             ws.settings.interface.toolbar = mode;
             ws.settings.interface.tab_icon_count = count;
-            ws.settings.vertical_tabs = true;
-            ws.sidebar.toggle();
+            // Use the preference path: opening sidebar tabs intentionally subscribes to
+            // their views. A raw field edit leaves prefetch until a later size save.
+            ws.set_vertical_tabs(true);
+            assert!(matches!(
+                host.try_recv(),
+                Ok(HostCommand::PrefetchViews(sessions))
+                    if sessions.len() == 1 && sessions.contains("s")
+            ));
+            assert!(host.is_empty());
             let mut rt = runtime_at(ws, (640., 480.));
+            // Exercise the delayed save without depending on scheduler speed.
+            rt.state.resized = Some(std::time::Instant::now() - std::time::Duration::from_secs(2));
             settle(&mut rt);
             assert_eq!(has(&rt, "toolbar"), mode == ToolbarBehavior::Always);
             assert_eq!(has(&rt, "sidebar-tab-icon:0:s:split"), count > 0);
@@ -392,10 +401,26 @@ fn icon_counts_preserve_visibility_modes_and_sidebar_fallback() {
                     s.toggle_toolbar();
                 }
             });
+            // Closing the sidebar intentionally ends that subscription, once. All
+            // other commands, including any deferred save effects, are still forbidden.
+            assert!(matches!(
+                host.try_recv(),
+                Ok(HostCommand::PrefetchViews(sessions)) if sessions.is_empty()
+            ));
             settle(&mut rt);
             assert!(has(&rt, "tab-track"));
             assert_eq!(has(&rt, "tab-icon:split"), count > 0);
-            assert!(host.is_empty());
+            assert!(
+                host.is_empty(),
+                "unexpected host commands: {:?}",
+                host.try_iter()
+                    .map(|c| match c {
+                        HostCommand::PrefetchViews(sessions) =>
+                            format!("PrefetchViews({sessions:?})"),
+                        c => format!("{:?}", std::mem::discriminant(&c)),
+                    })
+                    .collect::<Vec<_>>()
+            );
             std::fs::remove_file(&rt.state.settings_path).ok();
         }
     }
