@@ -79,11 +79,7 @@ def threads(app):
 
 def input_reaches_pty(app, window, stage):
     assert app.poll() is None, f"app exited at {stage}: {app.poll()}"
-    # Real focus loss/gain exercises Rune's repeat preference read after reconnection.
-    desk.x("windowminimize", window)
-    time.sleep(.2)
-    desk.x("windowmap", "--sync", window)
-    desk.x("windowfocus", "--sync", window)
+    # Do not refocus here: extra preference reads used to mask the lifetime defect.
     marker = "BUS_" + stage.upper()
     output = work / marker
     desk.type(f"printf '{marker}\\n' > {output}")
@@ -123,8 +119,15 @@ try:
         result[f"exit_after_loss_{cycle}"] = app.poll()
         assert app.poll() is None, f"app exited on private bus loss: {app.poll()}"
         input_reaches_pty(app, window, f"absent_{cycle}")
-        bus = start_bus(f"bus-restart-{cycle}")
-        input_reaches_pty(app, window, f"restarted_{cycle}")
+        if cycle == 0:
+            bus = start_bus("bus-restart")
+            # Exactly one focus gain/sample after restarting, no further focus before
+            # the next loss. The separate single-read probe also pins creation's gap.
+            desk.x("windowminimize", window)
+            time.sleep(.2)
+            desk.x("windowmap", "--sync", window)
+            desk.x("windowfocus", "--sync", window)
+            input_reaches_pty(app, window, "restarted")
     stop(bus)
     stop(app)
     assert app.returncode == -15, "SIGTERM must retain its ordinary process-termination behavior"

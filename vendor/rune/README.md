@@ -17,13 +17,22 @@ paths so the whole dependency graph sees a single `rune`. Nothing outside the ve
 
 - Linux's optional GNOME reduced-motion read clears exit-on-close on GIO's shared
   session connection before constructing GSettings (dconf can initialize GVfs).
+  One owned current reference outlives synchronous construction so dconf's deferred
+  acquisition uses that protected connection, too. Repeated samples replace/unref
+  the previous reference, never accumulate them; closed references are released
+  before reacquisition. The final current reference and GIO library have process
+  lifetime. GDBusConnection and GObject ref/unref are thread-safe; the small mutex
+  guards ownership exchange/closed-flag inspection, never connection I/O or unref.
   Losing the desktop bus must not raise SIGTERM and close terminals. Missing bus,
-  GIO or schema remains an unavailable preference, not a fatal error. The separate
+  GIO or schema, or GIO returning a retained closed singleton, is unavailable, not
+  cached success. GNOME preference sampling may stay unavailable until app restart:
+  no GLib dispatcher, retry loop or appearance recovery is added. The separate
   portal colour watcher keeps its last value and logs its stopped subscription
-  once; it does not claim notification success or automatic appearance recovery.
+  once; notification recovery remains the independent notification worker's job.
   macOS/Windows paths are unchanged. Cause, private regression invocation and
   limits: [#79 notebook](../../docs/investigations/79-session-bus-loss.md).
-  Remove this patch when upstream protects this GSettings path from bus loss.
+  Remove this patch when upstream protects this GSettings path, including deferred
+  backend acquisition/reference lifetime, from bus loss.
 
 - `Runtime::physical_key_input` is public so Rex's headless tests can inject the native
   physical/logical pair, base character, repeat and release without scripts or private
