@@ -124,10 +124,19 @@ void TerminalItem::setFrontend(Frontend *frontend) {
     updateState();
 }
 
+void TerminalItem::setPaneId(const QString &id) {
+    if (id == m_paneId) return;
+    m_paneId = id;
+    emit paneIdChanged();
+    updateState();
+}
+
 void TerminalItem::updateState() {
     if (!m_frontend) return;
-    const auto state = m_frontend->snapshot();
-    const auto target = state["session"].toString() + '/' + state["window"].toString() + '/' + state["pane"].toString();
+    const auto state = m_frontend->paneSnapshot(m_paneId);
+    if (state == m_state && !m_foregroundPending) return;
+    m_state = state;
+    const auto target = QString::number(state["epoch"].toInteger()) + "/" + state["session"].toString() + '/' + state["window"].toString() + '/' + state["pane"].toString();
     if (target != m_target) {
         m_target = target;
         m_frame = {};
@@ -137,7 +146,7 @@ void TerminalItem::updateState() {
     }
     if (state["frame"].isObject()) m_frame = state["frame"].toObject();
     else if (state["connected"].toBool()) m_frame = {};
-    if (m_foregroundPending && window() && window()->isActive() && m_frontend->sendTarget("claim")) m_foregroundPending = false;
+    if (m_foregroundPending && window() && window()->isActive() && m_frontend->sendPane(m_paneId, "claim")) m_foregroundPending = false;
     resizeTerminal();
     emit textChanged();
     update();
@@ -148,18 +157,18 @@ int TerminalItem::rows() const { return std::clamp(int(height() / m_cellHeight),
 
 void TerminalItem::resizeTerminal() {
     if (!m_frontend || !isVisible() || !window()) return;
-    const auto terminal = m_frontend->snapshot()["terminal"].toObject();
+    const auto terminal = m_state["terminal"].toObject();
     if (!terminal["connected"].toBool() || !terminal["owner"].toBool()) { m_lastResize.clear(); return; }
     const auto signature = m_target + ':' + QString::number(columns()) + 'x' + QString::number(rows());
     if (signature == m_lastResize) return;
-    if (m_frontend->sendTarget("resize", {{"cols", columns()}, {"rows", rows()},
+    if (m_frontend->sendPane(m_paneId, "resize", {{"cols", columns()}, {"rows", rows()},
         {"cell_width", int(m_cellWidth)}, {"cell_height", int(m_cellHeight)}})) m_lastResize = signature;
 }
 
 void TerminalItem::foreground() {
     if (!window() || !window()->isActive()) return;
     m_foregroundPending = true;
-    if (m_frontend && m_frontend->sendTarget("claim")) m_foregroundPending = false;
+    if (m_frontend && m_frontend->sendPane(m_paneId, "claim")) m_foregroundPending = false;
 }
 
 void TerminalItem::geometryChange(const QRectF &now, const QRectF &old) {
@@ -252,7 +261,7 @@ bool TerminalItem::sendKey(QKeyEvent *event, const QString &action) {
         payload["key"] = (*press)["key"];
         payload["unshifted_codepoint"] = (*press)["unshifted_codepoint"];
     }
-    if (payload.isEmpty() || !m_frontend || !m_frontend->sendTarget("key", {{"payload", payload}})) return false;
+    if (payload.isEmpty() || !m_frontend || !m_frontend->sendPane(m_paneId, "key", {{"payload", payload}})) return false;
     if (action == "press") m_pressed.insert(event->key(), payload);
     return true;
 }
@@ -270,13 +279,18 @@ void TerminalItem::keyReleaseEvent(QKeyEvent *event) {
     }
     event->accept();
 }
+void TerminalItem::focusInEvent(QFocusEvent *event) {
+    QQuickPaintedItem::focusInEvent(event);
+    if (m_frontend && m_frontend->snapshot()["pane"].toString() != m_paneId) m_frontend->selectPane(m_paneId);
+    update();
+}
 void TerminalItem::focusOutEvent(QFocusEvent *event) {
     m_pressed.clear();
     QQuickPaintedItem::focusOutEvent(event);
     update();
 }
 void TerminalItem::inputMethodEvent(QInputMethodEvent *event) {
-    if (!event->commitString().isEmpty() && m_frontend) m_frontend->sendTarget("paste", {{"text", event->commitString()}});
+    if (!event->commitString().isEmpty() && m_frontend) m_frontend->sendPane(m_paneId, "paste", {{"text", event->commitString()}});
     event->accept();
 }
 QVariant TerminalItem::inputMethodQuery(Qt::InputMethodQuery query) const {
@@ -341,6 +355,6 @@ QString TerminalItem::selectedText() const {
 }
 void TerminalItem::copy() { const auto text = selectedText(); if (!text.isEmpty()) QGuiApplication::clipboard()->setText(text); }
 void TerminalItem::paste() {
-    if (m_frontend) m_frontend->sendTarget("paste", {{"text", QGuiApplication::clipboard()->text()}});
+    if (m_frontend) m_frontend->sendPane(m_paneId, "paste", {{"text", QGuiApplication::clipboard()->text()}});
     forceActiveFocus();
 }

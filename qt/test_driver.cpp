@@ -15,6 +15,11 @@
 #include <stdexcept>
 
 namespace {
+TerminalItem *selectedTerminal(QQuickItem *root, const QString &id) {
+    if (auto *terminal = qobject_cast<TerminalItem *>(root); terminal && terminal->paneId() == id) return terminal;
+    for (auto *child : root->childItems()) if (auto *terminal = selectedTerminal(child, id)) return terminal;
+    return nullptr;
+}
 void writeJson(const QString &path, const QJsonObject &value) {
     QFile file(path);
     if (!file.open(QIODevice::WriteOnly)) throw std::runtime_error("cannot write artifact");
@@ -82,14 +87,14 @@ TestDriver::TestDriver(QQuickWindow *window, Frontend *backend, const QString &s
 void TestDriver::start() {
     try {
         keyContract();
-        if (!m_terminal) throw std::runtime_error("terminal item missing");
+
         QFile file(m_script);
         if (!file.open(QIODevice::ReadOnly)) throw std::runtime_error("cannot read test script");
         QJsonParseError error;
         const auto doc = QJsonDocument::fromJson(file.readAll(), &error);
         if (error.error != QJsonParseError::NoError || !doc.isArray()) throw std::runtime_error("script must be a JSON array");
         m_steps = doc.array();
-        m_terminal->forceActiveFocus();
+        if (m_terminal) m_terminal->forceActiveFocus();
         m_window->requestActivate();
         m_timer.start();
     } catch (const std::exception &error) { finish(false, error.what()); }
@@ -105,12 +110,15 @@ void TestDriver::clickControl(const QString &name) {
 void TestDriver::step() {
     try {
         if (m_index >= m_steps.size()) { finish(true); return; }
+        m_terminal = selectedTerminal(m_window->contentItem(), m_backend->snapshot()["pane"].toString());
         const auto s = m_steps[m_index].toObject();
         const auto op = s["op"].toString();
         bool complete = true;
+        if (!m_terminal && op != "waitState" && op != "waitText" && op != "waitProblem" && op != "pause")
+            throw std::runtime_error("selected terminal item missing");
         if (op == "waitText" || op == "waitState" || op == "waitClipboard" || op == "waitProblem") {
             if (!m_waiting) { m_wait.start(); m_waiting = true; }
-            if (op == "waitText") complete = m_terminal->visibleText().contains(s["text"].toString());
+            if (op == "waitText") complete = m_terminal && m_terminal->visibleText().contains(s["text"].toString());
             else if (op == "waitClipboard") complete = QGuiApplication::clipboard()->text().contains(s["text"].toString());
             else if (op == "waitProblem") complete = m_backend->problem().contains(s["text"].toString());
             else {
@@ -119,6 +127,14 @@ void TestDriver::step() {
                 complete = value == s["value"];
             }
             if (!complete && m_wait.elapsed() > s["timeout"].toInt(15000)) throw std::runtime_error(("timeout at " + op + ": " + s["text"].toString() + s["field"].toString()).toStdString());
+        } else if (op == "clickPane") {
+            const auto ids = m_backend->paneIds();
+            const int index = s["index"].toInt();
+            if (index < 0 || index >= ids.size()) throw std::runtime_error("pane index missing");
+            auto *item = selectedTerminal(m_window->contentItem(), ids[index]);
+            if (!item) throw std::runtime_error("visible pane item missing");
+            QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier,
+                item->mapToScene(QPointF(item->width() / 2, item->height() / 2)).toPoint());
         } else if (op == "type") {
             m_terminal->forceActiveFocus();
             const auto text = s["text"].toString();
@@ -181,6 +197,16 @@ void TestDriver::step() {
             auto snapshot = m_backend->snapshot();
             snapshot["clipboard"] = QGuiApplication::clipboard()->text();
             snapshot["problem"] = m_backend->problem();
+            QJsonArray panes;
+            for (const auto &id : m_backend->paneIds()) {
+                auto *item = selectedTerminal(m_window->contentItem(), id);
+                if (!item) throw std::runtime_error("scene pane missing from visual tree");
+                const auto at = item->mapToScene(QPointF(0, 0));
+                panes.append(QJsonObject{{"pane",id},{"columns",item->columns()},{"rows",item->rows()},
+                    {"x",at.x()},{"y",at.y()},{"width",item->width()},{"height",item->height()},
+                    {"text",item->visibleText()}});
+            }
+            snapshot["qt_panes"] = panes;
             snapshot["qt_columns"] = m_terminal->columns();
             snapshot["qt_rows"] = m_terminal->rows();
             snapshot["qt_cell_width"] = m_terminal->cellWidth();

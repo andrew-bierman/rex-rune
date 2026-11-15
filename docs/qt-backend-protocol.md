@@ -8,20 +8,25 @@ painting, key translation, focus and clipboard belong to the Qt frontend.
 
 The core currently attaches terminal streams for the active server window's
 visible blocks, rather than a frontend-specific single-pane subscription. The
-adapter publishes only the selected frame. That coupling is retained in this
-milestone instead of refactoring the original Rune workspace behavior.
+adapter publishes each visible terminal with normalized placements from the public
+layout helper. No Rune workspace or layout parser is forked.
 
 Standard input and output carry UTF-8 JSON objects, one per line. Standard error
-is diagnostic output. Every object includes `version: 1`; incompatible versions
+is diagnostic output. Every object includes `version: 2`; incompatible versions
 are refused. This is a private, versioned interface for these two executables,
 not a network listener. Closing stdin or sending `shutdown` drops the host
 connection and leaves server sessions running.
 
 ## Responses
 
-The first response is `{ "type": "hello", "version": 1 }`. Subsequent `state`
+The first response is `{ "type": "hello", "version": 2 }`. Subsequent `state`
 objects contain `connected`, `status`, the selected `session`, `window`, `pane`,
-and `sessions`, `windows`, `panes` lists with `id` and `label` fields. `terminal`
+and the current connection `epoch`. `sessions` and `windows` carry `id` and `label`.
+`panes` are ordered by the authoritative layout and carry `id`, `label`, complete
+target identity, normalized `rect`, `terminal` and `frame`. `dividers` carry the
+public layout helper's containing rectangle, direction, ratio and adjacent IDs.
+The top-level frame/terminal summarize the focused pane for find/actions. Stable
+pane IDs preserve Qt items across frame updates; unchanged item snapshots skip repaint. `terminal`
 contains `connected`, `owner`, `status` and `revision`, or is null before a
 stream exists. Both host and terminal wake channels drive updates. Snapshots
 are deduplicated and publication is capped at one state per 33 milliseconds;
@@ -42,7 +47,9 @@ either connection state is false, retaining the last displayed frame.
 
 ## Requests
 
-Each request has `op` and `version`:
+Each request has `op`, `version` and the last observed `epoch` (except read-only
+refresh and shutdown). Version two coordinates multi-pane targeting and stale-epoch
+rejection; both child and frontend must be upgraded together:
 
 | Operation | Additional fields |
 | --- | --- |
@@ -55,8 +62,9 @@ Each request has `op` and `version`:
 | `claim` | complete target |
 | `refresh`, `shutdown` | none |
 
-A complete target is the exact selected `session`, `window` and `pane` from
-the current state. Navigation in flight invalidates the old target. Correlated
+A complete target names `session`, `window`, `pane` and current connection `epoch`.
+Typing/paste require the focused target; resize and foreground claims may name
+any currently visible pane. Navigation in flight invalidates the old target. Correlated
 completion or failure releases that pending selection and follows the current
 authoritative server focus, without replaying input. The
 adapter checks membership in the active server view and refuses stale,
@@ -71,8 +79,7 @@ declaration, reads no Rune settings, and exposes no server lifecycle operation.
 
 ## Extension limits
 
-This version sends one visible frame rather than a scene graph or scrollback
-database. Mouse reports, graphics, links and the full workspace action/keymap
+This version sends the current multi-pane scene, not a scrollback database. Mouse reports, graphics, links and the full workspace action/keymap
 surface are not exposed. Extending that contract requires matching adapter and
 frontend changes and tests. JSON serialization cost and QPainter performance
 on large, fast-updating grids have not been benchmarked.

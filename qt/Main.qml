@@ -26,7 +26,14 @@ ApplicationWindow {
         for (let i = 0; i < items.length; i++) if (items[i].id === id) return i
         return -1
     }
-    function restoreTerminal() { terminal.forceActiveFocus() }
+    function selectedTerminal() {
+        const i = backend.paneIds.indexOf(root.state.pane)
+        const card = paneRepeater.itemAt(i)
+        return card ? card.terminal : null
+    }
+    function restoreTerminal() { const term = selectedTerminal(); if (term) term.forceActiveFocus() }
+    property string selectedPane: state.pane || ""
+    onSelectedPaneChanged: Qt.callLater(restoreTerminal)
 
     ColumnLayout {
         anchors.fill: parent
@@ -83,12 +90,12 @@ ApplicationWindow {
                     objectName: "copyButton"
                     text: "Copy"
                     Accessible.name: "Copy selection"
-                    onClicked: { terminal.copy(); root.restoreTerminal() }
+                    onClicked: { root.selectedTerminal() && root.selectedTerminal().copy(); root.restoreTerminal() }
                 }
                 ToolButton {
                     objectName: "pasteButton"
                     text: "Paste"
-                    onClicked: terminal.paste()
+                    onClicked: { const term = root.selectedTerminal(); if (term) term.paste() }
                 }
                 ToolButton {
                     id: more
@@ -103,7 +110,7 @@ ApplicationWindow {
                         MenuItem {
                             objectName: "selectAllButton"
                             text: "Select visible text"
-                            onTriggered: { terminal.selectAll(); root.restoreTerminal() }
+                            onTriggered: { root.selectedTerminal() && root.selectedTerminal().selectAll(); root.restoreTerminal() }
                         }
                         MenuItem { text: "Refresh sessions"; onTriggered: backend.refresh() }
                     }
@@ -129,16 +136,62 @@ ApplicationWindow {
                 ToolButton { text: backend.problem ? "Dismiss" : "Refresh"; onClicked: backend.problem ? backend.dismissProblem() : backend.refresh() }
             }
         }
-        TerminalView {
-            id: terminal
-            objectName: "terminal"
+        Item {
+            id: canvas
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.margins: 8
-            frontend: backend
-            focus: true
-            Accessible.name: "Terminal"
-            Component.onCompleted: forceActiveFocus()
+            clip: true
+            Label {
+                anchors.centerIn: parent
+                visible: backend.paneIds.length === 0
+                text: root.state.connected ? "Choose a terminal session" : "Connecting…"
+                color: "#a2b0c4"
+            }
+            Repeater {
+                id: paneRepeater
+                model: backend.paneIds
+                delegate: Rectangle {
+                    id: card
+                    required property string modelData
+                    required property int index
+                    property alias terminal: terminalView
+                    property var pane: terminalView.paneState
+                    property var placement: pane.rect || [0, 0, 1, 1]
+                    x: Math.round(placement[0] * canvas.width) + 2
+                    y: Math.round(placement[1] * canvas.height) + 2
+                    width: Math.max(0, Math.round(placement[2] * canvas.width) - 4)
+                    height: Math.max(0, Math.round(placement[3] * canvas.height) - 4)
+                    z: index + 1
+                    color: "#001528"
+                    border.width: backend.paneIds.length > 1 ? 1 : 0
+                    border.color: root.selectedPane === modelData ? "#7cc4ff" : "#26374b"
+                    clip: true
+                    Label {
+                        id: heading
+                        x: 8
+                        y: 3
+                        width: parent.width - 16
+                        height: backend.paneIds.length > 1 ? 22 : 0
+                        visible: height > 0
+                        text: card.pane.label || "Terminal"
+                        elide: Text.ElideRight
+                        color: root.selectedPane === card.modelData ? "#e8eef6" : "#a2b0c4"
+                    }
+                    TerminalView {
+                        id: terminalView
+                        objectName: "terminal"
+                        x: 4
+                        y: heading.visible ? 26 : 0
+                        width: Math.max(0, parent.width - 8)
+                        height: Math.max(0, parent.height - y)
+                        frontend: backend
+                        paneId: card.modelData
+                        Accessible.name: "Terminal " + (card.pane.label || "")
+                        Component.onCompleted: if (root.selectedPane === card.modelData) forceActiveFocus()
+                    }
+                }
+            }
         }
     }
 }

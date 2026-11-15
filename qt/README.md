@@ -23,8 +23,7 @@ qmake6 and a C++17 compiler are required. This milestone was built against Qt
 6.12. The backend path defaults to `rex-qt-backend` beside the Qt executable;
 use an absolute `--backend` path when launching from another directory.
 
-The Session, Tab and Pane controls select existing server state. One pane is
-shown at a time. Closing this app leaves sessions and programs running. No
+The Session, Tab and Pane controls select existing server state. All visible server panes are shown at their authoritative split/layer placements. Closing this app leaves sessions and programs running. No
 frontend settings or Rune preferences are read or written. Ordinary keys reach
 Rex's `client.key`; clipboard paste uses the core paste command. The window
 claims size when it comes forward; typing and pasting also claim through the

@@ -1,6 +1,7 @@
 #include "frontend.h"
 
 #include <QJsonDocument>
+#include <QJsonArray>
 
 Frontend::Frontend(QObject *parent) : QObject(parent) {
     connect(&m_process, &QProcess::readyReadStandardOutput, this, &Frontend::read);
@@ -39,17 +40,40 @@ void Frontend::start(const QString &program, const QString &endpoint, const QStr
 
 bool Frontend::send(QJsonObject message) {
     if (m_process.state() != QProcess::Running) return false;
-    message["version"] = 1;
+    message["version"] = 2;
+    message["epoch"] = m_state["epoch"];
     const auto data = QJsonDocument(message).toJson(QJsonDocument::Compact) + '\n';
     return m_process.write(data) == data.size();
 }
 
+QJsonObject Frontend::paneSnapshot(const QString &id) const {
+    for (const auto &value : m_state["panes"].toArray()) {
+        const auto pane = value.toObject();
+        if (pane["id"].toString() == id) {
+            auto result = pane;
+            result["connected"] = m_state["connected"];
+            result["epoch"] = m_state["epoch"];
+            if (!m_state["connected"].toBool()) {
+                auto terminal = result["terminal"].toObject(); terminal["connected"] = false;
+                result["terminal"] = terminal;
+            }
+            return result;
+        }
+    }
+    return {};
+}
+
 bool Frontend::sendTarget(const QString &op, QJsonObject fields) {
-    if (!m_hello || !m_state["terminal"].toObject()["connected"].toBool()) return false;
+    return sendPane(m_state["pane"].toString(), op, fields);
+}
+
+bool Frontend::sendPane(const QString &id, const QString &op, QJsonObject fields) {
+    const auto pane = paneSnapshot(id);
+    if (!m_hello || !pane["terminal"].toObject()["connected"].toBool()) return false;
     for (const auto *name : {"session", "window", "pane"}) {
-        const auto id = m_state[name].toString();
-        if (id.isEmpty()) return false;
-        fields[name] = id;
+        const auto value = pane[name].toString();
+        if (value.isEmpty()) return false;
+        fields[name] = value;
     }
     fields["op"] = op;
     return send(fields);
@@ -87,14 +111,20 @@ void Frontend::read() {
             return;
         }
         const auto object = doc.object();
-        if (object["version"].toInt() != 1) {
+        if (object["version"].toInt() != 2) {
             fail("Terminal backend version mismatch; input paused.");
             m_process.kill();
             return;
         }
         const auto type = object["type"].toString();
         if (type == "hello") m_hello = true;
-        else if (type == "state" && m_hello) { m_state = object; emit stateChanged(); }
+        else if (type == "state" && m_hello) {
+            m_state = object;
+            QStringList ids;
+            for (const auto &pane : object["panes"].toArray()) ids << pane.toObject()["id"].toString();
+            if (ids != m_paneIds) { m_paneIds = ids; emit paneIdsChanged(); }
+            emit stateChanged();
+        }
         else if (type == "error") { m_problem = object["message"].toString(); emit problemChanged(); }
     }
 }

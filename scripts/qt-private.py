@@ -123,6 +123,13 @@ def main():
             {'op': 'waitClipboard', 'text': 'A   B'},
             {'op': 'waitClipboard', 'text': ' WRAP_SENTINEL'},
             {'op': 'snapshot', 'path': str(work / 'clipboard.json')},
+            {'op': 'clickPane', 'index': 1},
+            {'op': 'waitState', 'field': 'pane', 'value': blocks[1]},
+            {'op': 'type', 'text': "printf '\\nQT_OTHER_%s\\n' visible"}, {'op': 'key', 'key': 'Return'},
+            {'op': 'waitText', 'text': 'QT_OTHER_visible'},
+            {'op': 'snapshot', 'path': str(work / 'scene.json')},
+            {'op': 'clickPane', 'index': 0},
+            {'op': 'waitState', 'field': 'pane', 'value': blocks[0]},
             {'op': 'type', 'text': "printf '\\nQT_KEY_%s\\n' '"},
             {'op': 'key', 'key': 'é', 'text': 'é', 'action': 'press'},
             {'op': 'key', 'key': 'é', 'text': 'é', 'action': 'repeat'},
@@ -181,6 +188,11 @@ def main():
         # Kitty reports that release if its mode is already enabled at that point.
         chords = chords.removeprefix(b'\x1b[13;1:3u')
         assert chords == b'\x1b[99;6u\x1b[99;6:3u\x1b[118;6u\x1b[118;6:3u', 'modified key presses/releases did not reach the raw PTY'
+        scene = json.loads((work / 'scene.json').read_text())
+        assert len(scene['qt_panes']) == 2, 'both server panes must be rendered at once'
+        left, right = scene['qt_panes']
+        assert left['x'] + left['width'] <= right['x'], 'tiled pane rectangles overlap'
+        assert 'QT_OTHER_visible' in right['text'] and 'QT_OTHER_visible' not in left['text'], 'pane click input was retargeted'
         clipboard = json.loads((work / 'clipboard.json').read_text())
         assert 'QT_SHELL_ready' in clipboard['clipboard'], 'visible selection did not reach Qt clipboard'
         assert 'Qt wide: 界 é ┌─┐' in clipboard['clipboard'], 'Unicode changed during copying'

@@ -13,7 +13,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
 
-pub const VERSION: u64 = 1;
+pub const VERSION: u64 = 2;
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 struct Target {
@@ -80,14 +80,31 @@ impl Adapter {
         })
     }
 
+    fn visible_target(&self, model: &HostModel, target: &Target) -> bool {
+        self.target(model).is_some()
+            && model.selected.as_ref() == Some(&target.session)
+            && model.window().is_some_and(|window| {
+                window.window_id.as_ref() == Some(&target.window)
+                    && visible_terminals(window).any(|b| b.block_id.as_ref() == Some(&target.pane))
+            })
+    }
+
     fn connection(&self, model: &HostModel, request: &Value, resize: bool) -> Result<Connection> {
         let target: Target =
             serde_json::from_value(request.clone()).context("missing terminal target")?;
         ensure!(
-            self.target(model).as_ref() == Some(&target),
-            "terminal target is no longer selected"
+            if resize {
+                self.visible_target(model, &target)
+            } else {
+                self.target(model).as_ref() == Some(&target)
+            },
+            "terminal target is no longer selected or visible"
         );
         ensure!(model.connected, "connection lost; input paused");
+        ensure!(
+            request["epoch"].as_u64() == Some(model.connection_epoch),
+            "terminal connection changed; input paused"
+        );
         let connection = model
             .terminals
             .get(&target.pane)
@@ -119,7 +136,14 @@ impl Adapter {
                 .map(str::to_owned)
                 .with_context(|| format!("missing {name}"))
         };
-        match request["op"].as_str().context("missing op")? {
+        let op = request["op"].as_str().context("missing op")?;
+        if !matches!(op, "shutdown" | "refresh") {
+            ensure!(
+                request["epoch"].as_u64() == Some(model.connection_epoch),
+                "connection changed; request discarded"
+            );
+        }
+        match op {
             "shutdown" => return Ok(false),
             "refresh" => host.commands.send(HostCommand::RefreshSessions)?,
             "select_session" => {
@@ -164,7 +188,20 @@ impl Adapter {
                     .context("terminal not attached")?;
                 connection.commands.focus()?;
             }
-            "key" | "paste" | "resize" | "claim" => {
+            "claim" => {
+                let target: Target = serde_json::from_value(request.clone())?;
+                ensure!(
+                    model.connected
+                        && request["epoch"].as_u64() == Some(model.connection_epoch)
+                        && self.visible_target(&model, &target),
+                    "pane is no longer visible"
+                );
+                host.commands.send(HostCommand::Claim {
+                    session: target.session,
+                    blocks: vec![target.pane],
+                })?;
+            }
+            "key" | "paste" | "resize" => {
                 let op = request["op"].as_str().expect("checked op");
                 let connection = self.connection(&model, request, op == "resize")?;
                 let command = match op {
@@ -173,7 +210,6 @@ impl Adapter {
                         Command::Key(request["payload"].clone())
                     }
                     "paste" => Command::Paste(field("text")?),
-                    "claim" => Command::TakeControl,
                     _ => {
                         let number = |name: &str| -> Result<u16> {
                             request[name]
@@ -216,6 +252,9 @@ impl Adapter {
 
     /// Snapshot a bounded copy of host state, without serializing under its lock.
     pub fn state(&mut self, model: &HostModel) -> Value {
+        if self.pane.as_deref() == model.focused() {
+            self.pane = None;
+        }
         if let Some((id, _)) = model.navigation_result
             && self.pending_navigation == Some(id)
         {
@@ -237,36 +276,53 @@ impl Adapter {
             self.pane = None;
         }
         let target = self.target(model);
-        let terminal = target.as_ref().and_then(|t| model.terminals.get(&t.pane));
-        let (terminal_state, frame) = terminal.map_or((Value::Null, Value::Null), |connection| {
-            let (state, frame) = {
-                let m = connection.model.lock().expect("terminal model");
-                (
-                    json!({"connected":model.connected && m.connected && m.control_connected,
-                    "owner":m.owner,"status":m.status,"revision":m.revision}),
-                    m.frame.clone(),
-                )
-            };
-            (
-                state,
-                frame
-                    .as_ref()
-                    .map_or(Value::Null, |frame| frame_value(frame)),
-            )
+        let (terminal_state, frame) = target.as_ref().map_or((Value::Null, Value::Null), |t| {
+            terminal_value(model, &t.pane)
         });
         let windows = model.view().map_or_else(Vec::new, |v| {
             v.windows.iter().filter_map(|w| {
             Some(json!({"id":w.window_id.as_ref()?,"label":w.label.as_deref().unwrap_or("Shell")}))
         }).collect()
         });
-        let panes = model.window().map_or_else(Vec::new, |w| visible_terminals(w)
-            .filter_map(|b| Some(json!({"id":b.block_id.as_ref()?,"label":b.label.as_deref().unwrap_or("Terminal")}))).collect());
-        json!({"type":"state","version":VERSION,"connected":model.connected,"status":model.status,
+        let (panes, dividers) = model.window().map_or_else(|| (Vec::new(), Vec::new()), |window| {
+            let (placements, dividers) = rex_rune::layout::placements(window, None);
+            let panes = placements.into_iter().filter_map(|placement| {
+                let block = visible_terminals(window).find(|b| b.block_id.as_ref() == Some(&placement.block))?;
+                let (terminal, frame) = terminal_value(model, &placement.block);
+                Some(json!({"id":placement.block,"label":block.label.as_deref().unwrap_or("Terminal"),
+                    "session":model.selected,"window":window.window_id,"pane":placement.block,
+                    "rect":placement.rect,"terminal":terminal,"frame":frame}))
+            }).collect();
+            let dividers = dividers.into_iter().map(|d| json!({"before":d.before,"after":d.after,
+                "horizontal":d.horizontal,"rect":d.rect,"ratio":d.ratio})).collect();
+            (panes, dividers)
+        });
+        json!({"type":"state","version":VERSION,"connected":model.connected,"status":model.status,"epoch":model.connection_epoch,
             "session":model.selected,"window":model.window().and_then(|w| w.window_id.as_ref()),
             "pane":target.as_ref().map(|t| &t.pane),
             "sessions":model.sessions.iter().map(|s| json!({"id":s.session_id,"label":s.label})).collect::<Vec<_>>(),
-            "windows":windows,"panes":panes,"terminal":terminal_state,"frame":frame})
+            "windows":windows,"panes":panes,"dividers":dividers,"terminal":terminal_state,"frame":frame})
     }
+}
+
+fn terminal_value(model: &HostModel, pane: &str) -> (Value, Value) {
+    let Some(connection) = model.terminals.get(pane) else {
+        return (Value::Null, Value::Null);
+    };
+    let (state, frame) = {
+        let m = connection.model.lock().expect("terminal model");
+        (
+            json!({"connected":model.connected && m.connected && m.control_connected,
+            "owner":m.owner,"status":m.status,"revision":m.revision,"generation":m.restore_generation}),
+            m.frame.clone(),
+        )
+    };
+    (
+        state,
+        frame
+            .as_ref()
+            .map_or(Value::Null, |frame| frame_value(frame)),
+    )
 }
 
 fn frame_value(frame: &Frame) -> Value {
@@ -373,7 +429,7 @@ mod tests {
         let mut adapter = Adapter::default();
         let mut ids = Vec::new();
         for window in ["window-b", "window-c"] {
-            adapter.handle(&host, &json!({"version":1,"op":"select_window","session":"session-a","window":window})).unwrap();
+            adapter.handle(&host, &json!({"version":2,"epoch":0,"op":"select_window","session":"session-a","window":window})).unwrap();
             match requests.recv().unwrap() {
                 HostCommand::Navigate { id, .. } => ids.push(id),
                 _ => panic!("navigation needs a correlated outcome"),
@@ -399,7 +455,7 @@ mod tests {
         adapter
             .handle(
                 &host,
-                &json!({"version":1,"op":"select_session","session":"session-b"}),
+                &json!({"version":2,"epoch":0,"op":"select_session","session":"session-b"}),
             )
             .unwrap();
         let id = match requests.recv().unwrap() {
@@ -416,7 +472,7 @@ mod tests {
     fn completed_navigation_follows_server_focus_even_if_it_has_moved_again() {
         let (host, requests) = host_fixture(fixture());
         let mut adapter = Adapter::default();
-        adapter.handle(&host, &json!({"version":1,"op":"select_window","session":"session-a","window":"window-b"})).unwrap();
+        adapter.handle(&host, &json!({"version":2,"epoch":0,"op":"select_window","session":"session-a","window":"window-b"})).unwrap();
         let id = match requests.recv().unwrap() {
             HostCommand::Navigate { id, .. } => id,
             _ => panic!("navigation needs a correlated outcome"),
@@ -471,13 +527,13 @@ mod tests {
     fn input_refuses_disconnected_and_stale_targets() {
         let adapter = Adapter::default();
         let mut model = attached_fixture();
-        let request = json!({"session":"session-a","window":"window-a","pane":"pane-a"});
+        let request = json!({"epoch":0,"session":"session-a","window":"window-a","pane":"pane-a"});
         assert!(adapter.connection(&model, &request, false).is_ok());
         assert!(
             adapter
                 .connection(
                     &model,
-                    &json!({"session":"session-a","window":"window-a","pane":"removed"}),
+                    &json!({"epoch":0,"session":"session-a","window":"window-a","pane":"removed"}),
                     false
                 )
                 .is_err()
@@ -497,7 +553,7 @@ mod tests {
     fn only_the_selected_owned_pane_can_be_resized() {
         let adapter = Adapter::default();
         let model = attached_fixture();
-        let request = json!({"session":"session-a","window":"window-a","pane":"pane-a"});
+        let request = json!({"epoch":0,"session":"session-a","window":"window-a","pane":"pane-a"});
         assert!(adapter.connection(&model, &request, true).is_err());
         model.terminals["pane-a"].model.lock().unwrap().owner = true;
         assert!(adapter.connection(&model, &request, true).is_ok());
@@ -505,7 +561,7 @@ mod tests {
             adapter
                 .connection(
                     &model,
-                    &json!({"session":"session-a","window":"hidden","pane":"pane-a"}),
+                    &json!({"epoch":0,"session":"session-a","window":"hidden","pane":"pane-a"}),
                     true
                 )
                 .is_err()
@@ -533,5 +589,101 @@ mod tests {
         assert_eq!(value["cells"][0][1]["spacer_tail"], true);
         assert_eq!(value["cells"][0][2]["text"], "e\u{301}");
         assert_eq!(value["cells"].as_array().unwrap().len(), 3);
+    }
+    fn split_fixture() -> HostModel {
+        let mut model = attached_fixture();
+        let window = &mut model.views.get_mut("session-a").unwrap().windows[0];
+        window.layers[0].layout = Some(
+            serde_json::from_value(json!({"split":{
+                "direction":"horizontal","ratio":0.4,
+                "before":{"block_id":"pane-a"},"after":{"block_id":"pane-b"}
+            }}))
+            .unwrap(),
+        );
+        window.layers[0].blocks.push(session::LayerBlock {
+            block_id: Some("pane-b".into()),
+            creator_name: Some("com.superlogical.terminal".into()),
+            ..Default::default()
+        });
+        let second = model.terminals["pane-a"].clone();
+        model.terminals.insert("pane-b".into(), second);
+        model
+    }
+
+    #[test]
+    fn scene_publishes_authoritative_rectangles_and_all_visible_terminal_states() {
+        let model = split_fixture();
+        let state = Adapter::default().state(&model);
+        assert_eq!(state["panes"][0]["rect"], json!([0., 0., 0.4, 1.]));
+        assert_eq!(state["panes"][1]["rect"], json!([0.4, 0., 0.6, 1.]));
+        assert_eq!(state["panes"][1]["terminal"]["connected"], true);
+        assert_eq!(state["panes"][1]["pane"], "pane-b");
+        assert_eq!(state["dividers"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn visible_owned_unselected_pane_can_resize_but_cannot_receive_typing() {
+        let model = split_fixture();
+        model.terminals["pane-b"].model.lock().unwrap().owner = true;
+        let adapter = Adapter::default();
+        let request = json!({"epoch":0,"session":"session-a","window":"window-a","pane":"pane-b"});
+        assert!(adapter.connection(&model, &request, true).is_ok());
+        assert!(adapter.connection(&model, &request, false).is_err());
+    }
+
+    #[test]
+    fn focus_acknowledgment_restores_server_focus_authority() {
+        let mut model = split_fixture();
+        let mut adapter = Adapter {
+            pane: Some("pane-a".into()),
+            ..Default::default()
+        };
+        assert_eq!(adapter.state(&model)["pane"], "pane-a");
+        model.views.get_mut("session-a").unwrap().windows[0].focused_block_id =
+            Some("pane-b".into());
+        assert_eq!(adapter.state(&model)["pane"], "pane-b");
+    }
+    #[test]
+    fn old_connection_epoch_cannot_send_to_the_same_reconnected_pane() {
+        let mut model = attached_fixture();
+        model.connection_epoch = 7;
+        let adapter = Adapter::default();
+        assert!(
+            adapter
+                .connection(
+                    &model,
+                    &json!({"epoch":6,"session":"session-a","window":"window-a","pane":"pane-a"}),
+                    false
+                )
+                .is_err()
+        );
+        assert!(
+            adapter
+                .connection(
+                    &model,
+                    &json!({"epoch":7,"session":"session-a","window":"window-a","pane":"pane-a"}),
+                    false
+                )
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn scene_preserves_nested_and_floating_layer_order_and_omits_minimized_layers() {
+        let mut model = fixture();
+        let block = |id: &str| json!({"block_id":id,"creator_name":"com.superlogical.terminal"});
+        model.views.get_mut("session-a").unwrap().windows[0] = serde_json::from_value(json!({
+            "window_id":"window-a","focused_block_id":"pane-a","layers":[
+                {"kind":"tiled","bounds":[0,0,1,1],"blocks":[block("pane-a"),block("pane-b"),block("pane-c")],
+                 "layout":{"split":{"direction":"horizontal","ratio":0.4,"before":{"block_id":"pane-a"},
+                  "after":{"split":{"direction":"vertical","ratio":0.5,"before":{"block_id":"pane-b"},"after":{"block_id":"pane-c"}}}}}},
+                {"kind":"floating","bounds":[0.2,0.3,0.4,0.5],"blocks":[block("pane-d")],"layout":{"block_id":"pane-d"}},
+                {"kind":"floating","state":"minimized","bounds":[0,0,1,1],"blocks":[block("pane-e")],"layout":{"block_id":"pane-e"}}
+            ]})).unwrap();
+        let state = Adapter::default().state(&model);
+        assert_eq!(state["panes"].as_array().unwrap().len(), 4);
+        assert_eq!(state["panes"][2]["rect"], json!([0.4, 0.5, 0.6, 0.5]));
+        assert_eq!(state["panes"][3]["id"], "pane-d");
+        assert_eq!(state["panes"][3]["rect"], json!([0.2, 0.3, 0.4, 0.5]));
     }
 }
