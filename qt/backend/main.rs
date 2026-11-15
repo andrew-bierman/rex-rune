@@ -2,6 +2,7 @@
 mod adapter;
 mod hosts;
 mod keymap;
+mod preferences;
 mod terminal;
 mod workspace;
 
@@ -10,7 +11,7 @@ use anyhow::{Context, Result, bail, ensure};
 use clap::Parser;
 use hosts::{Discovery, Hosts, Visit};
 use rex_rune::{
-    connection::{HostCommand, wait_for_hosts},
+    connection::{Command, HostCommand, wait_for_hosts},
     settings::{Host, Settings, validate_host},
 };
 use serde_json::{Value, json};
@@ -46,12 +47,14 @@ fn config_path() -> PathBuf {
 
 struct Backend {
     settings: Settings,
+    preferences: Value,
     path: PathBuf,
     hosts: Hosts,
     adapters: HashMap<String, Adapter>,
     generation: u64,
     discovery: Discovery,
     after_state: Vec<Value>,
+    cursor_targets: HashMap<(String, String), (u64, rex_rune::terminal::CursorShape)>,
 }
 impl Backend {
     fn new(options: Options) -> Result<Self> {
@@ -88,6 +91,7 @@ impl Backend {
         let mut hosts = Hosts::new(&settings);
         hosts.connect_all(&settings);
         let mut backend = Self {
+            preferences: preferences::snapshot(&settings),
             settings,
             path: options.config,
             hosts,
@@ -95,11 +99,13 @@ impl Backend {
             generation: 1,
             discovery: Discovery::default(),
             after_state: Vec::new(),
+            cursor_targets: HashMap::new(),
         };
         backend.synchronize()?;
         Ok(backend)
     }
     fn synchronize(&mut self) -> Result<()> {
+        self.preferences = preferences::snapshot(&self.settings);
         let ids = self.hosts.ids();
         self.adapters.retain(|id, _| ids.contains(id));
         for (slot, config) in self.hosts.slots.iter().zip(&self.settings.hosts) {
@@ -112,6 +118,13 @@ impl Backend {
                 adapter.keymap_generation = self.generation;
                 if let Some(connection) = &slot.connection {
                     adapter.declare_keymap(connection)?;
+                    if added {
+                        connection
+                            .commands
+                            .send(HostCommand::Theme(preferences::declaration(
+                                &self.settings,
+                            )?))?;
+                    }
                 }
             }
         }
@@ -308,10 +321,23 @@ impl Backend {
             .as_str()
             .context("missing host identity")?
             .to_owned();
-        if matches!(op, "refresh" | "keymap_reload" | "shortcut") {
+        if matches!(op, "refresh" | "keymap_reload" | "shortcut" | "preferences") {
             self.hosts.require_active(&id)?;
             self.epoch(request)?;
             match op {
+                "preferences" => {
+                    preferences::apply(&mut self.settings, &self.path, &request["patch"])?;
+                    let theme = preferences::declaration(&self.settings)?;
+                    for slot in &self.hosts.slots {
+                        if let Some(connection) = &slot.connection {
+                            connection
+                                .commands
+                                .send(HostCommand::Theme(theme.clone()))?;
+                        }
+                    }
+                    self.synchronize()?;
+                    self.after_state.push(json!({"type":"preferences_saved","version":VERSION,"request_id":request["request_id"]}));
+                }
                 "refresh" => {
                     self.reload_shortcuts()?;
                     self.hosts
@@ -411,6 +437,8 @@ impl Backend {
             self.after_state.retain(|event| event["type"] != "action");
         }
         let mut events = Vec::new();
+        let mut declared = false;
+        let mut cursor_targets = HashMap::new();
         for slot in &self.hosts.slots {
             let Some(connection) = &slot.connection else {
                 continue;
@@ -420,6 +448,16 @@ impl Backend {
                 .adapters
                 .get(&slot.id)
                 .context("host adapter unavailable")?;
+            declared |= model.theme_declared;
+            let shape = self.settings.terminal.cursor_style.shape();
+            for (pane, terminal) in &model.terminals {
+                let key = (slot.id.clone(), pane.clone());
+                let value = (model.connection_epoch, shape);
+                if self.cursor_targets.get(&key) != Some(&value) {
+                    terminal.commands.try_send(Command::CursorStyle(shape))?;
+                }
+                cursor_targets.insert(key, value);
+            }
             let active = slot.id == self.hosts.active;
             let actions = adapter.take_actions(&mut model);
             if active {
@@ -443,6 +481,11 @@ impl Backend {
                     json!({"type":"error","version":VERSION,"host":slot.id,"message":message}),
                 );
             }
+        }
+        self.cursor_targets = cursor_targets;
+        if declared && !self.settings.terminal_theme_declared {
+            self.settings.terminal_theme_declared = true;
+            self.settings.save(&self.path)?;
         }
         Ok((dirty || !self.after_state.is_empty(), events))
     }
@@ -483,6 +526,7 @@ impl Backend {
                 }
             }
         }
+        state["preferences"] = self.preferences.clone();
         state["hosts"] = catalog;
         state
     }
@@ -538,13 +582,20 @@ fn main() -> Result<()> {
                     request["op"] == "host"
                         && matches!(request["action"].as_str(), Some("add" | "edit"))
                 });
+                let preference_form = request
+                    .as_ref()
+                    .is_ok_and(|request| request["op"] == "preferences");
+                let request_id = request
+                    .as_ref()
+                    .ok()
+                    .map(|request| request["request_id"].clone());
                 let result = request.and_then(|request| backend.handle(&request));
                 match result {
                     Ok(false) => break,
                     Ok(true) => {}
                     Err(error) => publish(
                         &json!({"type":"error","version":VERSION,"message":error.to_string(),
-                            "scope":if host_form {"host_form"} else {"application"}}),
+                            "request_id":request_id,"scope":if host_form {"host_form"} else if preference_form {"preferences"} else {"application"}}),
                     )?,
                 }
             }

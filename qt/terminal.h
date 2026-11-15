@@ -18,6 +18,11 @@ class TerminalItem : public QQuickPaintedItem {
     Q_PROPERTY(QVariantMap paneState READ paneState NOTIFY textChanged)
     Q_PROPERTY(bool copyOnSelection MEMBER m_copyOnSelection)
     Q_PROPERTY(bool primarySelection MEMBER m_primarySelection)
+    Q_PROPERTY(QVariantMap preferences READ preferences WRITE setPreferences NOTIFY preferencesChanged)
+    Q_PROPERTY(qreal gridLeft READ gridLeft NOTIFY preferencesChanged)
+    Q_PROPERTY(qreal gridTop READ gridTop NOTIFY preferencesChanged)
+    Q_PROPERTY(qreal cellWidth READ cellWidth NOTIFY preferencesChanged)
+    Q_PROPERTY(qreal cellHeight READ cellHeight NOTIFY preferencesChanged)
     Q_PROPERTY(QString visibleText READ visibleText NOTIFY textChanged)
 public:
     explicit TerminalItem(QQuickItem *parent = nullptr);
@@ -29,6 +34,10 @@ public:
     void setPaneId(const QString &id);
     QVariantMap paneState() const { return m_state.toVariantMap(); }
     QString visibleText() const;
+    QVariantMap preferences() const { return m_preferences; }
+    void setPreferences(const QVariantMap &preferences);
+    qreal gridLeft() const { return m_paddingX; }
+    qreal gridTop() const { return m_paddingY; }
     void paint(QPainter *painter) override;
     Q_INVOKABLE void scroll(int lines);
     Q_INVOKABLE void reconnect();
@@ -48,6 +57,7 @@ public:
     qreal cellHeight() const { return m_cellHeight; }
     bool event(QEvent *event) override;
 signals:
+    void preferencesChanged();
     void frontendChanged();
     void actionsChanged();
     void paneIdChanged();
@@ -89,6 +99,9 @@ private:
     int m_linkStart = -1;
     int m_linkEnd = -1;
     QString m_lastResize;
+    QVariantMap m_preferences;
+    qreal m_paddingX = 8;
+    qreal m_paddingY = 8;
     QFont m_font;
     qreal m_cellWidth = 10;
     qreal m_cellHeight = 20;

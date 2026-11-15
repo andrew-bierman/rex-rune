@@ -1,12 +1,14 @@
 #include "frontend.h"
 #include "actions.h"
 #include "terminal.h"
+#include "settings.h"
 #ifdef REX_QT_TEST_DRIVER
 #include "test_driver.h"
 #endif
 
 #include <QCommandLineParser>
 #include <QDir>
+#include <QFontDatabase>
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
@@ -28,6 +30,8 @@ int main(int argc, char **argv) {
     QCoreApplication::setApplicationName("rex-qt");
     QCoreApplication::setApplicationVersion("0.1.0");
     QQuickStyle::setStyle("Basic");
+    QFontDatabase::addApplicationFont(":/fonts/IBMPlexMono-Regular.ttf");
+    QFontDatabase::addApplicationFont(":/fonts/SymbolsNerdFont-Regular.ttf");
     QCommandLineParser parser;
     parser.setApplicationDescription("Standalone Qt Quick frontend for existing Rex servers");
     parser.addHelpOption();
@@ -41,6 +45,8 @@ int main(int argc, char **argv) {
     parser.addOption({"report", "Acceptance JSON report", "path"});
 #endif
     parser.process(app);
+    qmlRegisterType<SettingsController>("RexQt", 1, 0, "SettingsController");
+    qmlRegisterType<TerminalPreview>("RexQt", 1, 0, "TerminalPreview");
     qmlRegisterType<TerminalItem>("RexQt", 1, 0, "TerminalView");
     qmlRegisterUncreatableType<Frontend>("RexQt", 1, 0, "Frontend", "Created by the application");
     qmlRegisterUncreatableType<Actions>("RexQt", 1, 0, "Actions", "Created by the application");

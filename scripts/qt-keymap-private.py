@@ -102,6 +102,7 @@ rex.bind("ctrl+alt+q","qt_queue")
                 {'op': 'waitState', 'field': 'sessions.0.label', 'value': 'Qt action 3 palette'},
                 {'op': 'resize', 'width': 640, 'height': 480}, {'op': 'pause', 'ms': 150},
                 {'op': 'click', 'control': 'settingsButton'},
+                {'op': 'click', 'control': 'shortcutsSettingsButton'},
                 {'op': 'waitControl', 'control': 'shortcutPopup', 'property': 'opened', 'value': True},
                 {'op': 'snapshot', 'control': 'shortcutPopup', 'path': str(work / 'shortcut-layout.json')},
                 {'op': 'screenshot', 'path': str(work / 'before-remove-minimum.png')},

@@ -1,4 +1,5 @@
 #include "terminal.h"
+#include "settings.h"
 
 #include <QClipboard>
 #include <QDesktopServices>
@@ -13,6 +14,7 @@
 #include <QHoverEvent>
 #include <QWheelEvent>
 #include <QPainter>
+#include <QPainterPath>
 #include <QQuickWindow>
 #include <algorithm>
 #include <cmath>
@@ -106,19 +108,27 @@ TerminalItem::TerminalItem(QQuickItem *parent) : QQuickPaintedItem(parent) {
     setActiveFocusOnTab(false);
     setClip(true);
     setAcceptHoverEvents(true);
-    m_font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
-    m_font.setStyleHint(QFont::Monospace);
-    m_font.setPixelSize(16);
-    m_font.setKerning(false);
-    m_font.setFeature(QFont::Tag("liga"), 0);
-    m_font.setFeature(QFont::Tag("calt"), 0);
-    const QFontMetricsF metrics(m_font);
-    m_cellWidth = std::ceil(metrics.horizontalAdvance('M'));
-    m_cellHeight = std::ceil(metrics.height());
-    m_ascent = metrics.ascent();
+    setPreferences({});
     connect(this, &QQuickItem::windowChanged, this, [this](QQuickWindow *window) {
-        if (window) connect(window, &QWindow::activeChanged, this, [this] { foreground(); });
+        if (window) {
+            connect(window, &QWindow::activeChanged, this, [this] { foreground(); });
+            connect(window, &QWindow::screenChanged, this, [this] { m_lastResize.clear();resizeTerminal(); });
+        }
     });
+}
+
+void TerminalItem::setPreferences(const QVariantMap &preferences) {
+    if (m_preferences == preferences && !m_font.family().isEmpty()) return;
+    m_preferences = preferences;
+    const auto metrics = terminalMetrics(preferences);
+    m_font=metrics.font; m_cellWidth=metrics.width; m_cellHeight=metrics.height; m_ascent=metrics.ascent;
+    m_paddingX=std::clamp(preferences.value("pane_padding",8).toDouble(),0.,32.);
+    const auto interface=preferences.value("interface").toMap();
+    m_paddingY=std::clamp(interface.value("pane_padding_vertical",m_paddingX).toDouble(),0.,32.);
+    const auto terminal=preferences.value("terminal").toMap();
+    m_copyOnSelection=terminal.value("copy_on_selection",false).toBool();
+    m_primarySelection=terminal.value("primary_selection",false).toBool();
+    m_lastResize.clear();resizeTerminal();emit preferencesChanged();update();
 }
 
 void TerminalItem::setFrontend(Frontend *frontend) {
@@ -163,17 +173,17 @@ void TerminalItem::updateState() {
     update();
 }
 
-int TerminalItem::columns() const { return std::clamp(int(width() / m_cellWidth), 1, 65535); }
-int TerminalItem::rows() const { return std::clamp(int(height() / m_cellHeight), 1, 65535); }
+int TerminalItem::columns() const { return std::clamp(int(std::max(qreal(0),width() - 2*m_paddingX) / m_cellWidth), 1, 65535); }
+int TerminalItem::rows() const { return std::clamp(int(std::max(qreal(0),height() - 2*m_paddingY) / m_cellHeight), 1, 65535); }
 
 void TerminalItem::resizeTerminal() {
     if (!m_frontend || !isVisible() || !window()) return;
     const auto terminal = m_state["terminal"].toObject();
     if (!terminal["connected"].toBool() || !terminal["owner"].toBool()) { m_lastResize.clear(); return; }
-    const auto signature = m_target + ':' + QString::number(columns()) + 'x' + QString::number(rows());
+    const auto signature = m_target + ':' + QString::number(columns()) + 'x' + QString::number(rows()) + ':' + QString::number(m_cellWidth) + ':' + QString::number(m_cellHeight) + ':' + QString::number(window()->devicePixelRatio());
     if (signature == m_lastResize) return;
     if (m_frontend->sendPane(m_paneId, "resize", {{"cols", columns()}, {"rows", rows()},
-        {"cell_width", int(m_cellWidth)}, {"cell_height", int(m_cellHeight)}})) m_lastResize = signature;
+        {"cell_width", qRound(m_cellWidth*window()->devicePixelRatio())}, {"cell_height", qRound(m_cellHeight*window()->devicePixelRatio())}})) m_lastResize = signature;
 }
 
 void TerminalItem::foreground() {
@@ -200,10 +210,12 @@ QString TerminalItem::visibleText() const {
 void TerminalItem::paint(QPainter *p) {
     p->fillRect(boundingRect(), m_frame.isEmpty() ? QColor("#001528") : color(m_frame["bg"]));
     if (m_frame.isEmpty()) return;
+    p->save();
+    p->setClipRect(QRectF(m_paddingX,m_paddingY,std::max(qreal(0),width()-2*m_paddingX),std::max(qreal(0),height()-2*m_paddingY)));
     const auto cells = m_frame["cells"].toArray();
     const auto selectionRows = m_frame["selection_rows"].toArray();
     const auto selectedAt = [&selectionRows](int x, int y) {
-        if (y >= selectionRows.size() || !selectionRows[y].isArray()) return false;
+        if (y < 0 || y >= selectionRows.size() || !selectionRows[y].isArray()) return false;
         const auto range = selectionRows[y].toArray();
         return range.size() == 2 && x >= range[0].toInt() && x <= range[1].toInt();
     };
@@ -226,14 +238,15 @@ void TerminalItem::paint(QPainter *p) {
         const auto row = cells[cy].toArray();
         if (cx + 1 < row.size() && row[cx + 1].toObject()["spacer_tail"].toBool()) cursorCells = 2;
     }
-    const auto shape = m_frame["cursor_shape"].toString();
+    const auto terminalConfig=m_preferences.value("terminal").toMap();
+    const auto shape = terminalConfig.value("cursor_force").toBool() ? terminalConfig.value("cursor_style","block").toString() : m_frame["cursor_shape"].toString();
     const bool solidCursor = hasActiveFocus() && window() && window()->isActive() && shape == "block";
 
     for (int y = 0; y < cells.size() && y * m_cellHeight < height(); ++y) {
         const auto row = cells[y].toArray();
         for (int x = 0; x < row.size() && x * m_cellWidth < width(); ++x) {
             const auto cell = row[x].toObject();
-            const QRectF rect(x * m_cellWidth, y * m_cellHeight, m_cellWidth, m_cellHeight);
+            const QRectF rect(m_paddingX + x * m_cellWidth, m_paddingY + y * m_cellHeight, m_cellWidth, m_cellHeight);
             p->fillRect(rect, color(cell["bg"]));
 
             for (const auto &value : matches) {
@@ -246,22 +259,39 @@ void TerminalItem::paint(QPainter *p) {
                     p->setPen(QColor(124, 196, 255, 180)); p->drawRect(rect.adjusted(.5, .5, -.5, -.5));
                 }
             }
-            if (selectedAt(x, y)) p->fillRect(rect, QColor(124, 196, 255, 95));
+            if (selectedAt(x, y)) {
+                const auto fill=selectionColors(m_preferences,color(cell["fg"]),color(cell["bg"])).first;
+                if (!terminalConfig.value("selection_rounded").toBool()) p->fillRect(rect,fill);
+                else {
+                    // Only the outside of the continuous selection receives rounded corners.
+                    const qreal r=std::min(qreal(3),m_cellWidth/2);
+                    QPainterPath path;path.setFillRule(Qt::WindingFill);path.addRoundedRect(rect,r,r);
+                    if(selectedAt(x-1,y)) path.addRect(QRectF(rect.left(),rect.top(),r,rect.height()));
+                    if(selectedAt(x+1,y)) path.addRect(QRectF(rect.right()-r,rect.top(),r,rect.height()));
+                    if(selectedAt(x,y-1)) path.addRect(QRectF(rect.left(),rect.top(),rect.width(),r));
+                    if(selectedAt(x,y+1)) path.addRect(QRectF(rect.left(),rect.bottom()-r,rect.width(),r));
+                    p->fillPath(path.simplified(),fill);
+                }
+            }
             if (y == cy && x >= cx && x < cx + cursorCells && solidCursor) p->fillRect(rect, color(m_frame["cursor_color"]));
         }
         for (int x = 0; x < row.size() && x * m_cellWidth < width(); ++x) {
             const auto cell = row[x].toObject();
             if (cell["spacer_tail"].toBool() || cell["invisible"].toBool()) continue;
             const bool wide = x + 1 < row.size() && row[x + 1].toObject()["spacer_tail"].toBool();
-            const QRectF rect(x * m_cellWidth, y * m_cellHeight, m_cellWidth * (wide ? 2 : 1), m_cellHeight);
+            const QRectF rect(m_paddingX + x * m_cellWidth, m_paddingY + y * m_cellHeight, m_cellWidth * (wide ? 2 : 1), m_cellHeight);
             QFont font = m_font;
-            font.setBold(cell["bold"].toBool());
-            font.setItalic(cell["italic"].toBool());
+            const auto program=terminalConfig.value("font").toMap().value("bold_italic","both").toString();
+            font.setBold(m_font.bold() || (cell["bold"].toBool() && (program=="both" || program=="bold_only")));
+            font.setItalic(m_font.italic() || (cell["italic"].toBool() && (program=="both" || program=="italic_only")));
             p->save();
             p->setClipRect(rect);
             p->setFont(font);
             if (cell["faint"].toBool()) p->setOpacity(.5);
-            const auto fg = x == cx && y == cy && solidCursor ? color(cell["bg"]) : currentAt(x, y) && !selectedAt(x, y) ? QColor("#001528") : color(cell["fg"]);
+            const auto cursorText=m_preferences.value("_appearance").toMap().value("cursor_text");
+            const auto fg = x == cx && y == cy && solidCursor ? (cursorText.isNull() ? color(cell["bg"]) : QColor::fromRgb(cursorText.toUInt()))
+                : selectedAt(x,y) ? selectionColors(m_preferences,color(cell["fg"]),color(cell["bg"])).second
+                : currentAt(x, y) ? QColor("#001528") : color(cell["fg"]);
             p->setPen(fg);
             p->drawText(QPointF(rect.x(), rect.y() + m_ascent), cell["text"].toString());
             const auto underline = cell["underline"].toString();
@@ -274,15 +304,17 @@ void TerminalItem::paint(QPainter *p) {
         }
     }
     if (cx >= 0 && cy >= 0 && !solidCursor) {
-        QRectF cursorRect(cx * m_cellWidth, cy * m_cellHeight, m_cellWidth * cursorCells, m_cellHeight);
+        QRectF cursorRect(m_paddingX + cx * m_cellWidth, m_paddingY + cy * m_cellHeight, m_cellWidth * cursorCells, m_cellHeight);
         p->setPen(color(m_frame["cursor_color"]));
         if (!hasActiveFocus() || !window() || !window()->isActive() || shape == "hollow") p->drawRect(cursorRect.adjusted(.5, .5, -.5, -.5));
         else if (shape == "bar") p->fillRect(QRectF(cursorRect.topLeft(), QSizeF(2, m_cellHeight)), color(m_frame["cursor_color"]));
         else if (shape == "underline") p->fillRect(QRectF(cursorRect.left(), cursorRect.bottom() - 2, m_cellWidth, 2), color(m_frame["cursor_color"]));
     }
+    p->restore();
 }
 
 bool TerminalItem::event(QEvent *event) {
+    if (event->type()==QEvent::DevicePixelRatioChange) { m_lastResize.clear();resizeTerminal(); }
     if (event->type() == QEvent::ShortcutOverride) { event->accept(); return true; }
     // QQuickItem normally treats Tab as focus traversal before keyPressEvent.
     if (event->type() == QEvent::KeyPress) { keyPressEvent(static_cast<QKeyEvent *>(event)); return true; }
@@ -340,8 +372,8 @@ QVariant TerminalItem::inputMethodQuery(Qt::InputMethodQuery query) const {
     if (query == Qt::ImEnabled) return true;
     if (query == Qt::ImCursorRectangle) {
         const auto cursor = m_frame["cursor"].toArray();
-        return QRectF(cursor.size() == 2 ? cursor[0].toInt() * m_cellWidth : 0,
-                      cursor.size() == 2 ? cursor[1].toInt() * m_cellHeight : 0, m_cellWidth, m_cellHeight);
+        return QRectF(cursor.size() == 2 ? m_paddingX + cursor[0].toInt() * m_cellWidth : m_paddingX,
+                      cursor.size() == 2 ? m_paddingY + cursor[1].toInt() * m_cellHeight : m_paddingY, m_cellWidth, m_cellHeight);
     }
     return {};
 }
@@ -349,7 +381,7 @@ int TerminalItem::cellAt(const QPointF &point) const {
     const auto cols = m_frame["cols"].toInt();
     const auto rows = m_frame["rows"].toInt();
     if (cols <= 0 || rows <= 0) return -1;
-    return std::clamp(int(point.y() / m_cellHeight), 0, rows - 1) * cols + std::clamp(int(point.x() / m_cellWidth), 0, cols - 1);
+    return std::clamp(int(std::floor((point.y()-m_paddingY) / m_cellHeight)), 0, rows - 1) * cols + std::clamp(int(std::floor((point.x()-m_paddingX) / m_cellWidth)), 0, cols - 1);
 }
 void TerminalItem::selection(const QString &phase, const QPointF &point, int clicks) {
     const int at = std::max(0, cellAt(point)), cols = std::max(1, m_frame["cols"].toInt());
@@ -360,8 +392,8 @@ void TerminalItem::selection(const QString &phase, const QPointF &point, int cli
     if (m_frontend) m_frontend->sendPane(m_paneId, "selection", {
         {"phase", phase}, {"clicks", clicks}, {"revision", qint64(m_selectionRevision)},
         {"generation", m_state["terminal"].toObject()["generation"]},
-        {"x", at % cols}, {"y", at / cols}, {"px", point.x()}, {"py", point.y()},
-        {"columns", cols}, {"cell_width", int(std::ceil(m_cellWidth))}, {"height", int(height())}});
+        {"x", at % cols}, {"y", at / cols}, {"px", point.x()-m_paddingX}, {"py", point.y()-m_paddingY},
+        {"columns", cols}, {"cell_width", int(std::ceil(m_cellWidth))}, {"height", int(std::max(qreal(0),height()-2*m_paddingY))}});
 }
 bool TerminalItem::pointer(QMouseEvent *event, const QString &action) {
     if (!m_frame["mouse_tracking"].toBool() || ((event->modifiers() & Qt::ShiftModifier) && event->button() != Qt::RightButton && !m_reporting)) return false;

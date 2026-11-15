@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Window
 import QtQuick.Controls
 import QtQuick.Layouts
 import RexQt 1.0
@@ -17,16 +18,21 @@ ApplicationWindow {
         const tab = (state.windows || []).find(row => row.id === state.window)
         return [tab ? tab.label : "", session ? session.label : "", host ? host.label : ""].filter(Boolean).join(" · ") || "Rex Qt Quick"
     }
-    color: "#001528"
-    palette.window: "#001528"
-    palette.windowText: "#e8eef6"
-    palette.base: "#0d1524"
-    palette.text: "#e8eef6"
-    palette.placeholderText: "#93a3b8"
-    palette.button: "#142337"
-    palette.buttonText: "#e8eef6"
-    palette.highlight: "#7cc4ff"
-    palette.highlightedText: "#001528"
+    property var preferences: backend.preferences
+    property var interfacePrefs: preferences.interface || ({})
+    property real uiZoom: Math.min(preferences.ui_scale || 1, Math.max(.7, root.width / 640), Math.max(.7, root.height / 480))
+    property var chrome: ({rose_pine: ["#191724", "#1f1d2e", "#e0def4", "#908caa", "#c4a7e7"], rose_pine_moon: ["#232136", "#2a273f", "#e0def4", "#908caa", "#c4a7e7"], gruvbox_dark: ["#282828", "#3c3836", "#ebdbb2", "#a89984", "#83a598"]})[preferences.chrome_theme] || ["#001528", "#142337", "#e8eef6", "#93a3b8", "#7cc4ff"]
+    font.pixelSize: 14 * uiZoom
+    color: chrome[0]
+    palette.window: chrome[0]
+    palette.windowText: chrome[2]
+    palette.base: chrome[1]
+    palette.text: chrome[2]
+    palette.placeholderText: chrome[3]
+    palette.button: chrome[1]
+    palette.buttonText: chrome[2]
+    palette.highlight: chrome[4]
+    palette.highlightedText: chrome[0]
     onActiveChanged: backend.setVisible(active && visible)
     onVisibleChanged: backend.setVisible(active && visible)
     Component.onCompleted: backend.setVisible(active && visible)
@@ -57,7 +63,7 @@ ApplicationWindow {
     function find() { findBar.terminal = selectedTerminal(); findBar.open() }
     FindBar { id: findBar; anchors.top: parent.top; anchors.right: parent.right; z: 100; onClosed: root.restoreTerminal() }
     function restoreTerminal() {
-        if (commandPopup.visible || shortcutPopup.visible || findBar.visible || workspaceUI.modalOpen || hostDialogs.modalOpen || hostSwitcher.visible || (root.width < 960 && hostDrawer.visible)) return
+        if (settingsPopup.visible || commandPopup.visible || shortcutPopup.visible || findBar.visible || workspaceUI.modalOpen || hostDialogs.modalOpen || hostSwitcher.visible || (root.width < 960 && hostDrawer.visible)) return
         const term = selectedTerminal(); if (term) term.forceActiveFocus()
     }
     function terminalAction(term, id) {
@@ -78,7 +84,14 @@ ApplicationWindow {
         if (terminalAction(term, id)) return
         switch (id) {
         case "client.palette.toggle": commandPopup.visible ? commandPopup.close() : commandPopup.open(); break
-        case "client.settings": shortcutPopup.open(); break
+        case "client.settings": settingsPopup.open(); break
+        case "client.full_screen.toggle": root.visibility === Window.FullScreen ? root.showNormal() : root.showFullScreen(); break
+        case "client.font.increase": backend.savePreferences({font_size: Math.min(48, (preferences.font_size || 15) + 1)}); break
+        case "client.font.decrease": backend.savePreferences({font_size: Math.max(8, (preferences.font_size || 15) - 1)}); break
+        case "client.font.reset": backend.savePreferences({font_size: 15}); break
+        case "client.zoom.in": backend.savePreferences({ui_scale: Math.min(1.5, Math.round((uiZoom + .1) * 10) / 10)}); break
+        case "client.zoom.out": backend.savePreferences({ui_scale: Math.max(.7, Math.round((uiZoom - .1) * 10) / 10)}); break
+        case "client.zoom.reset": backend.savePreferences({ui_scale: 1}); break
         case "session.refresh": backend.refresh(); break
         case "session.switch": hostSwitcher.scope = "sessions"; hostSwitcher.open(); break
         case "client.host.switch": hostSwitcher.scope = "hosts"; hostSwitcher.open(); break
@@ -111,6 +124,15 @@ ApplicationWindow {
         }
     }
     Commands { id: commandPopup; objectName: "commandsPopup"; parent: Overlay.overlay; actions: workspaceActions; onFinished: root.restoreTerminal() }
+    Settings {
+        id: settingsPopup
+        objectName: "settingsPopup"
+        parent: Overlay.overlay
+        frontend: backend
+        onShortcutsRequested: { close(); shortcutPopup.open() }
+        onFullscreenRequested: root.visibility === Window.FullScreen ? root.showNormal() : root.showFullScreen()
+        onFinished: root.restoreTerminal()
+    }
     ShortcutSettings { id: shortcutPopup; objectName: "shortcutPopup"; parent: Overlay.overlay; actions: workspaceActions; frontend: backend; onFinished: root.restoreTerminal() }
     WorkspaceActions {
         id: workspaceUI
@@ -129,7 +151,7 @@ ApplicationWindow {
         }
     }
     Binding { target: workspaceActions; property: "searching"; value: findBar.visible }
-    Binding { target: workspaceActions; property: "modalOpen"; value: commandPopup.visible || shortcutPopup.visible || findBar.visible || workspaceUI.modalOpen || hostDialogs.modalOpen || hostSwitcher.visible || (root.width < 960 && hostDrawer.visible) }
+    Binding { target: workspaceActions; property: "modalOpen"; value: settingsPopup.visible || commandPopup.visible || shortcutPopup.visible || findBar.visible || workspaceUI.modalOpen || hostDialogs.modalOpen || hostSwitcher.visible || (root.width < 960 && hostDrawer.visible) }
     Connections { target: workspaceActions; function onRequested(id, args, origin) { root.action(id, args, origin) } }
     HostDialogs { id: hostDialogs; frontend: backend; onFinished: Qt.callLater(root.restoreTerminal) }
     Switcher { id: hostSwitcher; objectName: "hostSwitcher"; parent: Overlay.overlay; frontend: backend; onFinished: Qt.callLater(root.restoreTerminal) }
@@ -138,7 +160,7 @@ ApplicationWindow {
         objectName: "hostDrawer"
         width: Math.min(280, root.width * .7)
         height: root.height - y
-        y: 52
+        y: toolbar.height
         edge: Qt.LeftEdge
         modal: root.width < 960
         dim: false
@@ -158,12 +180,22 @@ ApplicationWindow {
     property string selectedPane: state.pane || ""
     onSelectedPaneChanged: { if (findBar.visible) findBar.close(); Qt.callLater(restoreTerminal) }
 
+    Item {
+        z: 500
+        width: parent.width
+        height: 5
+        HoverHandler { id: toolbarEdge }
+    }
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
         ToolBar {
+            id: toolbar
+            property bool revealed: root.interfacePrefs.toolbar !== "hidden" && (root.interfacePrefs.toolbar !== "on_hover" || toolbarEdge.hovered || toolbarHover.hovered)
+            visible: revealed
+            HoverHandler { id: toolbarHover }
             Layout.fillWidth: true
-            Layout.preferredHeight: 52
+            Layout.preferredHeight: revealed ? 52 * root.uiZoom : 0
             RowLayout {
                 anchors.fill: parent
                 anchors.margins: 8
@@ -191,7 +223,8 @@ ApplicationWindow {
                 }
                 ComboBox {
                     objectName: "tabs"
-                    Layout.fillWidth: true
+                    visible: !root.preferences.vertical_tabs
+                    Layout.fillWidth: Boolean(root.interfacePrefs.tabs_fill_available_space)
                     Layout.preferredWidth: 200
                     Layout.minimumWidth: 110
                     model: root.state.windows || []
@@ -231,8 +264,8 @@ ApplicationWindow {
                     onClicked: workspaceActions.run("pane.paste")
                 }
                 Label {
-                    visible: workspaceActions.pending.length > 0 || workspaceActions.activeModes.length > 0
-                    text: workspaceActions.pending || workspaceActions.activeModes.join(" · ")
+                    visible: ((root.preferences.terminal || {}).key_sequence_hints !== false && workspaceActions.pending.length > 0) || workspaceActions.activeModes.length > 0
+                    text: ((root.preferences.terminal || {}).key_sequence_hints !== false ? workspaceActions.pending : "") || workspaceActions.activeModes.join(" · ")
                     Layout.maximumWidth: 150
                     elide: Text.ElideRight
                 }
@@ -311,8 +344,8 @@ ApplicationWindow {
             objectName: "terminalCanvas"
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.margins: 8
-            Layout.leftMargin: root.width >= 960 && backend.hosts.sidebar_open ? hostDrawer.width + 8 : 8
+            Layout.margins: root.preferences.pane_density === "compact" ? 0 : 8
+            Layout.leftMargin: root.width >= 960 && backend.hosts.sidebar_open ? hostDrawer.width + (root.preferences.pane_density === "compact" ? 0 : 8) : (root.preferences.pane_density === "compact" ? 0 : 8)
             clip: true
             Label {
                 anchors.centerIn: parent
@@ -365,14 +398,19 @@ ApplicationWindow {
                     width: Math.max(0, Math.round(placement[2] * canvas.width) - 4)
                     height: Math.max(0, Math.round(placement[3] * canvas.height) - 4)
                     z: index + 1
-                    color: "#001528"
-                    border.width: backend.paneIds.length > 1 ? 1 : 0
-                    border.color: root.selectedPane === modelData ? "#7cc4ff" : "#26374b"
+                    color: root.chrome[0]
+                    border.width: (root.interfacePrefs.highlight_active_pane ?? root.preferences.pane_density !== "compact") && backend.paneIds.length > 1 ? 1 : 0
+                    border.color: root.selectedPane === modelData ? root.chrome[4] : root.chrome[1]
                     clip: true
+                    HoverHandler { id: paneHover }
                     PaneHeader {
                         id: heading
                         width: parent.width
-                        height: backend.paneIds.length > 1 || root.state.zoomed ? implicitHeight : 0
+                        property bool floating: root.preferences.pane_header === "on_hover"
+                        height: root.preferences.pane_header === "hidden" ? 0 : root.preferences.pane_header === "always" || floating || (root.preferences.pane_density !== "compact" && (backend.paneIds.length > 1 || root.state.zoomed)) ? implicitHeight : 0
+                        z: 2
+                        opacity: floating && !paneHover.hovered ? 0 : ((root.interfacePrefs.fade_inactive_pane_headers && !focused) || (root.interfacePrefs.fade_pane_headers_in_inactive_window && !root.active)) ? .55 : 1
+                        enabled: opacity > 0
                         visible: height > 0
                         pane: card.pane
                         workspace: workspaceUI
@@ -382,9 +420,10 @@ ApplicationWindow {
                         id: terminalView
                         objectName: "terminal"
                         x: 4
-                        y: heading.height
+                        y: heading.floating ? 0 : heading.height
                         width: Math.max(0, parent.width - 8)
                         height: Math.max(0, parent.height - y)
+                        preferences: root.preferences
                         frontend: backend
                         actions: workspaceActions
                         paneId: card.modelData

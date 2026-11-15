@@ -106,6 +106,15 @@ void Frontend::workspaceAction(const QString &action, const QVariantMap &args, c
     message["args"] = QJsonObject::fromVariantMap(args);
     send(message);
 }
+quint64 Frontend::savePreferences(const QVariantMap &patch) {
+    const auto id = ++m_preferenceRequest;
+    dismissPreferencesProblem();
+    if (!send({{"op","preferences"},{"request_id",qint64(id)},{"patch",QJsonObject::fromVariantMap(patch)}})) {
+        m_preferencesProblem = "Settings backend unavailable"; emit preferencesProblemChanged();
+        return 0;
+    }
+    return id;
+}
 void Frontend::reloadShortcuts() { send({{"op","keymap_reload"}}); }
 void Frontend::recordShortcut(const QString &action, const QStringList &keys, const QVariantMap &args, const QString &mode, const QString &operation) {
     send({{"op","shortcut"},{"action",action},{"keys",QJsonArray::fromStringList(keys)},
@@ -151,14 +160,21 @@ void Frontend::read() {
         if (type == "hello") { m_hello = true; setVisible(m_visible); }
         else if (type == "state" && m_hello) {
             const bool newEpoch = m_state["epoch"] != object["epoch"] || m_state["host"] != object["host"];
+            const bool newPreferences = m_state["preferences"] != object["preferences"];
             const bool newHosts = m_state["hosts"] != object["hosts"];
             m_state = object;
             if (newEpoch) setVisible(m_visible);
             QStringList ids;
             for (const auto &pane : object["panes"].toArray()) ids << pane.toObject()["id"].toString();
             if (ids != m_paneIds) { m_paneIds = ids; emit paneIdsChanged(); }
+            if (newPreferences) emit preferencesChanged();
             if (newHosts) emit hostsChanged();
             emit stateChanged();
+        }
+        else if (type == "preferences_saved") emit preferencesSaved(quint64(object["request_id"].toInteger()));
+        else if (type == "error" && object["scope"] == "preferences") {
+            m_preferencesProblem = object["message"].toString(); emit preferencesProblemChanged();
+            emit preferencesRejected(quint64(object["request_id"].toInteger()));
         }
         else if (type == "host_saved") emit hostSaved();
         else if (type == "clipboard" && m_visible && object["host"] == m_state["host"] && object["epoch"] == m_state["epoch"]
@@ -179,3 +195,5 @@ void Frontend::setVisible(bool visible) { m_visible = visible; if (m_hello && m_
 
 void Frontend::reportProblem(const QString &message) { m_problem = message; emit problemChanged(); }
 void Frontend::dismissHostFormProblem() { m_hostFormProblem.clear(); emit hostFormProblemChanged(); }
+
+void Frontend::dismissPreferencesProblem() { m_preferencesProblem.clear(); emit preferencesProblemChanged(); }

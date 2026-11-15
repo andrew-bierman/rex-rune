@@ -150,6 +150,10 @@ on large, fast-updating grids have not been benchmarked.
 
 ## Downstream ownership
 
-The adapter lives in `qt/backend/` and imports public `rex_rune` APIs. It is not exported by the upstream library. `Cargo.toml` adds only an optional-by-selection executable target; default Rune features and dependencies are unchanged. There are no downstream changes in `src/` or `vendor/`. A separate crate would currently add workspace/lockfile maintenance without removing another upstream source edit, so it is deferred.
+The adapter lives in `qt/backend/` and imports public `rex_rune` APIs. It is not exported by the upstream library. `Cargo.toml` adds only an optional-by-selection executable target; default Rune features and dependencies are unchanged. The only downstream `src/` change is the separately documented live-theme defaults fix shared by both frontends; `vendor/` is unchanged. A separate crate would currently add workspace/lockfile maintenance without removing another upstream source edit, so it is deferred.
 
 The adapter owns frontend selection, JSON framing, publication pacing and stale-target rejection. `HostConnection` owns protocol connections, authoritative sessions, reconnection and terminal streams; its terminal sender owns key/paste/resize delivery, and Ghostty owns VT state. No parallel connection/reconnect/parser implementation exists in Qt. Public core APIs are not a stable compatibility promise: upstream model/command/frame changes may require adapter updates. See [upstream maintenance](qt-upstream-maintenance.md).
+
+## Preferences
+
+State includes a stable `preferences` projection of the public Settings values, with `_defaults`, `_themes` and resolved `_appearance` metadata. `preferences` requests carry a closed editable `patch` and a frontend `request_id`. The backend merges against its latest authoritative profile, validates and atomically saves it, then publishes state before `preferences_saved` with the same ID. Errors use scope `preferences` and the request ID; a canceled/reopened dialog ignores an older acknowledgement. Hosts, navigation, shortcut overrides and consent are outside this patch. Qt rendering preferences are local; terminal theme requests use `HostCommand::Theme` and retain the core ownership rules. Terminal text and output colours remain server-owned.

@@ -118,10 +118,11 @@ Item {
         modal: true
         focus: true
         title: qsTr("Remove saved host?")
+        height: Math.min(parent.height - 24, 220)
         closePolicy: Popup.CloseOnEscape
         onOpened: keep.forceActiveFocus()
         onClosed: dialogs.finished()
-        contentItem: Label { text: qsTr("Remove “%1” from this client's saved hosts? Its sessions and programs keep running. No server is stopped.").arg(dialogs.selected.label || ""); wrapMode: Text.Wrap }
+        contentItem: Label { textFormat: Text.PlainText; text: qsTr("Remove “%1” from this client's saved hosts? Its sessions and programs keep running. No server is stopped.").arg(dialogs.selected.label || ""); wrapMode: Text.Wrap }
         footer: DialogButtonBox {
             Button { id: keep; objectName: "keepHost"; text: qsTr("Keep host"); DialogButtonBox.buttonRole: DialogButtonBox.RejectRole; onClicked: removal.close() }
             Button { objectName: "removeHost"; text: qsTr("Remove saved host"); DialogButtonBox.buttonRole: DialogButtonBox.DestructiveRole; onClicked: { dialogs.frontend.hostAction("remove", {}, dialogs.target); removal.close() } }

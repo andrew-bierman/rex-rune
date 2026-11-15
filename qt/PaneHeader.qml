@@ -13,6 +13,7 @@ Item {
         anchors.leftMargin: 8
         spacing: 0
         Label {
+            textFormat: Text.PlainText
             text: heading.pane.label || qsTr("Terminal")
             Layout.fillWidth: true
             elide: Text.ElideRight

@@ -16,8 +16,30 @@ Popup {
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
     property string selectedAction: "pane.copy"
     property var presetArgs: ({})
-    property var selectedArgs: selectedAction === "client.scroll" ? ({lines: scrollLines.value}) :
-                               selectedAction === "client.mode.enter" ? ({name: modePicker.currentText, once: modeOnce.checked}) : presetArgs
+    property var selectedArgs: {
+        if (selectedKind === "server") return presetArgs
+        if (["pane.split","pane.focus","pane.move","client.tab.move"].includes(selectedAction)) return {direction:directionPicker.currentValue || "right"}
+        if (selectedAction === "pane.resize") return {direction:directionPicker.currentValue || "right",amount:resizeAmount.value}
+        if (selectedAction === "client.tab.goto") return {index:lastTab.checked ? -1 : tabIndex.value}
+        if (selectedAction === "session.select") { const args={session_id:sessionPicker.currentValue || ""};if(windowId.text.trim()) args.window_id=windowId.text.trim();return args }
+        if (selectedAction === "pane.move_to_tab") return {window_id:targetTab.currentValue || ""}
+        if (["session.new","session.rename","client.tab.rename","pane.rename"].includes(selectedAction)) return {label:labelText.text}
+        if (selectedAction === "client.scroll") return {lines:scrollLines.value}
+        if (selectedAction === "client.mode.enter") return {name:modePicker.currentText,once:modeOnce.checked}
+        return presetArgs
+    }
+    property bool validArgs: (selectedAction !== "session.select" || Boolean(selectedArgs.session_id)) &&
+        (selectedAction !== "pane.move_to_tab" || Boolean(selectedArgs.window_id)) &&
+        (selectedAction !== "client.mode.enter" || Boolean(selectedArgs.name))
+    function choose(row) {
+        selectedAction=row.id; presetArgs=row.bindingArgs || {}
+        if (presetArgs.direction) directionPicker.currentIndex=directionPicker.model.findIndex(item => item.value===presetArgs.direction)
+        if (presetArgs.amount) resizeAmount.value=presetArgs.amount
+        if (presetArgs.index) { lastTab.checked=presetArgs.index===-1;tabIndex.value=Math.max(1,presetArgs.index) }
+        labelText.text=presetArgs.label || ""
+        windowId.text=presetArgs.window_id || ""
+        if (presetArgs.session_id) sessionPicker.currentIndex=sessionPicker.model.findIndex(item => item.id===presetArgs.session_id)
+    }
     property var rows: {
         const result = []
         const query = search.text.toLowerCase()
@@ -53,7 +75,7 @@ Popup {
     onClosed: { actions.stopRecording(); finished() }
     contentItem: ColumnLayout {
         spacing: 10
-        Label { text: qsTr("Settings · Shortcuts"); font.bold: true }
+        Label { textFormat: Text.PlainText; text: qsTr("Settings · Shortcuts"); font.bold: true }
         TextField {
             id: search
             objectName: "shortcutSearch"
@@ -75,13 +97,13 @@ Popup {
                     width: list.width
                     highlighted: popup.selectedAction === modelData.id
                     text: modelData.title + (Object.keys(modelData.bindingArgs || {}).length ? " · " + popup.argumentWords(modelData.bindingArgs) : "")
-                    onClicked: { popup.selectedAction = modelData.id; popup.presetArgs = modelData.bindingArgs || {} }
+                    onClicked: popup.choose(modelData)
                 }
             }
             ColumnLayout {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                Label { text: popup.selectedTitle; font.bold: true; Layout.fillWidth: true; elide: Text.ElideMiddle }
+                Label { textFormat: Text.PlainText; text: popup.selectedTitle; font.bold: true; Layout.fillWidth: true; elide: Text.ElideMiddle }
                 ListView {
                     id: keys
                     Layout.fillWidth: true
@@ -93,7 +115,7 @@ Popup {
                         required property var modelData
                         width: keys.width
                         contentItem: ColumnLayout {
-                            Label { text: (modelData.hint || modelData.keys.join(", ")) + (modelData.remove ? " · " + qsTr("Removed") : ""); Layout.fillWidth: true; wrapMode: Text.Wrap }
+                            Label { textFormat: Text.PlainText; text: (modelData.hint || modelData.keys.join(", ")) + (modelData.remove ? " · " + qsTr("Removed") : ""); Layout.fillWidth: true; wrapMode: Text.Wrap }
                             Label { visible: !modelData.remove; text: popup.sourceLabel(modelData.source) + (modelData.mode ? " · " + modelData.mode : ""); opacity: .65; Layout.fillWidth: true; elide: Text.ElideMiddle }
                             RowLayout {
                                 Button {
@@ -113,13 +135,40 @@ Popup {
                 }
                 Label { visible: !popup.keyRows.length; text: qsTr("No effective binding"); opacity: .65 }
                 RowLayout {
+                    visible: ["pane.split","pane.focus","pane.move","pane.resize","client.tab.move"].includes(popup.selectedAction)
+                    Layout.fillWidth: true
+                    Label { textFormat: Text.PlainText; text:qsTr("Direction") }
+                    ComboBox {
+                        id:directionPicker
+                        objectName:"shortcutDirection"
+                        Layout.fillWidth:true
+                        textRole:"title";valueRole:"value"
+                        model: [{value:"right",title:qsTr("Right")},{value:"left",title:qsTr("Left")}].concat(popup.selectedAction === "client.tab.move" ? [] : [{value:"down",title:qsTr("Down")},{value:"up",title:qsTr("Up")}]).concat(popup.selectedAction === "pane.split" ? [{value:"best_fit",title:qsTr("Best fit")}] : [])
+                    }
+                    SpinBox { id:resizeAmount;visible:popup.selectedAction==="pane.resize";Accessible.name:qsTr("Resize amount");from:1;to:100;value:5;editable:true }
+                }
+                RowLayout {
+                    visible:popup.selectedAction==="client.tab.goto"
+                    Label { textFormat: Text.PlainText; text:qsTr("Tab number") }
+                    SpinBox { id:tabIndex;objectName:"shortcutTabIndex";from:1;to:65535;value:1;editable:true;enabled:!lastTab.checked }
+                    CheckBox { id:lastTab;text:qsTr("Last") }
+                }
+                ColumnLayout {
+                    visible:popup.selectedAction==="session.select"
+                    Layout.fillWidth:true
+                    ComboBox { id:sessionPicker;objectName:"shortcutSession";Layout.fillWidth:true;model:frontend.state.sessions || [];textRole:"label";valueRole:"id";Accessible.name:qsTr("Session") }
+                    TextField { id:windowId;Layout.fillWidth:true;placeholderText:qsTr("Optional tab ID in that session") }
+                }
+                ComboBox { id:targetTab;visible:popup.selectedAction==="pane.move_to_tab";Layout.fillWidth:true;model:frontend.state.windows || [];textRole:"label";valueRole:"id";Accessible.name:qsTr("Destination tab") }
+                TextField { id:labelText;visible:["session.new","session.rename","client.tab.rename","pane.rename"].includes(popup.selectedAction);Layout.fillWidth:true;placeholderText:qsTr("Name (empty uses the default)") }
+                RowLayout {
                     visible: popup.selectedAction === "client.scroll"
-                    Label { text: qsTr("Lines (negative scrolls up)") }
+                    Label { textFormat: Text.PlainText; text: qsTr("Lines (negative scrolls up)") }
                     SpinBox { id: scrollLines; from: -65535; to: 65535; value: -10; editable: true }
                 }
                 RowLayout {
                     visible: popup.selectedAction === "client.mode.enter"
-                    Label { text: qsTr("Mode") }
+                    Label { textFormat: Text.PlainText; text: qsTr("Mode") }
                     ComboBox { id: modePicker; model: ((frontend.state.keymap && frontend.state.keymap.modes) || []).map(mode => mode.name) }
                     CheckBox { id: modeOnce; text: qsTr("One action") }
                 }
@@ -136,7 +185,7 @@ Popup {
                         Layout.preferredWidth: 64
                         Layout.minimumWidth: 52
                         text: qsTr("Bind")
-                        enabled: !actions.recording && actions.recordedKeys.length > 0
+                        enabled: popup.validArgs && !actions.recording && actions.recordedKeys.length > 0
                         onClicked: popup.frontend.recordShortcut(popup.selectedAction, actions.recordedKeys, popup.selectedArgs, bindingMode.currentIndex > 0 ? bindingMode.currentText : "", "bind")
                     }
                 }
@@ -150,6 +199,7 @@ Popup {
             opacity: .7
         }
         Label {
+            textFormat: Text.PlainText
             text: frontend.state.keymap ? frontend.state.keymap.path : ""
             Layout.fillWidth: true
             elide: Text.ElideMiddle
@@ -157,6 +207,7 @@ Popup {
         }
         Label {
             visible: Boolean(frontend.state.keymap && frontend.state.keymap.problem)
+            textFormat: Text.PlainText
             text: frontend.state.keymap ? (frontend.state.keymap.problem || "") : ""
             Layout.fillWidth: true
             wrapMode: Text.Wrap
@@ -165,6 +216,7 @@ Popup {
             model: (frontend.state.keymap && frontend.state.keymap.diagnostics) || []
             delegate: Label {
                 required property var modelData
+                textFormat: Text.PlainText
                 text: modelData.message
                 Layout.fillWidth: true
                 wrapMode: Text.Wrap

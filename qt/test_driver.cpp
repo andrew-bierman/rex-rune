@@ -152,6 +152,7 @@ void TestDriver::step() {
         m_terminal = selectedTerminal(m_window->contentItem(), pane);
         if (!m_terminal && !m_backend->snapshot()["connected"].toBool()) m_terminal = selectedTerminal(m_window->contentItem(), m_lastPane);
         const auto s = m_steps[m_index].toObject();
+        if (!m_waiting) QTextStream(stderr) << "Qt test step " << m_index << ": " << s["op"].toString() << Qt::endl;
         const auto op = s["op"].toString();
         bool complete = true;
         if (!m_terminal && op != "waitState" && op != "waitText" && op != "waitProblem" && op != "pause")
@@ -228,12 +229,12 @@ void TestDriver::step() {
         } else if (op == "controlKey") {
             QTest::keyClick(m_window, key(s["key"].toString()), modifiers(s["mods"].toString()));
         } else if (op == "wheel") {
-            const auto pos = m_terminal->mapToScene(QPointF(m_terminal->cellWidth() * (s["x"].toInt() + .5), m_terminal->cellHeight() * (s["y"].toInt() + .5)));
+            const auto pos = m_terminal->mapToScene(QPointF(m_terminal->gridLeft() + m_terminal->cellWidth() * (s["x"].toInt() + .5), m_terminal->gridTop() + m_terminal->cellHeight() * (s["y"].toInt() + .5)));
             QWheelEvent event(pos, m_window->mapToGlobal(pos.toPoint()), {}, QPoint(0, s["delta"].toInt()), Qt::NoButton,
                               modifiers(s["mods"].toString()), Qt::NoScrollPhase, false);
             QCoreApplication::sendEvent(m_window, &event);
         } else if (op == "pointer") {
-            const auto pos = m_terminal->mapToScene(QPointF(m_terminal->cellWidth() * (s["x"].toInt() + .5), m_terminal->cellHeight() * (s["y"].toInt() + .5))).toPoint();
+            const auto pos = m_terminal->mapToScene(QPointF(m_terminal->gridLeft() + m_terminal->cellWidth() * (s["x"].toInt() + .5), m_terminal->gridTop() + m_terminal->cellHeight() * (s["y"].toInt() + .5))).toPoint();
             const auto mods = modifiers(s["mods"].toString());
             const auto button = s["button"] == "middle" ? Qt::MiddleButton : s["button"] == "right" ? Qt::RightButton :
                 s["button"] == "back" ? Qt::BackButton : s["button"] == "forward" ? Qt::ForwardButton : Qt::LeftButton;
@@ -356,6 +357,8 @@ void TestDriver::step() {
             snapshot["qt_panes"] = panes;
             snapshot["qt_columns"] = m_terminal->columns();
             snapshot["qt_rows"] = m_terminal->rows();
+            snapshot["qt_grid_left"] = m_terminal->gridLeft();
+            snapshot["qt_grid_top"] = m_terminal->gridTop();
             snapshot["qt_cell_width"] = m_terminal->cellWidth();
             snapshot["qt_cell_height"] = m_terminal->cellHeight();
             writeJson(s["path"].toString(), snapshot);
@@ -372,8 +375,8 @@ void TestDriver::step() {
             const auto origin = m_terminal->mapToScene(QPointF(0, 0));
             const auto expected = QColor::fromRgb(frame["cursor_color"].toInt());
             for (int offset = 0; offset < 2; ++offset) {
-                const QPoint sample(qRound((origin.x() + (x + offset + .5) * m_terminal->cellWidth()) * image.devicePixelRatio()),
-                                    qRound((origin.y() + (y + 1) * m_terminal->cellHeight() - 2) * image.devicePixelRatio()));
+                const QPoint sample(qRound((origin.x() + m_terminal->gridLeft() + (x + offset + .5) * m_terminal->cellWidth()) * image.devicePixelRatio()),
+                                    qRound((origin.y() + m_terminal->gridTop() + (y + 1) * m_terminal->cellHeight() - 2) * image.devicePixelRatio()));
                 if (!image.rect().contains(sample) || image.pixelColor(sample) != expected) throw std::runtime_error("block cursor does not cover both wide cells");
             }
         } else if (op == "pause") {
