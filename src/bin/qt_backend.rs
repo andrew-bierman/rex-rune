@@ -9,7 +9,7 @@ use rex_rune::{
 use serde_json::{Value, json};
 use std::{
     io::{self, BufRead, Write},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 #[derive(Parser)]
@@ -51,6 +51,7 @@ fn main() -> Result<()> {
     let mut adapter = Adapter::default();
     let mut previous = Value::Null;
     let mut dirty = true;
+    let mut next_frame = Instant::now();
     loop {
         match receive.recv_timeout(Duration::from_millis(33)) {
             Ok(line) => {
@@ -74,13 +75,14 @@ fn main() -> Result<()> {
         for connection in model.terminals.values() {
             dirty |= connection.wake.drain().next().is_some();
         }
-        if dirty {
+        if dirty && Instant::now() >= next_frame {
             let next = adapter.state(&model);
             if next != previous {
                 publish(&next)?;
                 previous = next;
             }
             dirty = false;
+            next_frame = Instant::now() + Duration::from_millis(33);
         }
     }
     drop(host);

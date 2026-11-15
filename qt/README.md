@@ -1,0 +1,96 @@
+# Rex Qt Quick frontend
+
+This frontend uses Qt Quick Controls and a fixed-cell terminal item. Its child
+`rex-qt-backend` reuses Rex Rune's Rust connection workers and libghostty-vt.
+The original Rune executable and its default Cargo feature remain independent.
+The [backend protocol](../docs/qt-backend-protocol.md) documents the reusable
+boundary; the [verification record](../docs/qt-quick-status.md) records checked
+behavior and the remaining limitations.
+
+Build the backend from the repository root, with Rust and Zig available:
+
+```sh
+cargo build --locked --release --no-default-features --bin rex-qt-backend
+mkdir -p qt/build
+cd qt/build
+qmake6 ../rex-qt.pro
+make -j2
+./rex-qt --backend ../../target/release/rex-qt-backend --endpoint unix:///path/to/rex.sock --session SESSION_ID
+```
+
+Qt 6.7 or newer with Core, Gui, Qml, Quick and QuickControls2 development files,
+qmake6 and a C++17 compiler are required. This milestone was built against Qt
+6.12. The backend path defaults to `rex-qt-backend` beside the Qt executable;
+use an absolute `--backend` path when launching from another directory.
+
+The Session, Tab and Pane controls select existing server state. One pane is
+shown at a time. Closing this app leaves sessions and programs running. No
+frontend settings or Rune preferences are read or written. Ordinary keys reach
+Rex's `client.key`; clipboard paste uses the core paste command. The window
+claims size when it comes forward; typing and pasting also claim through the
+core. Navigation and copying do not claim size. Another client's owned size is
+respected until this client claims the pane again.
+
+Drag to select visible cells, then use Copy or Ctrl Shift C. Paste or Ctrl Shift
+V uses the Qt clipboard. Terminal actions (`⋯`) contains Select visible text.
+These two clipboard chords are reserved by this early frontend. All other
+supported keys, including Tab, Return and Escape, stay in the terminal.
+
+## Verification driver
+
+The separate test executable shares the production application, renderer and
+input handlers. QtTest injects real window events; it does not send terminal
+commands directly to the adapter. It exists only in the test build.
+
+```sh
+mkdir -p qt/build/test-driver
+cd qt/build/test-driver
+qmake6 ../../rex-qt.pro CONFIG+=test_driver
+make -j2
+QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME=generic QT_QUICK_BACKEND=software \
+  ./rex-qt-test-driver --backend /absolute/path/to/rex-qt-backend \
+  --endpoint unix:///private/test.sock --session PRIVATE_SESSION \
+  --script /path/to/steps.json --report /path/to/report.json
+```
+
+Scripts are JSON arrays. Operations are:
+
+- `waitText`: `text`, optional `timeout` in milliseconds (default 15000).
+- `waitState`: dot-separated `field` and exact JSON `value`.
+- `waitClipboard`: `text` substring and optional `timeout`.
+- `type`: ASCII `text`, sent as Qt key events.
+- `key`: `key` (Return, Escape, Tab, Backspace, Delete, arrows, Home, End,
+  PageUp, PageDown, Space, F1–F35 or a letter/digit), optional `mods`
+  (`ctrl+shift`, `alt`, `super`).
+- `paste`: Unicode `text`, placed in Qt clipboard and pasted with its real
+  keyboard shortcut.
+- `resize`: window `width` and `height`.
+- `select`: `control` (`sessions`, `tabs`, `panes`) and zero-based `index`;
+  selects through the ComboBox's keyboard interaction.
+- `selectAll`, `copy`: invoke the real toolbar/menu controls with pointer/key
+  events.
+- `snapshot`: `path` for backend state plus clipboard and Qt measured grid.
+- `screenshot`: `path` for only this Qt window's rendered image.
+- `pause`: `ms`, for observing asynchronous state transitions.
+
+A timeout or failed operation exits nonzero and records the last visible text.
+The driver runs focused key-payload contract checks before its script. Use only
+private disposable fixtures; the repository acceptance script owns server and
+session creation and cleanup.
+
+## Current limits
+
+This is a Linux first milestone, not full Rune parity. It has no split layout,
+scrollback navigation, terminal mouse reporting, uploads, downloads, hyperlinks,
+graphics protocols, settings/keymap editor or remote-control declarations.
+Copying covers the visible frame only. Underline variants other than single
+and double currently use a single line. IME commit text uses the core paste
+path; composition/preedit UI and non-US physical-key fidelity are not verified.
+The renderer paints fixed cells through QPainter and publishes JSON frames;
+large-grid performance has not been benchmarked. Offscreen QtTest verifies the
+real frontend event/render path but does not prove compositor focus, physical
+Wayland keyboard layout or desktop clipboard integration.
+
+No Omarchy, Quickshell or Renux implementation/assets are copied or required.
+Qt is dynamically linked and retains its upstream licenses. Project-authored
+files follow the repository's MIT license.
