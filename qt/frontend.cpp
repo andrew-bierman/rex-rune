@@ -1,5 +1,6 @@
 #include "frontend.h"
 #include <QClipboard>
+#include <QFile>
 #include <QGuiApplication>
 #include <QDesktopServices>
 #include <QFileInfo>
@@ -275,4 +276,21 @@ void Frontend::showDownload(const QString &host, quint64 id) {
         }
     }
     reportProblem("Saved download is no longer available.");
+}
+
+void Frontend::maintenanceAction(const QString &action, const QVariantMap &args) { send({{"op","maintenance"},{"action",action},{"args",QJsonObject::fromVariantMap(args)}}); }
+
+QString Frontend::maintenanceReport() const {
+    return m_state["maintenance"].toObject()["report"].toString() + "\nQt runtime " + QString::fromLatin1(qVersion()) + " (LGPLv3 / GPLv3 / commercial, per Qt module).";
+}
+void Frontend::copyMaintenanceReport() { QGuiApplication::clipboard()->setText(maintenanceReport()); }
+
+QString Frontend::maintenanceLicenses() const {
+    QString text;
+    for (const auto &name : {"Project", "rexrs-MIT", "rexrs-Apache", "Ghostty-wrapper", "Ghostty", "IBM-Plex-Mono", "Symbols-Nerd-Font"}) {
+        QFile file(QStringLiteral(":/licenses/") + QString::fromLatin1(name));
+        if (file.open(QIODevice::ReadOnly)) text += "\n\n" + QString::fromLatin1(name) + "\n" + QString::fromUtf8(file.readAll());
+    }
+    text += "\n\nQt: https://www.qt.io/licensing/ and https://doc.qt.io/qt-6/licenses-used-in-qt.html";
+    return text;
 }

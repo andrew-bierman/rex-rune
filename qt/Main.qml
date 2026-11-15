@@ -68,7 +68,7 @@ ApplicationWindow {
     }
     function find() { findBar.terminal = selectedTerminal(); findBar.open() }
     FindBar { id: findBar; anchors.top: parent.top; anchors.right: parent.right; z: 100; onClosed: root.restoreTerminal() }
-    readonly property bool panelOpen: actions.visible || hostSidebar.menuOpen || downloadDialog.visible || downloadsPopup.visible || serverPopup.visible || serverConfirm.visible || pairDialog.visible || directoryPopup.visible || activityPopup.visible || settingsPopup.visible || commandPopup.visible || shortcutPopup.visible || findBar.visible || workspaceUI.modalOpen || hostDialogs.modalOpen || hostSwitcher.visible || (root.width < 960 && hostDrawer.visible)
+    readonly property bool panelOpen: integrationsPopup.visible || updatesPopup.visible || aboutPopup.visible || actions.visible || hostSidebar.menuOpen || downloadDialog.visible || downloadsPopup.visible || serverPopup.visible || serverConfirm.visible || pairDialog.visible || directoryPopup.visible || activityPopup.visible || settingsPopup.visible || commandPopup.visible || shortcutPopup.visible || findBar.visible || workspaceUI.modalOpen || hostDialogs.modalOpen || hostSwitcher.visible || (root.width < 960 && hostDrawer.visible)
     function restoreTerminal() {
         if (root.panelOpen) return
         const term = selectedTerminal(); if (term) term.forceActiveFocus()
@@ -174,11 +174,17 @@ ApplicationWindow {
     Downloads { id: downloadsPopup; parent: Overlay.overlay; frontend: backend; onClosed: Qt.callLater(root.restoreTerminal) }
     Directory { id: directoryPopup; objectName: "directoryPopup"; parent: Overlay.overlay; frontend: backend; onClosed: Qt.callLater(root.restoreTerminal) }
     Commands { id: commandPopup; objectName: "commandsPopup"; parent: Overlay.overlay; actions: workspaceActions; onFinished: root.restoreTerminal() }
+    Integrations { id:integrationsPopup;objectName:"integrationsPopup";parent:Overlay.overlay;frontend:backend;onClosed:root.restoreTerminal() }
+    Updates { id:updatesPopup;objectName:"updatesPopup";parent:Overlay.overlay;frontend:backend;onClosed:root.restoreTerminal() }
+    About { id:aboutPopup;objectName:"aboutPopup";parent:Overlay.overlay;frontend:backend;onClosed:root.restoreTerminal() }
     Settings {
         id: settingsPopup
         objectName: "settingsPopup"
         parent: Overlay.overlay
         frontend: backend
+        onIntegrationsRequested: { close(); integrationsPopup.open() }
+        onUpdatesRequested: { close(); updatesPopup.open() }
+        onAboutRequested: { close(); aboutPopup.open() }
         onServerRequested: { close(); serverPopup.open() }
         onShortcutsRequested: { close(); shortcutPopup.open() }
         onFullscreenRequested: root.visibility === Window.FullScreen ? root.showNormal() : root.showFullScreen()

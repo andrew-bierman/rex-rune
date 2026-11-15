@@ -7,6 +7,9 @@ Popup {
     required property var frontend
     property double pendingApply:0
     signal serverRequested()
+    signal integrationsRequested()
+    signal updatesRequested()
+    signal aboutRequested()
     signal shortcutsRequested()
     signal fullscreenRequested()
     signal finished()
@@ -33,6 +36,11 @@ Popup {
             Button { objectName:"shortcutsSettingsButton";text:qsTr("Shortcuts…");onClicked:popup.shortcutsRequested() }
         }
         TextField { id:search;objectName:"settingsSearch";Layout.fillWidth:true;placeholderText:qsTr("Search all settings");onTextChanged: { if(scroll.contentItem) scroll.contentItem.contentY=0 } }
+        RowLayout {
+            Button { objectName:"integrationsSettingsButton";text:qsTr("Integrations…");onClicked:popup.integrationsRequested() }
+            Button { objectName:"updatesSettingsButton";text:qsTr("Updates…");onClicked:popup.updatesRequested() }
+            Button { objectName:"aboutSettingsButton";text:qsTr("About…");onClicked:popup.aboutRequested() }
+        }
         RowLayout {
             Button { text:qsTr("Terminal");checkable:true;checked:controller.page==="Terminal";onClicked:controller.page="Terminal" }
             Button { text:qsTr("Interface");checkable:true;checked:controller.page==="Interface";onClicked:controller.page="Interface" }

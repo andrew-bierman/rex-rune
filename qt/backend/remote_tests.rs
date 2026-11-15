@@ -43,6 +43,7 @@ fn duplicate_expired_and_replacement_epoch_calls_cannot_toggle_the_view_or_reply
         wake,
     });
     let mut backend = Backend {
+        maintenance: maintenance::Maintenance::default(),
         server: server::Server::default(),
         server_clock: None,
         confirmation: Value::Null,

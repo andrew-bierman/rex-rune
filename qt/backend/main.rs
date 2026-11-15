@@ -4,6 +4,7 @@ mod adapter;
 mod files;
 mod hosts;
 mod keymap;
+mod maintenance;
 mod notification_events;
 mod preferences;
 mod programs;
@@ -61,6 +62,7 @@ struct SetupReply {
     message: String,
 }
 struct Backend {
+    maintenance: maintenance::Maintenance,
     server: server::Server,
     server_clock: Option<Instant>,
     confirmation: Value,
@@ -118,6 +120,7 @@ impl Backend {
         let mut hosts = Hosts::new(&settings);
         hosts.connect_all(&settings);
         let mut backend = Self {
+            maintenance: maintenance::Maintenance::default(),
             server: server::Server::default(),
             server_clock: None,
             confirmation: Value::Null,
@@ -465,6 +468,10 @@ impl Backend {
             "unsupported adapter protocol version"
         );
         let op = request["op"].as_str().context("missing op")?;
+        if op == "maintenance" {
+            self.maintenance.request(request, &self.path)?;
+            return Ok(true);
+        }
         if op.starts_with("server_") {
             self.server_request(request)?;
             return Ok(true);
@@ -689,7 +696,8 @@ impl Backend {
     }
     fn poll(&mut self) -> Result<(bool, Vec<Value>)> {
         let previous_host = self.hosts.active.clone();
-        let mut dirty = self.hosts.poll(&mut self.settings) | self.discovery.poll();
+        let mut dirty =
+            self.hosts.poll(&mut self.settings) | self.discovery.poll() | self.maintenance.poll();
         if self.server_clock.is_some_and(|next| Instant::now() >= next) {
             self.server_clock = Some(Instant::now() + Duration::from_secs(60));
             dirty = true;
@@ -1165,6 +1173,7 @@ impl Backend {
             state["server"] = server_facts;
         }
         state["preferences"] = self.preferences.clone();
+        state["maintenance"] = self.maintenance.snapshot();
         state["hosts"] = catalog;
         self.augment_activity(&mut state);
         state
@@ -1413,3 +1422,6 @@ fn main() -> Result<()> {
     wait_for_hosts(Duration::from_secs(3));
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

@@ -120,7 +120,7 @@ session creation and cleanup.
 
 ## Current limits
 
-The Linux Qt frontend is progressing toward Rune source-build parity. Maintenance pages and final verification remain in progress. Server settings, explicit confirmed stop/setup and local pairing QR rendering are implemented; real tailnet/remote SSH operation remains unverified.
+The Linux Qt frontend is progressing toward Rune source-build parity. The planned Linux source-build feature set is implemented; final combined stability and verification remain in progress. Server settings, explicit confirmed stop/setup and local pairing QR rendering are implemented; real tailnet/remote SSH operation remains unverified.
 Terminal history/search/selection, mouse reports, safe links, effective shortcuts,
 workspace lifecycle and saved-host navigation are implemented and privately tested.
 Underline variants, local composition/preedit, static core-decoded graphics and Linux physical-key fidelity are implemented and privately verified. A real French-layout Wayland seat is covered. Third-party IME candidate UI and X11 runtime remain unverified. A private one/four-pane output benchmark records measured echo latency and snapshot traffic; see the status handoff for workload and limitations. Native CLIPBOARD/PRIMARY and middle paste have real isolated Wayland
@@ -159,3 +159,22 @@ The window fixture creates its own Rex server and sessions. Neither fixture uses
 the personal notification bus, audio player, display, server or settings.
 
 Saved-host remote navigation defaults off. Native Remote hosts settings enables only the eight view actions supported by Rune; typing, fields, key sequences, popups and menus pause navigation. Terminal input, clipboard, files, creation/destruction and dialogs are never remotely offered. Requests retain connection identity and use one-shot native authorization before the existing public-core operation.
+Settings → Integrations invokes the local `rex skill` command with
+`--autostart=false`, shows its JSON dry-run file-change preview, and requires
+confirmation before setup or removal. The explicit conflict replacement and
+session naming choices are passed to Rex; Rex retains responsibility for file
+ownership. OMP uses Rex's Pi target because those agents share skill files.
+
+Settings → Updates checks the public core's signed release metadata on demand,
+keeping verified version state beside the separate Qt profile. This is guidance
+for the reused Rune core, not a Qt binary update service. Update this source
+checkout and rebuild Qt and its private backend together. No installer, pacman
+helper, or application replacement is available from Qt. Settings → About shows
+the Qt runtime and reused core identity, dependency licenses and a fixed safe
+report; copying it includes no hosts, endpoints, sessions, paths or environment.
+
+`scripts/qt-maintenance-private.py --driver <test-driver> --backend <backend>`
+checks native Qt controls with software/offscreen rendering and fake local Rex
+outputs in a disposable HOME. It creates no real Rex sessions and invokes no
+installed client or installer. Signature acceptance/tampering is also covered by
+`cargo test --locked --no-default-features --lib minisign_verification_accepts_valid`.

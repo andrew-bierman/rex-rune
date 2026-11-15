@@ -231,3 +231,7 @@ The registry advertises exactly eight remote view actions. Saved-host consent de
 The adapter retains completed opaque call IDs for each live connection epoch because the core queues repeated IDs with fresh deadlines. Removed/disconnected/obsolete scopes are pruned. This preserves exact-once behavior at O(unique call IDs in each live epoch) memory cost; a TTL would allow replay.
 
 The QML-facing property exposes cached terminal metadata, omitting only unused cell/image arrays. Full cells/images remain in the private child protocol and C++ snapshot used by terminal painting. Notification delivery still consumes each complete publication once before bindings update; no state/event coalescing or protocol change was introduced by this optimization.
+
+## Local maintenance
+
+`maintenance` accepts only local status, preview, confirm, cancel and signed-check operations. A previewed fixed `rex skill` command is captured and consumed once; closing invalidates its generation. The CLI owns external file ownership rules. About copies fixed build/runtime/license identity, not workspace/config/environment data. Signed check state lives beside the separate Qt profile; update guidance never invokes a Rune installer or package helper.
