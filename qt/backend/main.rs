@@ -830,7 +830,11 @@ impl Backend {
             "This is not a view action"
         );
         keymap::validate(action, args)?;
-        let index = self.hosts.require_active(host)?;
+        let index = if action == "session.select" {
+            self.hosts.index(host)?
+        } else {
+            self.hosts.require_active(host)?
+        };
         ensure!(
             self.hosts.slots[index].model.connection_epoch == epoch,
             "Connection changed; action discarded"
@@ -919,7 +923,14 @@ impl Backend {
         if model.connection_epoch != pending.epoch {
             return Ok(());
         }
-        let unchanged = target["session"].as_str() == model.selected.as_deref()
+        let visible = &self.hosts.slots[self.hosts.index(&self.hosts.active)?].model;
+        let unchanged = target["visible_host"] == self.hosts.active
+            && target["visible_epoch"].as_u64() == Some(visible.connection_epoch)
+            && target["visible_session"].as_str() == visible.selected.as_deref()
+            && target["visible_window"].as_str()
+                == visible.window().and_then(|w| w.window_id.as_deref())
+            && target["visible_pane"].as_str() == visible.focused()
+            && target["session"].as_str() == model.selected.as_deref()
             && target["window"].as_str() == model.window().and_then(|w| w.window_id.as_deref())
             && target["pane"].as_str() == model.focused();
         if request["accepted"] != true || !unchanged {
@@ -975,10 +986,12 @@ impl Backend {
             &slot.model,
             &pending,
             self.settings.hosts[index].remote_control,
-            host == self.hosts.active
-                && self.remote.context.host == host
-                && self.remote.context.epoch == pending.epoch,
-            self.visible,
+            host == self.hosts.active,
+            self.visible
+                && self.remote.context.host == self.hosts.active
+                && self.hosts.index(&self.hosts.active).is_ok_and(|active| {
+                    self.remote.context.epoch == self.hosts.slots[active].model.connection_epoch
+                }),
             self.hosts.navigation_pending() || self.remote_navigation.is_some(),
         );
         if let Err(outcome) = policy {
@@ -993,7 +1006,10 @@ impl Backend {
             return self.remote_reply(host, pending, outcome);
         }
         if !authorized {
+            let visible = &self.hosts.slots[self.hosts.index(&self.hosts.active)?].model;
             let target = json!({"type":"remote_check","version":VERSION,"host":host,"epoch":pending.epoch,
+                "visible_host":self.hosts.active,"visible_epoch":visible.connection_epoch,
+                "visible_session":visible.selected,"visible_window":visible.window().and_then(|w|w.window_id.as_ref()),"visible_pane":visible.focused(),
                 "call_id":pending.request.call_id,"action":pending.request.action,"session":slot.model.selected,"window":slot.model.window().and_then(|w|w.window_id.as_ref()),"pane":slot.model.focused()});
             self.after_state.push(target.clone());
             self.remote_checks.push((host.into(), pending, target));

@@ -160,7 +160,14 @@ def main():
         perform(1, 'session.select', {'session_id': sessions[1]}, code='off')
         send('host', host=state['hosts']['rows'][1]['id'], epoch=state['hosts']['rows'][1]['epoch'], action='remote_control', args={'enabled': True})
         wait(lambda s: s['hosts']['rows'][1]['remote_control'], 'other host consent was not saved')
-        perform(1, 'session.select', {'session_id': sessions[1]}, code='not available')
+        perform(1, 'client.tab.next', code='not available')
+        perform(1, 'session.select', {'session_id': sessions[0]}, code='not')
+        perform(1, 'session.select', {'session_id': sessions[1]})
+        wait(lambda s: s['host'] == s['hosts']['rows'][1]['id'] and s['session'] == sessions[1], 'inactive requester did not select its own session')
+        send('remote_context', modal=False, field=False, sequence=False, keypress=False)
+        perform(0, 'session.select', {'session_id': sessions[0]})
+        wait(lambda s: s['host'] == s['hosts']['rows'][0]['id'] and s['session'] == sessions[0], 'first host did not return')
+        send('remote_context', modal=False, field=False, sequence=False, keypress=False)
         for flag in ('modal', 'field', 'sequence'):
             values = dict(modal=False, field=False, sequence=False, keypress=False)
             values[flag] = True
@@ -184,6 +191,11 @@ def main():
             # The native event toggles host consent and captures only this fixture window.
             script = work / 'native.json'
             steps = [{'op': 'waitState', 'field': 'terminal.connected', 'value': True},
+                     {'op': 'snapshot', 'path': str(work / 'native-ready.json')},
+                     {'op': 'waitState', 'field': 'host', 'value': 'host-2'},
+                     {'op': 'waitState', 'field': 'session', 'value': sessions[1]},
+                     {'op': 'snapshot', 'path': str(work / 'native-selected.json')},
+                     {'op': 'waitState', 'field': 'host', 'value': 'host-1'},
                      {'op': 'resize', 'width': 640, 'height': 480},
                      {'op': 'click', 'control': 'moreButton'},
                      {'op': 'waitControl', 'control': 'actionsMenu', 'property': 'visible', 'value': True},
@@ -216,6 +228,10 @@ def main():
             driver = subprocess.Popen([str(args.driver.resolve()), '--backend', str(args.backend.resolve()), '--config', str(config),
                                        '--script', str(script), '--report', str(work / 'native-report.json')], env=env, stdout=log, stderr=log)
             processes.append(driver)
+            poll(lambda: (work / 'native-ready.json').exists(), 'native requester fixture did not attach')
+            perform(1, 'session.select', {'session_id': sessions[1]})
+            poll(lambda: (work / 'native-selected.json').exists(), 'native Qt did not select the inactive requester session')
+            perform(0, 'session.select', {'session_id': sessions[0]})
             poll(lambda: (work / 'native-more.json').exists(), 'native More menu did not open')
             perform(0, 'client.sidebar.toggle', code='not available')
             poll(lambda: (work / 'before-consent.json').exists(), 'native settings did not open')

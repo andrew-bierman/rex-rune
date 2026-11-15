@@ -265,7 +265,7 @@ ApplicationWindow {
         function onRemoteCheck(request) {
             root.remoteContext(false)
             const field = root.activeFocusItem && root.activeFocusItem.cursorPosition !== undefined && root.activeFocusItem.text !== undefined
-            const unchanged = request.host === state.host && request.epoch === state.epoch && request.session === state.session && request.window === state.window && (!request.action.startsWith("pane.") || request.pane === state.pane)
+            const unchanged = request.visible_host === state.host && request.visible_epoch === state.epoch && request.visible_session === state.session && request.visible_window === state.window && request.visible_pane === state.pane
             backend.authorizeRemote(request, unchanged && root.active && root.visible && !root.panelOpen && !field && workspaceActions.pending.length === 0)
         }
     }

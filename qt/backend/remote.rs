@@ -97,7 +97,7 @@ impl Requests {
         }
         let selecting = request.action == "session.select";
         if !self.context.ready
-            || !active
+            || (!selecting && !active)
             || !visible
             || self.context.modal
             || self.context.field

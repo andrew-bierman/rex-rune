@@ -17,8 +17,8 @@ fn pending(id: &str) -> Pending {
 }
 #[test]
 fn duplicate_expired_and_replacement_epoch_calls_cannot_toggle_the_view_or_reply_twice() {
-    let dir = tempfile::tempdir_in(std::env::var_os("TMPDIR").unwrap()).unwrap();
-    let settings = Settings {
+    let dir = tempfile::tempdir().unwrap();
+    let mut settings = Settings {
         hosts: vec![Host {
             label: "Fixture".into(),
             endpoint: format!("unix://{}/unused.sock", dir.path().display()),
@@ -28,6 +28,13 @@ fn duplicate_expired_and_replacement_epoch_calls_cannot_toggle_the_view_or_reply
         }],
         ..Default::default()
     };
+    settings.hosts.push(Host {
+        label: "Visible fixture".into(),
+        endpoint: format!("unix://{}/visible.sock", dir.path().display()),
+        remote_control: false,
+        collapsed: false,
+        shell: None,
+    });
     let mut hosts = Hosts::new(&settings);
     let model = HostModel {
         connected: true,
@@ -166,6 +173,34 @@ fn duplicate_expired_and_replacement_epoch_calls_cannot_toggle_the_view_or_reply
             ..
         }
     ));
+    backend.hosts.active = "host-2".into();
+    backend.remote.context.host = "host-2".into();
+    backend.remote.context.epoch = 0;
+    let mut select = pending("visible-epoch-race");
+    select.request = serde_json::from_value(json!({"call_id":"visible-epoch-race", "action":"session.select", "args":{"session_id":"own"}})).unwrap();
+    backend.remote_perform("host-1", select).unwrap();
+    let mut authorization = backend.remote_checks.last().unwrap().2.clone();
+    assert_eq!(authorization["host"], "host-1");
+    assert_eq!(authorization["epoch"], 3);
+    assert_eq!(authorization["visible_host"], "host-2");
+    assert_eq!(authorization["visible_epoch"], 0);
+    authorization["accepted"] = json!(true);
+    backend.hosts.slots[1].model.connection_epoch = 1;
+    backend.authorize_remote(&authorization).unwrap();
+    assert_eq!(backend.hosts.active, "host-2");
+    assert!(matches!(
+        received.recv().unwrap(),
+        HostCommand::PerformReply {
+            outcome: Outcome::Error {
+                code: "refused",
+                ..
+            },
+            ..
+        }
+    ));
+    backend.hosts.active = "host-1".into();
+    backend.remote.context.host = "host-1".into();
+    backend.remote.context.epoch = 3;
     backend.hosts.slots[0].model.connection_epoch = 4;
     backend
         .remote_perform("host-1", pending("replacement"))
@@ -174,5 +209,92 @@ fn duplicate_expired_and_replacement_epoch_calls_cannot_toggle_the_view_or_reply
     assert!(
         received.is_empty(),
         "the replacement socket must receive no stale reply"
+    );
+}
+
+#[test]
+fn inactive_session_selection_keeps_visible_context_and_input_guards() {
+    let mut requests = remote::Requests::default();
+    requests.context.ready = true;
+    let model = HostModel {
+        connected: true,
+        connection_epoch: 3,
+        ..Default::default()
+    };
+    let mut select = pending("inactive");
+    select.request = serde_json::from_value(
+        json!({"call_id":"inactive", "action":"session.select", "args":{"session_id":"own"}}),
+    )
+    .unwrap();
+    assert!(
+        requests
+            .policy(&model, &select, true, false, true, false)
+            .is_ok()
+    );
+    for action in [
+        "client.sidebar.toggle",
+        "client.tab.next",
+        "client.tab.previous",
+        "client.tab.goto",
+        "pane.focus",
+        "pane.zoom",
+        "pane.scroll",
+    ] {
+        let mut other = pending(action);
+        other.request.action = action.into();
+        other.request.args = match action {
+            "client.tab.goto" => json!({"index":1}),
+            "pane.focus" => json!({"direction":"left"}),
+            "pane.scroll" => json!({"lines":1}),
+            _ => json!({}),
+        };
+        assert!(
+            requests
+                .policy(&model, &other, true, false, true, false)
+                .is_err(),
+            "{action}"
+        );
+    }
+    assert!(
+        requests
+            .policy(&model, &select, false, false, true, false)
+            .is_err()
+    );
+    assert!(
+        requests
+            .policy(&model, &select, true, false, false, false)
+            .is_err()
+    );
+    assert!(
+        requests
+            .policy(&model, &select, true, false, true, true)
+            .is_err()
+    );
+    requests.context.modal = true;
+    assert!(
+        requests
+            .policy(&model, &select, true, false, true, false)
+            .is_err()
+    );
+    requests.context.modal = false;
+    requests.context.field = true;
+    assert!(
+        requests
+            .policy(&model, &select, true, false, true, false)
+            .is_err()
+    );
+    requests.context.field = false;
+    requests.context.sequence = true;
+    assert!(
+        requests
+            .policy(&model, &select, true, false, true, false)
+            .is_err()
+    );
+    requests.context.sequence = false;
+    requests.context.last_key = Some(Instant::now());
+    assert!(
+        requests
+            .policy(&model, &select, true, false, true, false)
+            .is_err()
     );
 }
