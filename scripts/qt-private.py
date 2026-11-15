@@ -40,6 +40,7 @@ def main():
     for tool in ('rex', 'nvim'):
         assert shutil.which(tool), f'{tool} is required'
     assert args.driver.is_file() and args.backend.is_file(), 'Build the Qt driver and Rust backend first'
+    (ROOT / '.build-tools').mkdir(exist_ok=True)
     work = args.artifacts or Path(tempfile.mkdtemp(prefix='qt-acceptance-', dir=ROOT / '.build-tools'))
     work = work.resolve()
     work.mkdir(parents=True, exist_ok=True)
@@ -175,7 +176,11 @@ def main():
         client = run('main.json', 'main-report.json')
         assert client.wait(timeout=150) == 0, 'Qt event acceptance failed; inspect main-report.json and main.json.log'
         assert editor.read_text() == 'qt-editor-save\n', 'editor did not save exact expected bytes'
-        assert (work / 'chords.bin').read_bytes() == b'\x1b[99;6u\x1b[99;6:3u\x1b[118;6u\x1b[118;6:3u', 'modified key presses/releases did not reach the raw PTY'
+        chords = (work / 'chords.bin').read_bytes()
+        # The shell may start the helper before the launching Return is released.
+        # Kitty reports that release if its mode is already enabled at that point.
+        chords = chords.removeprefix(b'\x1b[13;1:3u')
+        assert chords == b'\x1b[99;6u\x1b[99;6:3u\x1b[118;6u\x1b[118;6:3u', 'modified key presses/releases did not reach the raw PTY'
         clipboard = json.loads((work / 'clipboard.json').read_text())
         assert 'QT_SHELL_ready' in clipboard['clipboard'], 'visible selection did not reach Qt clipboard'
         assert 'Qt wide: 界 é ┌─┐' in clipboard['clipboard'], 'Unicode changed during copying'
