@@ -4,7 +4,7 @@ The user settled this architecture on 2026-11-15: consume Rex Rune improvements 
 
 ## Boundary and diff audit
 
-The only upstream build integration is the four-line `rex-qt-backend` binary entry in `Cargo.toml`. Rust adapter code is private to that executable in `qt/backend/`; C++/QML is in `qt/`. The only core source change is the isolated live-theme reset fix below. `vendor/` and `Cargo.lock` remain unchanged. Original default `ui` features and Rune targets are unchanged. MIT licensing and upstream/vendor attribution remain intact; no upstream code was copied into a second implementation.
+The only upstream build integration is the four-line `rex-qt-backend` binary entry in `Cargo.toml`. Rust adapter code is private to that executable in `qt/backend/`; C++/QML is in `qt/`. Core source changes are limited to the isolated live-theme reset and connection-scoped UI queue fixes below. `vendor/` and `Cargo.lock` remain unchanged. Original default `ui` features and Rune targets are unchanged. MIT licensing and upstream/vendor attribution remain intact; no upstream code was copied into a second implementation.
 
 The adapter translates JSON requests into existing `HostCommand`/terminal commands and serializes existing `HostModel`/Ghostty `Frame` state. Its pending navigation IDs, selected pane and stale-target guards are frontend interaction state, not a replacement session/reconnection engine. Qt's frame rendering, keyboard event conversion and clipboard are necessarily frontend-specific. Socket connection, reconnect/backoff, session discovery, stream ownership, key delivery, resize delivery, authoritative ownership state and VT parsing stay in upstream workers.
 

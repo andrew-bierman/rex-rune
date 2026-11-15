@@ -2,6 +2,9 @@
 #include "settings.h"
 
 #include <QClipboard>
+#include <QMimeData>
+#include <QDragEnterEvent>
+#include <QDropEvent>
 #include <QDesktopServices>
 #include <QUrl>
 #include <QStyleHints>
@@ -103,6 +106,7 @@ QJsonObject terminalKey(const QKeyEvent &event, const QString &action) {
 }
 
 TerminalItem::TerminalItem(QQuickItem *parent) : QQuickPaintedItem(parent) {
+    setFlag(QQuickItem::ItemAcceptsDrops, true);
     setFlag(ItemAcceptsInputMethod);
     setAcceptedMouseButtons(Qt::LeftButton | Qt::MiddleButton | Qt::RightButton);
     setActiveFocusOnTab(false);
@@ -313,6 +317,19 @@ void TerminalItem::paint(QPainter *p) {
 }
 
 bool TerminalItem::event(QEvent *event) {
+    if (event->type() == QEvent::DragEnter || event->type() == QEvent::DragMove) {
+        auto *drag = static_cast<QDragMoveEvent *>(event);
+        const auto urls = drag->mimeData()->urls();
+        if (!urls.isEmpty() && std::all_of(urls.begin(), urls.end(), [](const QUrl &url) { return url.isLocalFile(); })) drag->acceptProposedAction();
+        else drag->ignore();
+        return true;
+    }
+    if (event->type() == QEvent::Drop) {
+        auto *drop = static_cast<QDropEvent *>(event);
+        if (uploadUrls(drop->mimeData())) drop->acceptProposedAction();
+        else drop->ignore();
+        return true;
+    }
     if (event->type()==QEvent::DevicePixelRatioChange) { m_lastResize.clear();resizeTerminal(); }
     if (event->type() == QEvent::ShortcutOverride) { event->accept(); return true; }
     // QQuickItem normally treats Tab as focus traversal before keyPressEvent.
@@ -507,7 +524,22 @@ void TerminalItem::finishCopy() {
         m_copyRevision = 0;
     }
 }
+bool TerminalItem::uploadUrls(const QMimeData *mime) {
+    if (!mime || !mime->hasUrls()) return false;
+    QJsonArray paths;
+    for (const QUrl &url : mime->urls()) {
+        if (!url.isLocalFile()) {
+            if (m_frontend) m_frontend->reportProblem("Only local files can be uploaded.");
+            return true;
+        }
+        paths.append(url.toLocalFile());
+    }
+    if (!paths.isEmpty() && m_frontend) m_frontend->sendPane(m_paneId, "files.upload", {{"paths", paths}});
+    return !paths.isEmpty();
+}
+
 void TerminalItem::paste() {
+    if (uploadUrls(QGuiApplication::clipboard()->mimeData())) return;
     if (m_frontend) m_frontend->sendPane(m_paneId, "paste", {{"text", QGuiApplication::clipboard()->text()}});
     forceActiveFocus();
 }

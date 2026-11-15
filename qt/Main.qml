@@ -67,7 +67,7 @@ ApplicationWindow {
     }
     function find() { findBar.terminal = selectedTerminal(); findBar.open() }
     FindBar { id: findBar; anchors.top: parent.top; anchors.right: parent.right; z: 100; onClosed: root.restoreTerminal() }
-    readonly property bool panelOpen: activityPopup.visible || settingsPopup.visible || commandPopup.visible || shortcutPopup.visible || findBar.visible || workspaceUI.modalOpen || hostDialogs.modalOpen || hostSwitcher.visible || (root.width < 960 && hostDrawer.visible)
+    readonly property bool panelOpen: directoryPopup.visible || activityPopup.visible || settingsPopup.visible || commandPopup.visible || shortcutPopup.visible || findBar.visible || workspaceUI.modalOpen || hostDialogs.modalOpen || hostSwitcher.visible || (root.width < 960 && hostDrawer.visible)
     function restoreTerminal() {
         if (root.panelOpen) return
         const term = selectedTerminal(); if (term) term.forceActiveFocus()
@@ -121,6 +121,8 @@ ApplicationWindow {
         case "client.tab.goto": backend.hostAction("tab_goto", {index: args.index}); break
         case "session.select": backend.hostAction("navigate", {session: args.session_id, window: args.window_id || ""}); break
         case "pane.actions": workspaceUI.openPaneMenu(root.width / 2, 52, state.pane); break
+        case "pane.insert_path":
+        case "pane.go_to_directory": backend.fileAction("directory.open", {go: id === "pane.go_to_directory"}, {host: state.host, epoch: state.epoch, session: state.session, window: state.window, pane: state.pane}); break
         case "client.search": find(); break
         case "client.find.next": if (term) term.searchStep(false); break
         case "client.find.previous": if (term) term.searchStep(true); break
@@ -155,6 +157,7 @@ ApplicationWindow {
         onViewRequested: sessionView => backend.activityAction("view", {view: sessionView ? "session" : "priority"})
     }
     Timer { interval: 60000; repeat: true; running: activityPopup.visible; onTriggered: backend.activityAction("refresh") }
+    Directory { id: directoryPopup; objectName: "directoryPopup"; parent: Overlay.overlay; frontend: backend; onClosed: Qt.callLater(root.restoreTerminal) }
     Commands { id: commandPopup; objectName: "commandsPopup"; parent: Overlay.overlay; actions: workspaceActions; onFinished: root.restoreTerminal() }
     Settings {
         id: settingsPopup
@@ -419,6 +422,7 @@ ApplicationWindow {
                 }
             }
         }
+        UploadStatus { frontend: backend; Layout.fillWidth: true; Layout.leftMargin: 8; Layout.rightMargin: 8 }
         Item {
             id: canvas
             objectName: "terminalCanvas"

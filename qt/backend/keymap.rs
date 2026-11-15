@@ -34,6 +34,24 @@ struct Spec {
 
 const ACTIONS: &[Spec] = &[
     Spec {
+        id: "pane.insert_path",
+        title: "Insert path…",
+        category: "Terminal",
+        offline: false,
+        repeats: false,
+        arguments: Arguments::None,
+        remote: Remote::Never,
+    },
+    Spec {
+        id: "pane.go_to_directory",
+        title: "Go to directory…",
+        category: "Terminal",
+        offline: false,
+        repeats: false,
+        arguments: Arguments::None,
+        remote: Remote::Never,
+    },
+    Spec {
         id: "client.sidebar.toggle",
         title: "Toggle sidebar",
         category: "Navigate",
@@ -462,6 +480,18 @@ fn schema(arguments: Arguments) -> Option<Value> {
             json!({"type":"object","properties":{"lines":{"type":"integer"}},"required":["lines"],"additionalProperties":false}),
         ),
     }
+}
+
+pub fn requires_person(id: &str) -> bool {
+    matches!(
+        id,
+        "pane.insert_path"
+            | "pane.go_to_directory"
+            | "pane.download"
+            | "client.pair_device"
+            | "client.server.stop"
+            | "client.server.setup"
+    )
 }
 
 pub fn validate(id: &str, args: &Value) -> Result<()> {

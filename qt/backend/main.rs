@@ -1,6 +1,7 @@
 //! Child process owned by the Qt frontend. Standard output is JSON lines only.
 mod activity;
 mod adapter;
+mod files;
 mod hosts;
 mod keymap;
 mod preferences;
@@ -425,6 +426,25 @@ impl Backend {
             return Ok(true);
         }
         let index = self.hosts.require_target(&id, epoch)?;
+        if op.starts_with("directory.") || op == "files.upload" {
+            let slot = &self.hosts.slots[index];
+            let connection = slot
+                .connection
+                .as_ref()
+                .context("host is disconnected; file action discarded")?;
+            let adapter = self
+                .adapters
+                .get_mut(&id)
+                .context("host adapter unavailable")?;
+            let mut next = self.settings.clone();
+            let changed = adapter.file_request(connection, &mut next, request)?;
+            if changed {
+                next.save(&self.path)?;
+                self.settings = next;
+                self.synchronize()?;
+            }
+            return Ok(true);
+        }
         if op == "reconnect" && self.hosts.slots[index].connection.is_none() {
             let mut connect = request.clone();
             connect["action"] = json!("connect");
@@ -528,6 +548,9 @@ impl Backend {
         state["host"] = json!(self.hosts.active);
         if state["workspace"].is_object() {
             state["workspace"]["host"] = json!(self.hosts.active);
+        }
+        if state["files"]["directory"].is_object() {
+            state["files"]["directory"]["target"]["host"] = json!(self.hosts.active);
         }
         let mut catalog = self.hosts.state(&self.settings);
         catalog["discovery"] = self.discovery.state();

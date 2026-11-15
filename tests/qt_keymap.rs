@@ -54,6 +54,8 @@ fn recorded_binding_wins_without_rewriting_the_user_layer() {
 
 #[test]
 fn declarations_only_advertise_real_client_actions_and_a_remote_decision() {
+    assert!(qt_keymap::requires_person("pane.insert_path"));
+    assert!(!qt_keymap::requires_person("pane.copy"));
     let request = qt_keymap::declaration(&Settings::default(), 4);
     assert_eq!(request.generation, 4);
     assert!(

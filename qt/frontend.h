@@ -39,6 +39,7 @@ public:
     Q_INVOKABLE quint64 savePreferences(const QVariantMap &patch);
     Q_INVOKABLE void recordShortcut(const QString &action, const QStringList &keys, const QVariantMap &args, const QString &mode, const QString &operation);
     Q_INVOKABLE void performAction(const QString &action, const QVariantMap &args, const QString &origin);
+    Q_INVOKABLE void fileAction(const QString &op, const QVariantMap &fields, const QVariantMap &captured);
     Q_INVOKABLE void workspaceAction(const QString &action, const QVariantMap &args, const QVariantMap &captured);
     Q_INVOKABLE void activityAction(const QString &action, const QVariantMap &args = {});
     Q_INVOKABLE void hostAction(const QString &action, const QVariantMap &args = {}, const QVariantMap &captured = {});

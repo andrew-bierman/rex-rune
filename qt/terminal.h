@@ -8,6 +8,8 @@
 #include <QHash>
 #include <QElapsedTimer>
 
+class QMimeData;
+
 QJsonObject terminalKey(const QKeyEvent &event, const QString &action);
 
 class TerminalItem : public QQuickPaintedItem {
@@ -83,6 +85,7 @@ private:
     int cellAt(const QPointF &point) const;
     QString selectedText() const;
     void finishCopy();
+    bool uploadUrls(const QMimeData *mime);
     bool pointer(QMouseEvent *event, const QString &action);
     void selection(const QString &phase, const QPointF &point, int clicks = 1);
     quint64 m_selectionRevision = 0;

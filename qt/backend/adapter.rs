@@ -28,6 +28,7 @@ pub struct Adapter {
     pub keymap_generation: u64,
     pub endpoint: String,
     workspace: crate::workspace::Workspace,
+    files: crate::files::Files,
     pane: Option<String>,
 }
 
@@ -70,7 +71,34 @@ fn pane_title(model: &HostModel, block: &session::LayerBlock, generated: bool) -
 impl Adapter {
     pub fn clear_captures(&mut self) {
         self.workspace.clear();
+        self.files.clear();
         self.pane = None;
+    }
+    pub fn file_request(
+        &mut self,
+        host: &HostConnection,
+        settings: &mut rex_rune::settings::Settings,
+        request: &Value,
+    ) -> Result<bool> {
+        let model = host.model.lock().expect("host model").clone();
+        let connection = if request["op"] == "directory.close" {
+            None
+        } else {
+            Some(self.connection_scope(&model, request, true, false, false)?)
+        };
+        let outcome = self
+            .files
+            .handle(&model, settings, &self.endpoint, request)?;
+        for command in outcome.commands {
+            host.commands.send(command)?;
+        }
+        if let Some(text) = outcome.paste {
+            connection
+                .context("terminal unavailable")?
+                .commands
+                .try_send(Command::Paste(text))?;
+        }
+        Ok(outcome.settings_changed)
     }
     pub fn workspace_commands(
         &mut self,
@@ -97,6 +125,7 @@ impl Adapter {
             .into_iter()
             .filter(|queued| {
                 queued.generation == self.keymap_generation
+                    && !crate::keymap::requires_person(&queued.action.action)
                     && crate::keymap::known(&queued.action.action)
                     && crate::keymap::validate(
                         &queued.action.action,
@@ -403,6 +432,7 @@ impl Adapter {
             "zoomed":model.window().is_some_and(|window|window.zoomed_block_id.is_some()),
             "windows":windows,"panes":panes,"dividers":dividers,"terminal":terminal_state,"frame":frame,
             "keymap":crate::keymap::state(model, &self.settings, self.keymap_generation),
+            "files":self.files.state(model, &self.settings, &self.endpoint),
             "workspace":self.workspace.state(model)})
     }
 }
@@ -799,6 +829,28 @@ mod tests {
         );
         assert!(adapter.connection(&model, &request, false).is_err());
     }
+    #[test]
+    fn a_returned_action_cannot_open_a_person_only_path_browser() {
+        let mut model = fixture();
+        let adapter = Adapter {
+            keymap_generation: 7,
+            ..Default::default()
+        };
+        assert!(crate::keymap::known("pane.insert_path"));
+        model
+            .client_actions
+            .push(rex_rune::connection::actions::Queued {
+                generation: 7,
+                session: Some("session-a".into()),
+                block: Some("pane-a".into()),
+                action: rexrs::api::client::ClientAction {
+                    action: "pane.insert_path".into(),
+                    args: None,
+                },
+            });
+        assert!(adapter.take_actions(&mut model).is_empty());
+    }
+
     #[test]
     fn queued_client_actions_are_taken_once_and_reject_old_maps_targets_and_arguments() {
         let mut model = fixture();

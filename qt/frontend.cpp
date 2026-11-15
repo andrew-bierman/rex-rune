@@ -99,6 +99,16 @@ void Frontend::hostAction(const QString &action, const QVariantMap &args, const 
     message["args"] = QJsonObject::fromVariantMap(args);
     send(message);
 }
+void Frontend::fileAction(const QString &op, const QVariantMap &fields, const QVariantMap &captured) {
+    if (op != "directory.open" && op != "directory.edit" && op != "directory.choose" && op != "directory.close") {
+        reportProblem("Unknown directory action.");
+        return;
+    }
+    auto message = QJsonObject::fromVariantMap(fields);
+    for (auto it = captured.begin(); it != captured.end(); ++it) message[it.key()] = QJsonValue::fromVariant(it.value());
+    message["op"] = op;
+    send(message);
+}
 void Frontend::workspaceAction(const QString &action, const QVariantMap &args, const QVariantMap &captured) {
     auto message = QJsonObject::fromVariantMap(captured);
     message["op"] = "workspace";

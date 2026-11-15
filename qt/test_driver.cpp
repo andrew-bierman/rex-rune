@@ -3,6 +3,9 @@
 #include "terminal.h"
 
 #include <QClipboard>
+#include <QMimeData>
+#include <QDragEnterEvent>
+#include <QDropEvent>
 #include <QDesktopServices>
 #include <QUrl>
 #include <QFile>
@@ -274,6 +277,21 @@ void TestDriver::step() {
             QInputMethodEvent event;
             event.setCommitString(s["text"].toString());
             QCoreApplication::sendEvent(m_terminal, &event);
+        } else if (op == "setMimeClipboard" || op == "fileDrop") {
+            auto *mime = new QMimeData;
+            QList<QUrl> urls;
+            for (const auto &path : s["paths"].toArray()) urls.append(QUrl::fromLocalFile(path.toString()));
+            mime->setUrls(urls);
+            if (op == "setMimeClipboard") QGuiApplication::clipboard()->setMimeData(mime);
+            else {
+                const auto point = QPointF(m_terminal->width() / 2, m_terminal->height() / 2);
+                QDragEnterEvent enter(point.toPoint(), Qt::CopyAction, mime, Qt::LeftButton, Qt::NoModifier);
+                QCoreApplication::sendEvent(m_terminal, &enter);
+                QDropEvent drop(point, Qt::CopyAction, mime, Qt::LeftButton, Qt::NoModifier);
+                QCoreApplication::sendEvent(m_terminal, &drop);
+                delete mime;
+                if (!drop.isAccepted()) throw std::runtime_error("native file drop was refused");
+            }
         } else if (op == "paste") {
             QGuiApplication::clipboard()->setText(s["text"].toString());
             clickControl("pasteButton");
