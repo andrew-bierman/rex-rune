@@ -1,3 +1,17 @@
+# Andrew's agent preferences
+
+## Keep agent browser work off the primary desktop
+
+Use an isolated agent workspace or CUA desktop for browser research and automation. A new window or a small Hyprland window on Andrew's primary desktop is not isolation.
+
+Do not open browser or terminal windows on the primary desktop, switch its workspaces, or steal focus unless Andrew explicitly requests that interaction. Keep routine work in the agent's existing terminal session.
+
+If isolated CUA is unavailable, use a headless browser or a separate virtual display. Never fall back silently to Andrew's native DISPLAY or WAYLAND_DISPLAY. If an isolated alternative cannot complete the task, report the limitation instead of taking over the primary desktop.
+
+Check the browser's launch mode before starting it. For Camofox, do not use CAMOFOX_INTERACTIVE=desktop for autonomous research; use its isolated/headless mode. Do not close or move Andrew's unrelated windows when cleaning up agent-owned resources.
+
+--- project-doc ---
+
 # Contributor and agent guide
 
 Rex Rune is a native Linux client for Rex terminal servers, written in Rust on Rune. See [README.md](README.md) for what it does and how to run it, [PRODUCT.md](PRODUCT.md) for product principles and [DESIGN.md](DESIGN.md) for the design system.
@@ -91,7 +105,7 @@ Some probes connect to the configured Rex server and create sessions there. Of t
 ## Qt downstream desktop isolation
 
 - Run automated Qt GUI checks only offscreen or on a disposable private compositor, with private HOME, config, clipboard and service fixtures. Do not use the person's desktop for automated input, captures or stress tests.
-- Use a dedicated Hyprland workspace, such as `rex-qt-development`, for every visible agent-operated demo or computer-use window. Launch there without switching the person's active workspace, verify placement, and never crowd the primary workspace. Do not change global window rules or desktop configuration to do this.
+- Use a separate agent desktop or virtual display for visible agent-operated demos and computer use. Another Hyprland workspace on Andrew's desktop is not isolation. Do not open windows on the primary desktop or change its workspace/focus without an explicit request for that interaction; do not change global window rules or desktop configuration.
 - Never attach to, resize, type into or capture an unrelated working pane or window. Keep the existing `rex-client-comparison` Rex group label; name only newly created task tabs or panes.
 - If the desktop becomes unresponsive or not-responding dialogs start repeating, stop this task's GUI clients and probes first. Preserve Rex servers, active sessions and unrelated work; resume GUI checks only after the person has indicated recovery. Keep visible demos closed until startup, popup, disconnect/reconnect and output responsiveness checks pass.
 
