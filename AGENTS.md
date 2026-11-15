@@ -119,3 +119,7 @@ Some probes connect to the configured Rex server and create sessions there. Of t
 - The Nix package (`nix/package.nix`) pins fetched sources by hash. A Rune bump also means updating the `rune-kit` hash in `cargoLock.outputHashes`; a `ghostty-vt` bump also means updating the Ghostty source archive and the Zig dependency hash there. The Windows CI job reads the Ghostty archive's URL and hash from the crate's `GHOSTTY.lock` by itself, but the README's "Building on Windows" section quotes both: update them there too.
 - Remove a patch once upstream provides an equivalent.
 - Regenerate rexrs types with `python3 codegen/generate.py` (from `vendor/rexrs`) rather than editing generated files by hand.
+
+## Shared machine resource protocol
+
+Before heavy builds, test suites or GUI stress probes, read `~/Code/dotfiles/docs/guides/agent-resource-protocol.md` and check live fleet claims with `beadle` / `lease` using a distinct stable `BEADS_ACTOR`. Defer heavy work while another agent holds a live quiet-window claim; never steal it. On Linux, run heavy commands through `leasehold hold --if-unavailable fail` (or launch the agent with `leasehold run`) with truthful slot/memory sizing. Capacity admission does not replace fleet claims. Timing-sensitive measurements additionally require an owned fleet resource claim, recorded load and paired adjacent samples. Preserve owner-only cleanup and isolated GUI/server fixtures.
