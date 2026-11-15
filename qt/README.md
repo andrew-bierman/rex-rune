@@ -111,3 +111,11 @@ Wayland keyboard layout or desktop clipboard integration.
 No Omarchy, Quickshell or Renux implementation/assets are copied or required.
 Qt is dynamically linked and retains its upstream licenses. Project-authored
 files follow the repository's MIT license.
+
+Native Wayland clipboard verification uses a private headless seat and its own Rex server:
+
+```sh
+python3 scripts/qt-wayland-private.py --cage /path/to/cage
+```
+
+It requires Cage with headless/pixman, PRIMARY and virtual-keyboard support, `wtype`, a C++ compiler and Qt6Gui development files. `--library-path` accepts an already extracted dependency bundle; the script installs or downloads nothing. It independently reads both clipboard channels in another Qt process and checks exact middle-paste PTY bytes. It never uses the desktop seat or an existing server.
