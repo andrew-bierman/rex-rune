@@ -34,10 +34,28 @@ Item {
             formAction = action
             formTarget = target
             formKind = "name"
-            form.title = action === "session.new" ? qsTr("New session") : action === "session.rename" ? qsTr("Rename session") : action === "client.tab.rename" ? qsTr("Rename tab") : qsTr("Rename pane")
             const state = frontend.state
-            const row = (action === "session.rename" ? state.sessions : action === "client.tab.rename" ? state.windows : state.panes || []).find(row => row.id === (action === "session.rename" ? target.session : action === "client.tab.rename" ? target.window : target.pane))
-            nameField.text = action === "session.new" ? "" : row ? (row.user_label !== undefined ? row.user_label : row.label || "") : ""
+            let rows = state.panes || []
+            let selected = target.pane
+            switch (action) {
+            case "session.new": form.title = qsTr("New session"); break
+            case "session.rename":
+                form.title = qsTr("Rename session")
+                rows = state.sessions
+                selected = target.session
+                break
+            case "client.tab.rename":
+                form.title = qsTr("Rename tab")
+                rows = state.windows
+                selected = target.window
+                break
+            default: form.title = qsTr("Rename pane")
+            }
+            const row = rows.find(row => row.id === selected)
+            let name = ""
+            if (action !== "session.new" && row)
+                name = row.user_label !== undefined ? row.user_label : row.label || ""
+            nameField.text = name
             form.open()
             return
         }
@@ -57,7 +75,13 @@ Item {
             formKind = "direction"
             directions = action === "client.tab.move" ? ["left", "right"] : action === "pane.split" ? ["right", "left", "down", "up", "best_fit"] : ["left", "right", "up", "down"]
             directionPicker.currentIndex = 0
-            form.title = action === "pane.split" ? qsTr("Split pane") : action === "pane.focus" ? qsTr("Focus pane") : action === "pane.resize" ? qsTr("Resize pane") : action === "client.tab.move" ? qsTr("Move tab") : qsTr("Move pane")
+            switch (action) {
+            case "pane.split": form.title = qsTr("Split pane"); break
+            case "pane.focus": form.title = qsTr("Focus pane"); break
+            case "pane.resize": form.title = qsTr("Resize pane"); break
+            case "client.tab.move": form.title = qsTr("Move tab"); break
+            default: form.title = qsTr("Move pane")
+            }
             form.open()
             return
         }

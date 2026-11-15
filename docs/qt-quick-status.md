@@ -161,3 +161,9 @@ The terminal suite passes again in `.build-tools/terminal-parity-cgum44s1/`, now
 ### Shortcut fixture completion fix
 
 The action/workspace simplification replay exposed a pre-existing fixture deadline: raw input capture ended after seven seconds before the UI sequence's final `z`, so the next shell command became `zpython3`. An independently rebuilt pre-simplification `709f388` Qt driver failed identically in `.build-tools/qt-keys-ezhf6mgj/`; simplified builds showed the same empty raw capture. The fixture now waits for its explicit final input with a bounded 30-second deadline, retaining the exact `raw.bin == b'z'` assertion. The complete shortcut/persistence/PTY fixture passes in `.build-tools/qt-keys-r92f_051/`. Log: `.build-tools/parity-phase-actions-keymap.log`. This changes test synchronization, not application behavior.
+
+### Action/workspace simplification pass
+
+The required full-team pass reviewed 2,543 substantive production lines, preserving all proof tests and captured-target contracts. It consolidated terminal action presentation, made form branches explicit, avoided unnecessary availability scans for nonmatching chords, hoisted repeated shortcut filtering and removed redundant narration comments. No connection, protocol, capture or public API semantics changed.
+
+Both Qt executables, six C++ action tests, 24 adapter/terminal tests, six keymap tests, eleven workspace tests and strict scoped Clippy pass. Post-pass workspace runtime passed in `.build-tools/qt-workspace-s_lqejw5/`; parent replay of the complete shortcut fixture passed in `.build-tools/qt-keys-r92f_051/` after the separately committed fixture synchronization fix. Parent logs are `.build-tools/parity-phase-actions-{tests,clippy,production,driver,cpp,keymap}.log`. The next unit remains saved-host navigation.

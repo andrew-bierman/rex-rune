@@ -160,7 +160,7 @@ bool Actions::handleKey(QKeyEvent *event, bool globalOnly) {
     for (int i : indices) {
         const auto binding = m_bindings[i].toObject();
         const auto chords = binding["chords"].toArray();
-        if (m_depth < chords.size() && available(binding, globalOnly) && chordMatches(chords[m_depth].toObject(), *event)) matching << i;
+        if (m_depth < chords.size() && chordMatches(chords[m_depth].toObject(), *event) && available(binding, globalOnly)) matching << i;
     }
     if (matching.isEmpty()) {
         const bool wasPending = m_depth > 0;

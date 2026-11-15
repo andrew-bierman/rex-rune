@@ -46,26 +46,33 @@ ApplicationWindow {
         if (commandPopup.visible || shortcutPopup.visible || findBar.visible || workspaceUI.modalOpen) return
         const term = selectedTerminal(); if (term) term.forceActiveFocus()
     }
-    function action(id, args, origin) {
-        const term = selectedTerminal()
+    function terminalAction(term, id) {
         switch (id) {
-        case "client.palette.toggle": commandPopup.visible ? commandPopup.close() : commandPopup.open(); break
-        case "client.settings": shortcutPopup.open(); break
-        case "session.refresh": backend.refresh(); break
-        case "session.switch": sessionPicker.popup.open(); break
         case "pane.copy": if (term) term.copy(); break
         case "pane.paste": if (term) term.paste(); break
         case "pane.select_all": if (term) term.selectAll(); break
         case "pane.copy_id": if (term) term.copyId(); break
         case "pane.clear": if (term) term.clear(); break
         case "pane.reset": if (term) term.reset(); break
+        case "pane.reconnect": if (term) term.reconnect(); break
+        default: return false
+        }
+        return true
+    }
+    function action(id, args, origin) {
+        const term = selectedTerminal()
+        if (terminalAction(term, id)) return
+        switch (id) {
+        case "client.palette.toggle": commandPopup.visible ? commandPopup.close() : commandPopup.open(); break
+        case "client.settings": shortcutPopup.open(); break
+        case "session.refresh": backend.refresh(); break
+        case "session.switch": sessionPicker.popup.open(); break
         case "client.search": find(); break
         case "client.find.next": if (term) term.searchStep(false); break
         case "client.find.previous": if (term) term.searchStep(true); break
         case "client.prompt.previous": if (term) term.promptStep(true); break
         case "client.prompt.next": if (term) term.promptStep(false); break
         case "client.scroll": if (term) term.scroll(args.lines); break
-        case "pane.reconnect": if (term) term.reconnect(); break
         default:
             const spec = ((root.state.keymap || {}).actions || []).find(row => row.id === id)
             if (spec && spec.handler === "workspace") workspaceUI.run(id, args)
@@ -87,15 +94,7 @@ ApplicationWindow {
             if (captured.host !== root.state.host || captured.epoch !== root.state.epoch || captured.session !== root.state.session || captured.window !== root.state.window) return
             const term = selectedTerminal(captured.pane)
             if (!term) return
-            switch (id) {
-            case "pane.copy": term.copy(); break
-            case "pane.paste": term.paste(); break
-            case "pane.select_all": term.selectAll(); break
-            case "pane.copy_id": term.copyId(); break
-            case "pane.clear": term.clear(); break
-            case "pane.reset": term.reset(); break
-            case "pane.reconnect": term.reconnect(); break
-            }
+            root.terminalAction(term, id)
         }
     }
     Binding { target: workspaceActions; property: "searching"; value: findBar.visible }

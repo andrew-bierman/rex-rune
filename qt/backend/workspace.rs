@@ -1,5 +1,3 @@
-//! Native workspace gestures use the existing host commands and layout helpers.
-//! Only a pending question is local; sessions, programs and geometry stay server-owned.
 use anyhow::{Context, Result, bail, ensure};
 use rex_rune::{
     connection::{DEFAULT_TAB_LABEL, HostCommand, HostModel},
@@ -229,7 +227,6 @@ pub fn schema(action: &str) -> Option<Value> {
         }
         _ => return None,
     };
-    // A missing rename, move-to-tab or creation argument opens its native form.
     let required = if matches!(
         action,
         "pane.split" | "pane.focus" | "pane.move" | "pane.resize" | "client.tab.move"
@@ -515,15 +512,14 @@ impl Workspace {
                         "up" => ("vertical", "before"),
                         "down" => ("vertical", "after"),
                         _ => {
-                            // The real viewport aspect ratio matters; normalized panes alone do not.
                             let rect = layout::placements(window, None)
                                 .0
                                 .into_iter()
                                 .find(|p| p.block == target.pane())
                                 .map_or([0., 0., 1., 1.], |p| p.rect);
-                            if request["height"].as_f64().unwrap_or(0.) * rect[3]
-                                > request["width"].as_f64().unwrap_or(0.) * rect[2]
-                            {
+                            let pane_height = request["height"].as_f64().unwrap_or(0.) * rect[3];
+                            let pane_width = request["width"].as_f64().unwrap_or(0.) * rect[2];
+                            if pane_height > pane_width {
                                 ("vertical", "after")
                             } else {
                                 ("horizontal", "after")

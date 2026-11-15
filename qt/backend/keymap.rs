@@ -1,4 +1,3 @@
-//! Qt action declarations and layered maps; resolution remains in Rex Rune's core.
 use anyhow::{Result, bail, ensure};
 use rex_rune::{
     connection::{HostModel, keymap::Declaration},
@@ -30,7 +29,6 @@ struct Spec {
     remote: Remote,
 }
 
-// Only implemented operations are declared. Later capabilities extend this table.
 const ACTIONS: &[Spec] = &[
     Spec {
         id: "pane.copy_id",

@@ -20,8 +20,11 @@ Popup {
                                selectedAction === "client.mode.enter" ? ({name: modePicker.currentText, once: modeOnce.checked}) : presetArgs
     property var rows: {
         const result = []
+        const query = search.text.toLowerCase()
         for (const row of actions.commands) {
-            const variants = row.kind === "server" ? actions.bindings.filter(binding => binding.action === row.id) : []
+            const bindings = actions.bindings.filter(binding => binding.action === row.id)
+            const words = (row.title + " " + row.id + " " + (row.hint || "") + " " + bindings.map(binding => binding.keys.join(", ")).join(" ")).toLowerCase()
+            const variants = row.kind === "server" ? bindings : []
             const seen = new Set()
             if (row.kind === "client" || (!variants.length && !(row.args && row.args.required && row.args.required.length))) variants.push({args: {}})
             for (const variant of variants) {
@@ -29,8 +32,7 @@ Popup {
                 const key = JSON.stringify(args)
                 if (seen.has(key)) continue
                 seen.add(key)
-                const words = (row.title + " " + row.id + " " + (row.hint || "") + " " + actions.bindings.filter(binding => binding.action === row.id).map(binding => binding.keys.join(", ")).join(" ")).toLowerCase()
-                if (words.includes(search.text.toLowerCase())) result.push(Object.assign({}, row, {bindingArgs: args}))
+                if (words.includes(query)) result.push(Object.assign({}, row, {bindingArgs: args}))
             }
         }
         return result
