@@ -141,6 +141,12 @@ void Frontend::dismissProblem() { m_problem.clear(); emit problemChanged(); }
 void Frontend::fail(const QString &message) {
     m_problem = message;
     m_state["connected"] = false;
+    auto server = m_state["server"].toObject();
+    server["connected"] = false; server["status"] = "Disconnected · last reported";
+    server["pair"] = QJsonValue(); server["confirmation"] = QJsonValue();
+    server["can_pair"] = false; server["can_stop"] = false; server["can_setup"] = false;
+    server["setup_running"] = false; server["uptime_seconds"] = QJsonValue();
+    m_state["server"] = server;
     auto terminal = m_state["terminal"].toObject();
     terminal["connected"] = false;
     m_state["terminal"] = terminal;
@@ -210,3 +216,9 @@ void Frontend::reportProblem(const QString &message) { m_problem = message; emit
 void Frontend::dismissHostFormProblem() { m_hostFormProblem.clear(); emit hostFormProblemChanged(); }
 
 void Frontend::dismissPreferencesProblem() { m_preferencesProblem.clear(); emit preferencesProblemChanged(); }
+
+void Frontend::serverAction(const QString &action, quint64 requestId, const QString &text) {
+    static const QStringList allowed = {"page_open","page_close","read","prepare_stop","prepare_setup","cancel","confirm","pair","pair_close","copy"};
+    if (!allowed.contains(action)) return;
+    send({{"op","server_" + action},{"request_id",qint64(requestId)},{"text",text}});
+}

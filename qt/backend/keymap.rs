@@ -34,6 +34,42 @@ struct Spec {
 
 const ACTIONS: &[Spec] = &[
     Spec {
+        id: "client.server.settings",
+        title: "Server settings…",
+        category: "Server",
+        offline: true,
+        repeats: false,
+        arguments: Arguments::None,
+        remote: Remote::Never,
+    },
+    Spec {
+        id: "client.pair_device",
+        title: "Pair device…",
+        category: "Server",
+        offline: false,
+        repeats: false,
+        arguments: Arguments::None,
+        remote: Remote::Never,
+    },
+    Spec {
+        id: "client.server.stop",
+        title: "Stop server…",
+        category: "Server",
+        offline: false,
+        repeats: false,
+        arguments: Arguments::None,
+        remote: Remote::Never,
+    },
+    Spec {
+        id: "client.server.setup",
+        title: "Start personal server…",
+        category: "Server",
+        offline: true,
+        repeats: false,
+        arguments: Arguments::None,
+        remote: Remote::Never,
+    },
+    Spec {
         id: "pane.insert_path",
         title: "Insert path…",
         category: "Terminal",

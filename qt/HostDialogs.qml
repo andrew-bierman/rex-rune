@@ -19,13 +19,13 @@ Item {
         name.text = ""; endpoint.text = ""; shell.text = ""
         form.open()
     }
-    function openEdit(id) {
+    function openEdit(id, proposedEndpoint) {
         dialogs.frontend.dismissHostFormProblem()
         const row = (((dialogs.frontend.hosts || {}).rows) || []).find(host => host.id === id)
         if (!row) return
         adding = false
         target = {host: row.id, epoch: row.epoch}
-        name.text = row.label; endpoint.text = row.endpoint; shell.text = row.shell || ""
+        name.text = row.label; endpoint.text = proposedEndpoint || row.endpoint; shell.text = row.shell || ""
         form.open()
     }
     function openRemove(id) {

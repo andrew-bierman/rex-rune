@@ -158,7 +158,7 @@ void TestDriver::step() {
         if (!m_waiting) QTextStream(stderr) << "Qt test step " << m_index << ": " << s["op"].toString() << Qt::endl;
         const auto op = s["op"].toString();
         bool complete = true;
-        if (!m_terminal && op != "waitState" && op != "waitText" && op != "waitProblem" && op != "pause")
+        if (!m_terminal && !QStringList{"waitState","waitText","waitProblem","pause","click","waitControl","screenshot","controlKey","field","snapshot","resize","serverConfirm"}.contains(op))
             throw std::runtime_error("selected terminal item missing");
         if (op == "waitText" || op == "waitState" || op == "waitClipboard" || op == "waitPrimary" || op == "waitProblem" || op == "waitOpenedUrl" || op == "waitControl") {
             if (!m_waiting) { m_wait.start(); m_waiting = true; }
@@ -218,6 +218,8 @@ void TestDriver::step() {
             clickControl(op == "searchPrevious" ? "findPrevious" : "findNext");
         } else if (op == "searchKey") {
             QTest::keyClick(m_window, key(s["key"].toString()), modifiers(s["mods"].toString()));
+        } else if (op == "serverConfirm") {
+            m_backend->serverAction("confirm", quint64(s["request_id"].toInteger()));
         } else if (op == "click") {
             clickControl(s["control"].toString());
         } else if (op == "field") {
@@ -332,7 +334,7 @@ void TestDriver::step() {
         } else if (op == "snapshot") {
             auto snapshot = m_backend->snapshot();
             snapshot["clipboard"] = QGuiApplication::clipboard()->text();
-            if (m_terminal->actions()) {
+            if (m_terminal && m_terminal->actions()) {
                 snapshot["shortcut_pending"] = m_terminal->actions()->pending();
                 snapshot["shortcut_modes"] = QJsonArray::fromStringList(m_terminal->actions()->activeModes());
             }
@@ -403,12 +405,12 @@ void TestDriver::step() {
             };
             inspectIcons(inspectIcons, m_window->contentItem());
             snapshot["qt_program_icons"] = programIcons;
-            snapshot["qt_columns"] = m_terminal->columns();
-            snapshot["qt_rows"] = m_terminal->rows();
-            snapshot["qt_grid_left"] = m_terminal->gridLeft();
-            snapshot["qt_grid_top"] = m_terminal->gridTop();
-            snapshot["qt_cell_width"] = m_terminal->cellWidth();
-            snapshot["qt_cell_height"] = m_terminal->cellHeight();
+            snapshot["qt_columns"] = m_terminal ? m_terminal->columns() : 0;
+            snapshot["qt_rows"] = m_terminal ? m_terminal->rows() : 0;
+            snapshot["qt_grid_left"] = m_terminal ? m_terminal->gridLeft() : 0;
+            snapshot["qt_grid_top"] = m_terminal ? m_terminal->gridTop() : 0;
+            snapshot["qt_cell_width"] = m_terminal ? m_terminal->cellWidth() : 0;
+            snapshot["qt_cell_height"] = m_terminal ? m_terminal->cellHeight() : 0;
             writeJson(s["path"].toString(), snapshot);
         } else if (op == "screenshot") {
             if (!m_window->grabWindow().save(s["path"].toString())) throw std::runtime_error("cannot save window image");
@@ -444,7 +446,8 @@ void TestDriver::finish(bool success, const QString &message) {
     QJsonObject report{{"success", success}, {"step", m_index}, {"message", message}, {"evidence", m_evidence}};
     if (!success) {
         if (m_terminal) report["visible_text"] = m_terminal->visibleText();
-        report["state"] = m_backend->snapshot();
+        auto state = m_backend->snapshot(); state.remove("server");
+        report["state"] = state;
         report["problem"] = m_backend->problem();
         if (!m_report.isEmpty()) m_window->grabWindow().save(m_report + ".png");
     }

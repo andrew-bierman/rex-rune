@@ -35,6 +35,7 @@ public:
     Q_INVOKABLE void selectWindow(const QString &id);
     Q_INVOKABLE void selectPane(const QString &id);
     Q_INVOKABLE void refresh();
+    Q_INVOKABLE void serverAction(const QString &action, quint64 requestId = 0, const QString &text = {});
     Q_INVOKABLE void reloadShortcuts();
     Q_INVOKABLE quint64 savePreferences(const QVariantMap &patch);
     Q_INVOKABLE void recordShortcut(const QString &action, const QStringList &keys, const QVariantMap &args, const QString &mode, const QString &operation);

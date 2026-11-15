@@ -169,3 +169,30 @@ The `activity` operation accepts `refresh` or a strict view change, under the ac
 Closed `directory.open/edit/choose/close` operations use captured identity and the public core directory reader. State exposes only the current captured browser and its matching reply; the frontend coalesces text edits and cancels its pending edit timer on close. A choice must be a valid listed path and produces ordinary `Command::Paste` with POSIX quoting, never Enter. Recent history is saved through the backend's current authoritative Settings transaction, not a stale adapter copy.
 
 `files.upload` accepts local paths decoded from actual Qt clipboard/drop MIME URLs. It refuses unsupported API revisions before reading files, validates the visible live target, and delegates transfer/path insertion once to the existing core. The status is explicitly requested-only: no completion, progress or cancellation result is fabricated. New commands are not unrestricted RPC, and path-browser actions require this person's local action even when a server returns a client callback.
+## Server settings and pairing
+
+The `server` state is a projection of the core's cached `HostModel.server_info`.
+Connection status labels retained facts as last reported while disconnected.
+Durations use the public bounded elapsed-time helper and update once per minute
+only while the server page is open. Listener addresses strip URL credentials,
+queries and fragments; account and authentication URLs are never projected.
+
+All server operations require the current host and epoch. `server_read` declares
+public `Identify` interest; it does not attach, create or start anything.
+`server_prepare_stop` and `server_prepare_setup` require a positive `request_id`
+and return `server.confirmation` with the captured target and exact command.
+`server_cancel` discards it. `server_confirm` consumes the matching confirmation
+before dispatch; stale or repeated confirmation cannot dispatch again. Stop uses
+public `StopServer` and is available for connected Unix and SSH hosts. Setup is
+available only following the core's missing-SSH-server report and invokes public
+`ssh::setup::start_personal` once on a worker. Results remain scoped to the original
+host and epoch. Neither success nor failure reconnects or retries automatically;
+Connect and review of a suggested endpoint remain explicit person actions.
+
+`server_pair` computes a QR matrix locally from the sanitized reported HTTPS
+address, without a host command. `server_pair_close` clears it. Host, epoch,
+report or connection changes clear a displayed code, including loss of the
+backend child. `server_copy` accepts only an exact sanitized address still present
+in the displayed listener or pairing state. `server_page_open` and
+`server_page_close` control the page-local duration clock. These operations are
+local frontend capabilities and are never offered to remote requesters.

@@ -112,7 +112,7 @@ session creation and cleanup.
 
 The Linux Qt frontend is progressing toward Rune source-build parity. General
 notifications, downloads,
-server setup/pairing and remote-control compatibility are still in progress.
+and remote-control compatibility are still in progress. Server settings, explicit confirmed stop/setup and local pairing QR rendering are implemented; real tailnet/remote SSH operation remains unverified.
 Terminal history/search/selection, mouse reports, safe links, effective shortcuts,
 workspace lifecycle and saved-host navigation are implemented and privately tested.
 Underline variants other than single/double, composition/preedit UI, static graphics

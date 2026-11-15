@@ -67,7 +67,7 @@ ApplicationWindow {
     }
     function find() { findBar.terminal = selectedTerminal(); findBar.open() }
     FindBar { id: findBar; anchors.top: parent.top; anchors.right: parent.right; z: 100; onClosed: root.restoreTerminal() }
-    readonly property bool panelOpen: directoryPopup.visible || activityPopup.visible || settingsPopup.visible || commandPopup.visible || shortcutPopup.visible || findBar.visible || workspaceUI.modalOpen || hostDialogs.modalOpen || hostSwitcher.visible || (root.width < 960 && hostDrawer.visible)
+    readonly property bool panelOpen: serverPopup.visible || serverConfirm.visible || pairDialog.visible || directoryPopup.visible || activityPopup.visible || settingsPopup.visible || commandPopup.visible || shortcutPopup.visible || findBar.visible || workspaceUI.modalOpen || hostDialogs.modalOpen || hostSwitcher.visible || (root.width < 960 && hostDrawer.visible)
     function restoreTerminal() {
         if (root.panelOpen) return
         const term = selectedTerminal(); if (term) term.forceActiveFocus()
@@ -94,6 +94,10 @@ ApplicationWindow {
             if (args.view) backend.activityAction("view", {view: args.view})
             activityPopup.visible ? activityPopup.close() : activityPopup.open()
             break
+        case "client.server.settings": serverPopup.open(); break;
+        case "client.pair_device": backend.serverAction("pair"); break;
+        case "client.server.stop": backend.serverAction("prepare_stop", ++root.serverRequest); break;
+        case "client.server.setup": backend.serverAction("prepare_setup", ++root.serverRequest); break;
         case "client.settings": settingsPopup.open(); break
         case "client.full_screen.toggle": root.visibility === Window.FullScreen ? root.showNormal() : root.showFullScreen(); break
         case "client.font.increase": backend.savePreferences({font_size: Math.min(48, (preferences.font_size || 15) + 1)}); break
@@ -164,9 +168,56 @@ ApplicationWindow {
         objectName: "settingsPopup"
         parent: Overlay.overlay
         frontend: backend
+        onServerRequested: { close(); serverPopup.open() }
         onShortcutsRequested: { close(); shortcutPopup.open() }
         onFullscreenRequested: root.visibility === Window.FullScreen ? root.showNormal() : root.showFullScreen()
         onFinished: root.restoreTerminal()
+    }
+    Popup {
+        id: serverPopup; objectName: "serverPopup"; parent: Overlay.overlay
+        width: Math.min(620, root.width-24); height: Math.min(650, root.height-24)
+        anchors.centerIn: parent; modal: true; focus: true
+        onOpened: backend.serverAction("page_open")
+        onClosed: { backend.serverAction("page_close"); root.restoreTerminal() }
+        contentItem: ScrollView {
+            id: serverScroll
+            clip: true; contentWidth: availableWidth; contentHeight: serverPage.implicitHeight
+            ServerSettings {
+                id: serverPage
+                height: implicitHeight
+                width: serverScroll.availableWidth
+                serverState: backend.state.server || ({})
+                onReadRequested: backend.serverAction("read")
+                onPrepareRequested: kind => backend.serverAction("prepare_"+kind, ++root.serverRequest)
+                onConnectRequested: backend.hostAction("connect")
+                onEditEndpointRequested: endpoint => { serverPopup.close(); hostDialogs.openEdit(backend.state.host, endpoint) }
+                onPairRequested: backend.serverAction("pair")
+                onCopyRequested: text => backend.serverAction("copy", 0, text)
+            }
+        }
+    }
+    property double serverRequest: 0
+    SSHSetup {
+        id: serverConfirm; parent: Overlay.overlay
+        confirmation: backend.state.server ? backend.state.server.confirmation || ({}) : ({})
+        onConfirmRequested: requestId => backend.serverAction("confirm", requestId)
+        onCancelRequested: backend.serverAction("cancel")
+    }
+    PairDevice {
+        id: pairDialog; parent: Overlay.overlay
+        pair: backend.state.server ? backend.state.server.pair : null
+        onCopyRequested: text => backend.serverAction("copy", 0, text)
+        onPairClosed: backend.serverAction("pair_close")
+    }
+    Connections {
+        target: backend
+        function onStateChanged() {
+            const facts = backend.state.server || ({})
+            if (facts.confirmation && facts.confirmation.request_id) { if (!serverConfirm.visible) serverConfirm.open() }
+            else if (serverConfirm.visible) serverConfirm.close()
+            if (facts.pair && facts.pair.address) { if (!pairDialog.visible) pairDialog.open() }
+            else if (pairDialog.visible) pairDialog.close()
+        }
     }
     ShortcutSettings { id: shortcutPopup; objectName: "shortcutPopup"; parent: Overlay.overlay; actions: workspaceActions; frontend: backend; onFinished: root.restoreTerminal() }
     WorkspaceActions {

@@ -6,6 +6,7 @@ Popup {
     id: popup
     required property var frontend
     property double pendingApply:0
+    signal serverRequested()
     signal shortcutsRequested()
     signal fullscreenRequested()
     signal finished()
@@ -28,6 +29,7 @@ Popup {
             Layout.fillWidth:true
             Button { text:qsTr("Back");enabled:controller.canBack;onClicked:controller.back() }
             Label { text:qsTr("Settings");font.bold:true;Layout.fillWidth:true }
+            Button { objectName:"serverSettingsButton"; text:qsTr("Server…"); onClicked:popup.serverRequested() }
             Button { objectName:"shortcutsSettingsButton";text:qsTr("Shortcuts…");onClicked:popup.shortcutsRequested() }
         }
         TextField { id:search;objectName:"settingsSearch";Layout.fillWidth:true;placeholderText:qsTr("Search all settings");onTextChanged: { if(scroll.contentItem) scroll.contentItem.contentY=0 } }

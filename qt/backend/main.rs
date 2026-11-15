@@ -6,6 +6,7 @@ mod hosts;
 mod keymap;
 mod preferences;
 mod programs;
+mod server;
 mod terminal;
 mod workspace;
 
@@ -48,7 +49,19 @@ fn config_path() -> PathBuf {
         .join("rex-qt/workspace.json")
 }
 
+struct SetupReply {
+    review_endpoint: Option<String>,
+    host: String,
+    epoch: u64,
+    request: u64,
+    message: String,
+}
 struct Backend {
+    server: server::Server,
+    server_clock: Option<Instant>,
+    confirmation: Value,
+    setup_result: Option<SetupReply>,
+    setup_rx: Option<std::sync::mpsc::Receiver<SetupReply>>,
     settings: Settings,
     activity: activity::Activity,
     visible: bool,
@@ -96,6 +109,11 @@ impl Backend {
         let mut hosts = Hosts::new(&settings);
         hosts.connect_all(&settings);
         let mut backend = Self {
+            server: server::Server::default(),
+            server_clock: None,
+            confirmation: Value::Null,
+            setup_result: None,
+            setup_rx: None,
             preferences: preferences::snapshot(&settings),
             settings,
             activity: activity::Activity::default(),
@@ -127,6 +145,7 @@ impl Backend {
                 if let Some(connection) = &slot.connection {
                     adapter.declare_keymap(connection)?;
                     if added {
+                        connection.commands.send(HostCommand::Identify)?;
                         connection
                             .commands
                             .send(HostCommand::Theme(preferences::declaration(
@@ -294,6 +313,7 @@ impl Backend {
             && let Some(connection) = &slot.connection
         {
             self.adapters[&id].declare_keymap(connection)?;
+            connection.commands.send(HostCommand::Identify)?;
         }
         Ok(())
     }
@@ -304,12 +324,112 @@ impl Backend {
         }
         Ok(())
     }
+    fn server_request(&mut self, request: &Value) -> Result<()> {
+        let index = self.epoch(request)?;
+        let slot = &self.hosts.slots[index];
+        self.hosts.require_active(&slot.id)?;
+        let endpoint = &self.settings.hosts[index].endpoint;
+        self.server.observe(&slot.id, &slot.model, endpoint);
+        let op = request["op"].as_str().unwrap_or("");
+        match op {
+            "server_page_open" => {
+                self.server_clock = Some(Instant::now() + Duration::from_secs(60));
+            }
+            "server_page_close" => {
+                self.server_clock = None;
+            }
+            "server_read" => {
+                slot.connection
+                    .as_ref()
+                    .context("host disconnected")?
+                    .commands
+                    .send(HostCommand::Identify)?;
+            }
+            "server_prepare_stop" | "server_prepare_setup" => {
+                if op.ends_with("setup") {
+                    ensure!(self.setup_rx.is_none(), "a setup attempt is still running");
+                }
+                self.confirmation = self.server.prepare(
+                    if op.ends_with("setup") {
+                        "setup"
+                    } else {
+                        "stop"
+                    },
+                    &slot.id,
+                    &slot.model,
+                    endpoint,
+                    request["request_id"]
+                        .as_u64()
+                        .context("missing request id")?,
+                )?;
+            }
+            "server_cancel" => {
+                self.server.cancel();
+                self.confirmation = Value::Null;
+            }
+            "server_confirm" => {
+                let request_id = request["request_id"]
+                    .as_u64()
+                    .context("missing request id")?;
+                let effect = self
+                    .server
+                    .confirm(&slot.id, &slot.model, endpoint, request_id);
+                self.confirmation = Value::Null;
+                match effect? {
+                    server::Effect::Stop { epoch } => slot
+                        .connection
+                        .as_ref()
+                        .context("host disconnected")?
+                        .commands
+                        .send(HostCommand::StopServer { epoch })?,
+                    server::Effect::Setup { endpoint } => {
+                        let (tx, rx) = std::sync::mpsc::channel();
+                        self.setup_rx = Some(rx);
+                        self.setup_result = None;
+                        let host = slot.id.clone();
+                        let epoch = slot.model.connection_epoch;
+                        std::thread::Builder::new().name("qt-ssh-setup".into()).spawn(move || {
+                            let result = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string()).and_then(|rt| rt.block_on(rex_rune::ssh::setup::start_personal(&endpoint)).map_err(|e| e.to_string()));
+                            let (message, review_endpoint) = match result {
+                                Ok(rex_rune::ssh::setup::Attachment::Automatic) => ("Personal server answered. Use Connect to attach without another start.".into(), None),
+                                Ok(rex_rune::ssh::setup::Attachment::Review { reason, endpoint }) => (reason, endpoint),
+                                Err(message) => (message, None),
+                            };
+                            let _ = tx.send(SetupReply { host, epoch, request: request_id, message, review_endpoint });
+                        })?;
+                    }
+                }
+            }
+            "server_pair" => self.server.pair(&slot.id, &slot.model)?,
+            "server_pair_close" => self.server.close_pair(),
+            "server_copy" => {
+                let text =
+                    server::copy_address(request["text"].as_str().context("missing address")?)
+                        .context("address is not sanitized")?;
+                let snapshot = self.server.snapshot(&slot.id, &slot.model, endpoint);
+                ensure!(
+                    snapshot["pair"]["address"] == text
+                        || snapshot["listeners"]
+                            .as_array()
+                            .is_some_and(|rows| rows.iter().any(|r| r["address"] == text)),
+                    "address report changed"
+                );
+                self.after_state.push(json!({"type":"clipboard","version":VERSION,"host":slot.id,"epoch":slot.model.connection_epoch,"text":text}));
+            }
+            _ => bail!("unknown server operation"),
+        }
+        Ok(())
+    }
     fn handle(&mut self, request: &Value) -> Result<bool> {
         ensure!(
             request["version"].as_u64() == Some(VERSION),
             "unsupported adapter protocol version"
         );
         let op = request["op"].as_str().context("missing op")?;
+        if op.starts_with("server_") {
+            self.server_request(request)?;
+            return Ok(true);
+        }
         if op == "shutdown" {
             return Ok(false);
         }
@@ -478,7 +598,16 @@ impl Backend {
     }
     fn poll(&mut self) -> Result<(bool, Vec<Value>)> {
         let previous_host = self.hosts.active.clone();
-        let dirty = self.hosts.poll(&mut self.settings) | self.discovery.poll();
+        let mut dirty = self.hosts.poll(&mut self.settings) | self.discovery.poll();
+        if self.server_clock.is_some_and(|next| Instant::now() >= next) {
+            self.server_clock = Some(Instant::now() + Duration::from_secs(60));
+            dirty = true;
+        }
+        if let Some(reply) = self.setup_rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
+            self.setup_result = Some(reply);
+            self.setup_rx = None;
+            dirty = true;
+        }
         if previous_host != self.hosts.active {
             if let Some(adapter) = self.adapters.get_mut(&previous_host) {
                 adapter.clear_captures();
@@ -575,12 +704,57 @@ impl Backend {
                     Some("client.history.forward") => {
                         action["enabled"] = json!(self.hosts.history.can_forward())
                     }
+                    Some("client.pair_device") => {
+                        action["enabled"] = json!(self.hosts.active_slot().is_some_and(|s| {
+                            self.server.snapshot(&s.id, &s.model, "")["can_pair"] == true
+                        }));
+                    }
+                    Some("client.server.stop") => {
+                        action["enabled"] =
+                            json!(self.hosts.active_slot().is_some_and(|s| {
+                                let i = self.hosts.index(&s.id).unwrap();
+                                self.server.snapshot(
+                                    &s.id,
+                                    &s.model,
+                                    &self.settings.hosts[i].endpoint,
+                                )["can_stop"]
+                                    == true
+                            }));
+                    }
+                    Some("client.server.setup") => {
+                        action["enabled"] = json!(
+                            self.hosts
+                                .active_slot()
+                                .is_some_and(|s| s.model.ssh_server_missing && !s.model.connected)
+                        );
+                    }
                     Some("client.host.remove") => {
                         action["enabled"] = json!(self.hosts.slots.len() > 1)
                     }
                     _ => {}
                 }
             }
+        }
+        if let Some(slot) = self.hosts.active_slot() {
+            let index = self.hosts.index(&slot.id).unwrap();
+            let endpoint = &self.settings.hosts[index].endpoint;
+            self.server.observe(&slot.id, &slot.model, endpoint);
+            if !self
+                .server
+                .confirmation_valid(self.confirmation["request_id"].as_u64().unwrap_or(0))
+            {
+                self.confirmation = Value::Null;
+            }
+            let mut facts = self.server.snapshot(&slot.id, &slot.model, endpoint);
+            facts["confirmation"] = self.confirmation.clone();
+            facts["setup_running"] = json!(self.setup_rx.is_some());
+            if let Some(reply) = &self.setup_result
+                && reply.host == slot.id
+                && reply.epoch == slot.model.connection_epoch
+            {
+                facts["setup_result"] = json!({"request_id":reply.request,"message":reply.message,"endpoint":reply.review_endpoint});
+            }
+            state["server"] = facts;
         }
         state["preferences"] = self.preferences.clone();
         state["hosts"] = catalog;
