@@ -7,6 +7,9 @@ mod keymap;
 mod notification_events;
 mod preferences;
 mod programs;
+mod remote;
+#[cfg(test)]
+mod remote_tests;
 mod server;
 mod terminal;
 mod workspace;
@@ -63,6 +66,9 @@ struct Backend {
     confirmation: Value,
     setup_result: Option<SetupReply>,
     setup_rx: Option<std::sync::mpsc::Receiver<SetupReply>>,
+    remote: remote::Requests,
+    remote_checks: Vec<(String, rex_rune::connection::perform::Pending, Value)>,
+    remote_navigation: Option<(String, rex_rune::connection::perform::Pending, u64, Visit)>,
     settings: Settings,
     activity: activity::Activity,
     program_notices: Vec<Value>,
@@ -117,6 +123,9 @@ impl Backend {
             confirmation: Value::Null,
             setup_result: None,
             setup_rx: None,
+            remote: remote::Requests::default(),
+            remote_navigation: None,
+            remote_checks: Vec::new(),
             preferences: preferences::snapshot(&settings),
             settings,
             activity: activity::Activity::default(),
@@ -134,8 +143,24 @@ impl Backend {
         backend.synchronize()?;
         Ok(backend)
     }
+    fn retain_remote_hosts(&mut self) {
+        let hosts: Vec<_> = self
+            .hosts
+            .slots
+            .iter()
+            .map(|slot| {
+                (
+                    slot.id.as_str(),
+                    (slot.connection.is_some() && slot.model.connected)
+                        .then_some(slot.model.connection_epoch),
+                )
+            })
+            .collect();
+        self.remote.retain_hosts(&hosts);
+    }
     fn synchronize(&mut self) -> Result<()> {
         self.preferences = preferences::snapshot(&self.settings);
+        self.retain_remote_hosts();
         let ids = self.hosts.ids();
         self.adapters.retain(|id, _| ids.contains(id));
         self.activity.retain_hosts(&ids);
@@ -226,6 +251,15 @@ impl Backend {
                 )?;
                 self.after_state
                     .push(json!({"type":"host_saved","version":VERSION,"host":saved}));
+            }
+            "remote_control" => {
+                let index = self.epoch(request)?;
+                let mut next = self.settings.clone();
+                next.hosts[index].remote_control = args["enabled"]
+                    .as_bool()
+                    .context("missing remote consent")?;
+                next.save(&self.path)?;
+                self.settings = next;
             }
             "remove" => self.hosts.remove(&mut self.settings, &self.path, &id)?,
             "activate" => self.hosts.activate(&mut self.settings, &self.path, &id)?,
@@ -442,6 +476,32 @@ impl Backend {
             self.host_request(request)?;
             return Ok(true);
         }
+        if op == "remote_context" {
+            let Some(host) = request["host"].as_str() else {
+                return Ok(true);
+            };
+            let Ok(index) = self.hosts.require_active(host) else {
+                return Ok(true);
+            };
+            let epoch = self.hosts.slots[index].model.connection_epoch;
+            if request["epoch"].as_u64() != Some(epoch) {
+                return Ok(true);
+            }
+            self.remote.context.host = host.into();
+            self.remote.context.epoch = epoch;
+            self.remote.context.ready = true;
+            self.remote.context.modal =
+                request["modal"].as_bool().context("missing modal state")?;
+            self.remote.context.field =
+                request["field"].as_bool().context("missing field state")?;
+            self.remote.context.sequence = request["sequence"]
+                .as_bool()
+                .context("missing sequence state")?;
+            if request["keypress"] == true {
+                self.remote.context.last_key = Some(Instant::now());
+            }
+            return Ok(true);
+        }
         if op == "visibility" {
             let visible = request["visible"].as_bool().context("missing visibility")?;
             self.visible = visible;
@@ -455,6 +515,28 @@ impl Backend {
             .as_str()
             .context("missing host identity")?
             .to_owned();
+        if op == "remote_authorize" {
+            self.authorize_remote(request)?;
+            return Ok(true);
+        }
+        if op == "view_action" {
+            let epoch = request["epoch"].as_u64().context("missing epoch")?;
+            let index = self.hosts.require_active(&id)?;
+            let model = &self.hosts.slots[index].model;
+            let action = request["action"].as_str().context("missing action")?;
+            ensure!(
+                request["session"].as_str() == model.selected.as_deref()
+                    && request["window"].as_str()
+                        == model.window().and_then(|w| w.window_id.as_deref())
+                    && (!action.starts_with("pane.")
+                        || request["pane"].as_str() == model.focused()),
+                "View changed; action discarded"
+            );
+            if let Some(visit) = self.view_action(&id, epoch, action, &request["args"])? {
+                self.hosts.navigate(visit)?;
+            }
+            return Ok(true);
+        }
         if op == "activity" {
             self.hosts.require_active(&id)?;
             self.epoch(request)?;
@@ -617,6 +699,7 @@ impl Backend {
             self.setup_rx = None;
             dirty = true;
         }
+        self.retain_remote_hosts();
         if previous_host != self.hosts.active {
             if let Some(adapter) = self.adapters.get_mut(&previous_host) {
                 adapter.clear_captures();
@@ -626,6 +709,7 @@ impl Backend {
         let mut events = Vec::new();
         let mut declared = false;
         let mut cursor_targets = HashMap::new();
+        let mut performs = Vec::new();
         for slot in &self.hosts.slots {
             let Some(connection) = &slot.connection else {
                 continue;
@@ -659,6 +743,11 @@ impl Backend {
                 }
                 cursor_targets.insert(key, value);
             }
+            performs.extend(
+                std::mem::take(&mut model.performs)
+                    .into_iter()
+                    .map(|p| (slot.id.clone(), p)),
+            );
             let active = slot.id == self.hosts.active;
             let actions = adapter.take_actions(&mut model);
             if active {
@@ -683,6 +772,11 @@ impl Backend {
                 );
             }
         }
+        for (host, pending) in performs {
+            self.remote_perform(&host, pending)?;
+        }
+        self.poll_remote_checks()?;
+        self.poll_remote_navigation()?;
         self.cursor_targets = cursor_targets;
         if declared && !self.settings.terminal_theme_declared {
             self.settings.terminal_theme_declared = true;
@@ -692,6 +786,281 @@ impl Backend {
             dirty || !self.after_state.is_empty() || !self.program_notices.is_empty(),
             events,
         ))
+    }
+    fn remote_reply(
+        &mut self,
+        host: &str,
+        pending: rex_rune::connection::perform::Pending,
+        outcome: rex_rune::connection::perform::Outcome,
+    ) -> Result<()> {
+        let index = self.hosts.index(host)?;
+        if self.hosts.slots[index].model.connection_epoch != pending.epoch {
+            return Ok(());
+        }
+        if outcome == rex_rune::connection::perform::Outcome::Performed {
+            self.after_state.push(json!({"type":"notice","version":VERSION,"host":host,"epoch":pending.epoch,
+                "message":format!("{} performed {} on {}",pending.request.requester,pending.request.action,self.settings.hosts[index].label)}));
+        }
+        if let Some(connection) = &self.hosts.slots[index].connection {
+            connection.commands.send(HostCommand::PerformReply {
+                epoch: pending.epoch,
+                call_id: pending.request.call_id,
+                outcome,
+            })?;
+        }
+        Ok(())
+    }
+    fn view_action(
+        &mut self,
+        host: &str,
+        epoch: u64,
+        action: &str,
+        args: &Value,
+    ) -> Result<Option<Visit>> {
+        ensure!(
+            matches!(keymap::remote(action), keymap::Remote::View { .. }),
+            "This is not a view action"
+        );
+        keymap::validate(action, args)?;
+        let index = self.hosts.require_active(host)?;
+        ensure!(
+            self.hosts.slots[index].model.connection_epoch == epoch,
+            "Connection changed; action discarded"
+        );
+        let model = self.hosts.slots[index].model.clone();
+        let mut command = json!({"version":VERSION,"host":host,"epoch":epoch,
+            "session":model.selected,"window":model.window().and_then(|w|w.window_id.as_ref()),"pane":model.focused(),"args":args});
+        (|| match action {
+            "session.select" => Ok(Some(Visit {
+                host: host.into(),
+                session: args["session_id"]
+                    .as_str()
+                    .context("missing session")?
+                    .into(),
+                window: args["window_id"].as_str().map(str::to_owned),
+            })),
+            "client.tab.next" | "client.tab.previous" | "client.tab.goto" => {
+                let view = model.view().context("no session on screen")?;
+                let current = view
+                    .windows
+                    .iter()
+                    .position(|w| w.window_id == view.active_window_id)
+                    .unwrap_or(0);
+                ensure!(!view.windows.is_empty(), "no tabs available");
+                let target = if action == "client.tab.goto" {
+                    let n = args["index"].as_i64().context("invalid index")?;
+                    if n == -1 {
+                        view.windows.len() - 1
+                    } else {
+                        usize::try_from(n - 1)?
+                    }
+                } else {
+                    (current as i64 + if action == "client.tab.next" { 1 } else { -1 })
+                        .rem_euclid(view.windows.len() as i64) as usize
+                };
+                let window = view
+                    .windows
+                    .get(target)
+                    .and_then(|w| w.window_id.clone())
+                    .context("tab index out of range")?;
+                Ok(Some(Visit {
+                    host: host.into(),
+                    session: model.selected.clone().context("no session")?,
+                    window: Some(window),
+                }))
+            }
+            "client.sidebar.toggle" => {
+                command["op"] = json!("host");
+                command["action"] = json!("sidebar");
+                command["args"] = json!({"open":!self.settings.sidebar_open});
+                self.host_request(&command)?;
+                Ok(None)
+            }
+            "pane.focus" | "pane.zoom" | "pane.scroll" => {
+                command["op"] = json!(if action == "pane.scroll" {
+                    "scroll"
+                } else {
+                    "workspace"
+                });
+                command["action"] = json!(action);
+                command["lines"] = args["lines"].clone();
+                let connection = self.hosts.active_connection()?;
+                self.adapters
+                    .get_mut(host)
+                    .context("missing adapter")?
+                    .handle(connection, &command)?;
+                Ok(None)
+            }
+            _ => bail!("remote action is unavailable"),
+        })()
+    }
+    fn authorize_remote(&mut self, request: &Value) -> Result<()> {
+        use rex_rune::connection::perform::Outcome;
+        let Some(index) = self.remote_checks.iter().position(|(host, pending, _)| {
+            request["host"] == *host
+                && request["epoch"].as_u64() == Some(pending.epoch)
+                && request["call_id"] == pending.request.call_id
+        }) else {
+            return Ok(());
+        };
+        let (host, pending, target) = self.remote_checks.remove(index);
+        let Ok(index) = self.hosts.index(&host) else {
+            return Ok(());
+        };
+        let model = &self.hosts.slots[index].model;
+        if model.connection_epoch != pending.epoch {
+            return Ok(());
+        }
+        let unchanged = target["session"].as_str() == model.selected.as_deref()
+            && target["window"].as_str() == model.window().and_then(|w| w.window_id.as_deref())
+            && target["pane"].as_str() == model.focused();
+        if request["accepted"] != true || !unchanged {
+            return self.remote_reply(&host,pending,Outcome::error("refused","The native view changed or a panel, field or key sequence is active; nothing was done."));
+        }
+        self.remote_perform_stage(&host, pending, true)
+    }
+    fn poll_remote_checks(&mut self) -> Result<()> {
+        use rex_rune::connection::perform::{MAX_WAIT, Outcome};
+        for (host, pending, target) in std::mem::take(&mut self.remote_checks) {
+            let Ok(index) = self.hosts.index(&host) else {
+                continue;
+            };
+            let model = &self.hosts.slots[index].model;
+            if model.connection_epoch != pending.epoch || !model.connected {
+                continue;
+            }
+            if pending.received.elapsed() >= MAX_WAIT {
+                self.remote_reply(
+                    &host,
+                    pending,
+                    Outcome::error(
+                        "internal",
+                        "The native view did not authorize this request in time; nothing was done.",
+                    ),
+                )?;
+            } else {
+                self.remote_checks.push((host, pending, target));
+            }
+        }
+        Ok(())
+    }
+    fn remote_perform(
+        &mut self,
+        host: &str,
+        pending: rex_rune::connection::perform::Pending,
+    ) -> Result<()> {
+        self.remote_perform_stage(host, pending, false)
+    }
+    fn remote_perform_stage(
+        &mut self,
+        host: &str,
+        pending: rex_rune::connection::perform::Pending,
+        authorized: bool,
+    ) -> Result<()> {
+        use rex_rune::connection::perform::Outcome;
+        let index = self.hosts.index(host)?;
+        let slot = &self.hosts.slots[index];
+        if !authorized && !self.remote.claim(host, &slot.model, &pending) {
+            return Ok(());
+        }
+        let policy = self.remote.policy(
+            &slot.model,
+            &pending,
+            self.settings.hosts[index].remote_control,
+            host == self.hosts.active
+                && self.remote.context.host == host
+                && self.remote.context.epoch == pending.epoch,
+            self.visible,
+            self.hosts.navigation_pending() || self.remote_navigation.is_some(),
+        );
+        if let Err(outcome) = policy {
+            if self.remote.off_notice(
+                host,
+                &pending.request.action,
+                self.settings.hosts[index].remote_control,
+            ) {
+                self.after_state.push(json!({"type":"notice","version":VERSION,"host":host,"epoch":pending.epoch,
+                    "message":format!("{} asked for {} on {}. Remote control is off in Settings.",pending.request.requester,pending.request.action,self.settings.hosts[index].label)}));
+            }
+            return self.remote_reply(host, pending, outcome);
+        }
+        if !authorized {
+            let target = json!({"type":"remote_check","version":VERSION,"host":host,"epoch":pending.epoch,
+                "call_id":pending.request.call_id,"action":pending.request.action,"session":slot.model.selected,"window":slot.model.window().and_then(|w|w.window_id.as_ref()),"pane":slot.model.focused()});
+            self.after_state.push(target.clone());
+            self.remote_checks.push((host.into(), pending, target));
+            return Ok(());
+        }
+        let result = self.view_action(
+            host,
+            pending.epoch,
+            &pending.request.action,
+            &pending.request.args,
+        );
+        match result {
+            Ok(Some(visit)) => match self.hosts.navigate_remote(
+                visit.clone(),
+                pending.received + rex_rune::connection::perform::MAX_WAIT,
+            ) {
+                Ok(id) => {
+                    self.remote_navigation = Some((host.into(), pending, id, visit));
+                    Ok(())
+                }
+                Err(error) => self.remote_reply(
+                    host,
+                    pending,
+                    Outcome::error("not_found", error.to_string()),
+                ),
+            },
+            Ok(None) => self.remote_reply(host, pending, Outcome::Performed),
+            Err(error) => self.remote_reply(
+                host,
+                pending,
+                Outcome::error("bad_request", error.to_string()),
+            ),
+        }
+    }
+    fn poll_remote_navigation(&mut self) -> Result<()> {
+        use rex_rune::connection::perform::{MAX_WAIT, Outcome};
+        let Some((host, pending, id, visit)) = self.remote_navigation.take() else {
+            return Ok(());
+        };
+        let Ok(index) = self.hosts.index(&host) else {
+            return Ok(());
+        };
+        let model = &self.hosts.slots[index].model;
+        if model.connection_epoch != pending.epoch || !model.connected {
+            return Ok(());
+        }
+        let outcome = if let Some((_, success)) = model.navigation_result.filter(|(n, _)| *n == id)
+        {
+            Some(
+                if success
+                    && self.hosts.active == host
+                    && model.selected.as_deref() == Some(visit.session.as_str())
+                    && visit.window.as_deref().is_none_or(|w| {
+                        model.window().and_then(|v| v.window_id.as_deref()) == Some(w)
+                    })
+                {
+                    Outcome::Performed
+                } else {
+                    Outcome::error("internal", "Navigation failed or was interrupted.")
+                },
+            )
+        } else if pending.received.elapsed() >= MAX_WAIT || !self.hosts.navigation_pending() {
+            Some(Outcome::error(
+                "internal",
+                "Navigation expired or was interrupted.",
+            ))
+        } else {
+            None
+        };
+        if let Some(outcome) = outcome {
+            self.remote_reply(&host, pending, outcome)
+        } else {
+            self.remote_navigation = Some((host, pending, id, visit));
+            Ok(())
+        }
     }
     fn state(&mut self) -> Value {
         let mut state = self.hosts.active_slot().and_then(|slot| self.adapters.get_mut(&slot.id).map(|adapter| adapter.state(&slot.model)))

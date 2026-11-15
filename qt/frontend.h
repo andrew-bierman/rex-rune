@@ -48,6 +48,9 @@ public:
     Q_INVOKABLE void workspaceAction(const QString &action, const QVariantMap &args, const QVariantMap &captured);
     Q_INVOKABLE void activityAction(const QString &action, const QVariantMap &args = {});
     Q_INVOKABLE void hostAction(const QString &action, const QVariantMap &args = {}, const QVariantMap &captured = {});
+    Q_INVOKABLE void authorizeRemote(const QVariantMap &request, bool accepted);
+    Q_INVOKABLE void viewAction(const QString &action, const QVariantMap &args);
+    Q_INVOKABLE void remoteContext(bool modal, bool field, bool sequence, bool keypress = false);
     Q_INVOKABLE void setVisible(bool visible);
     Q_INVOKABLE void dismissProblem();
     Q_INVOKABLE void dismissPreferencesProblem();
@@ -55,6 +58,7 @@ public:
     void reportProblem(const QString &message);
 signals:
     void notificationActivated(const QString &token);
+    void remoteCheck(const QVariantMap &request);
     void stateChanged();
     void hostsChanged();
     void activityChanged();

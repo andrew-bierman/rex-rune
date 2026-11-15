@@ -120,7 +120,7 @@ session creation and cleanup.
 
 ## Current limits
 
-The Linux Qt frontend is progressing toward Rune source-build parity. Remote-control compatibility and maintenance pages are still being integrated. Server settings, explicit confirmed stop/setup and local pairing QR rendering are implemented; real tailnet/remote SSH operation remains unverified.
+The Linux Qt frontend is progressing toward Rune source-build parity. Maintenance pages and measured output responsiveness are still being integrated. Server settings, explicit confirmed stop/setup and local pairing QR rendering are implemented; real tailnet/remote SSH operation remains unverified.
 Terminal history/search/selection, mouse reports, safe links, effective shortcuts,
 workspace lifecycle and saved-host navigation are implemented and privately tested.
 Underline variants, local composition/preedit, static core-decoded graphics and Linux physical-key fidelity are implemented and privately verified. A real French-layout Wayland seat is covered. Third-party IME candidate UI and X11 runtime remain unverified. Large-grid performance is not benchmarked. Native CLIPBOARD/PRIMARY and middle paste have real isolated Wayland
@@ -157,3 +157,5 @@ python3 scripts/qt-notification-window-private.py --driver /path/to/rex-qt-test-
 
 The window fixture creates its own Rex server and sessions. Neither fixture uses
 the personal notification bus, audio player, display, server or settings.
+
+Saved-host remote navigation defaults off. Native Remote hosts settings enables only the eight view actions supported by Rune; typing, fields, key sequences, popups and menus pause navigation. Terminal input, clipboard, files, creation/destruction and dialogs are never remotely offered. Requests retain connection identity and use one-shot native authorization before the existing public-core operation.

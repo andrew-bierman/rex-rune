@@ -182,3 +182,18 @@ fn navigation_arguments_match_the_source_client_contract() {
         qt_keymap::validate("session.select", &json!({"session_id":"s","host":"other"})).is_err()
     );
 }
+
+#[test]
+fn actions_requiring_a_person_cannot_be_returned_by_a_host() {
+    assert!(qt_keymap::requires_person("pane.download"));
+    assert!(qt_keymap::requires_person("pane.insert_path"));
+    assert!(!qt_keymap::requires_person("pane.copy"));
+    assert!(matches!(
+        qt_keymap::remote("pane.focus"),
+        qt_keymap::Remote::View { navigation: true }
+    ));
+    assert!(matches!(
+        qt_keymap::remote("client.sidebar.toggle"),
+        qt_keymap::Remote::View { navigation: false }
+    ));
+}

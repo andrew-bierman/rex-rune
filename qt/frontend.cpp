@@ -199,6 +199,7 @@ void Frontend::read() {
             if (newHosts) emit hostsChanged();
             emit stateChanged();
         }
+        else if (type == "remote_check") emit remoteCheck(object.toVariantMap());
         else if (type == "preferences_saved") emit preferencesSaved(quint64(object["request_id"].toInteger()));
         else if (type == "error" && object["scope"] == "preferences") {
             m_preferencesProblem = object["message"].toString(); emit preferencesProblemChanged();
@@ -215,8 +216,25 @@ void Frontend::read() {
         else if (type == "error" && object["scope"] == "host_form") {
             m_hostFormProblem = object["message"].toString(); emit hostFormProblemChanged();
         }
+        else if (type == "notice" && object["host"] == m_state["host"] && object["epoch"] == m_state["epoch"]) { m_problem = object["message"].toString(); emit problemChanged(); }
         else if (type == "error") { m_problem = object["message"].toString(); emit problemChanged(); }
     }
+}
+
+void Frontend::authorizeRemote(const QVariantMap &request, bool accepted) {
+    auto message=QJsonObject::fromVariantMap(request);
+    message["op"]="remote_authorize";
+    message["accepted"]=accepted;
+    send(message);
+}
+
+void Frontend::viewAction(const QString &action, const QVariantMap &args) {
+    send({{"op","view_action"},{"action",action},{"args",QJsonObject::fromVariantMap(args)},
+          {"session",m_state["session"]},{"window",m_state["window"]},{"pane",m_state["pane"]}});
+}
+
+void Frontend::remoteContext(bool modal, bool field, bool sequence, bool keypress) {
+    if (m_hello) send({{"op","remote_context"},{"modal",modal},{"field",field},{"sequence",sequence},{"keypress",keypress}});
 }
 
 void Frontend::setVisible(bool visible) { m_visible = visible; if (m_hello && m_state["epoch"].isDouble()) send({{"op", "visibility"}, {"visible", visible}}); }

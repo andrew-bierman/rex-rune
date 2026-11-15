@@ -35,6 +35,7 @@ public:
     Q_INVOKABLE void stopRecording();
     Q_INVOKABLE QString hint(const QString &id) const;
 signals:
+    void keypress();
     void changed();
     void requested(const QString &id, const QVariantMap &args, const QString &origin);
     void failed(const QString &message);

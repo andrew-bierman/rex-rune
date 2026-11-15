@@ -273,11 +273,11 @@ impl Hosts {
         let old = next.hosts[i].endpoint.clone();
         let replaced = old != endpoint;
         next.hosts[i].label = label.into();
+        next.hosts[i].remote_control = false;
         next.hosts[i].shell = normalize_shell(shell)?;
         if replaced {
             Self::clean(&mut next, &old);
             next.hosts[i].endpoint = endpoint.into();
-            next.hosts[i].remote_control = false;
         }
         next.save(path)?;
         *settings = next;
@@ -402,7 +402,22 @@ impl Hosts {
     pub fn navigate(&mut self, visit: Visit) -> Result<()> {
         self.begin_navigation(visit, false)
     }
+    pub fn navigate_remote(&mut self, visit: Visit, deadline: Instant) -> Result<u64> {
+        self.begin_navigation_until(visit, false, deadline)?;
+        Ok(self.navigation)
+    }
+    pub fn navigation_pending(&self) -> bool {
+        self.pending.is_some()
+    }
     fn begin_navigation(&mut self, visit: Visit, defer: bool) -> Result<()> {
+        self.begin_navigation_until(visit, defer, Instant::now() + Duration::from_secs(30))
+    }
+    fn begin_navigation_until(
+        &mut self,
+        visit: Visit,
+        defer: bool,
+        deadline: Instant,
+    ) -> Result<()> {
         ensure!(self.valid_visit(&visit), "navigation target disappeared");
         let i = self.index(&visit.host)?;
         ensure!(self.slots[i].connection.is_some(), "host is disconnected");
@@ -427,7 +442,7 @@ impl Hosts {
         self.pending = Some(Pending {
             visit,
             request: self.navigation,
-            deadline: now + Duration::from_secs(30),
+            deadline,
             origin,
             dispatch_at: Some(
                 now + if defer {
@@ -656,7 +671,7 @@ impl Hosts {
                 json!({"id":session.session_id,"label":session.label,"selected":slot.model.selected.as_ref()==Some(&session.session_id),
                     "opened":view.is_some() && !slot.model.background_views.contains(&session.session_id),"tabs":tabs})
             }).collect();
-            json!({"id":slot.id,"label":config.label,"endpoint":config.endpoint,"shell":config.shell,"collapsed":config.collapsed,
+            json!({"id":slot.id,"label":config.label,"endpoint":config.endpoint,"shell":config.shell,"collapsed":config.collapsed,"remote_control":config.remote_control,
                 "active":slot.id==self.active,"connected":slot.model.connected,"enabled":slot.connection.is_some(),"status":slot.model.status,
                 "ssh_server_missing":slot.model.ssh_server_missing,"epoch":slot.model.connection_epoch,"sessions":sessions})
         }).collect();

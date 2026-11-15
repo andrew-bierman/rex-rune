@@ -223,3 +223,9 @@ navigation operation; activation of the native window remains best effort.
 ## Downloads
 
 Person-only `download.open/start/confirm/close` operations capture the complete terminal target and delegate to public core requests. The core owns byte transfer, names, free-space/large-file questions, no-overwrite storage, cancellation and partial cleanup. `download.cancel` names a row's host/epoch/id, including another saved host's active transfer. State aggregates existing per-host transfer records; finished rows expose only Show in folder. No downloaded file is opened or run. A destination edit uses the authoritative Qt preference transaction.
+
+## Directed view actions
+
+The registry advertises exactly eight remote view actions. Saved-host consent defaults off; all other actions are denied. Eligible core perform requests first ask the native event loop for current modal/field/sequence/focus context. One-shot authorization repeats captured identity, consent and deadline checks before the shared local view dispatcher acts. Navigation replies wait for matching core acknowledgement; disconnected/replaced epochs receive no late effect or reply. Toolbar and host menus count as active panels.
+
+The adapter retains completed opaque call IDs for each live connection epoch because the core queues repeated IDs with fresh deadlines. Removed/disconnected/obsolete scopes are pruned. This preserves exact-once behavior at O(unique call IDs in each live epoch) memory cost; a TTL would allow replay.

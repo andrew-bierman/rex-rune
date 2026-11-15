@@ -1,6 +1,7 @@
 #include "actions.h"
 #include <QJsonArray>
 #include <QSignalSpy>
+#include <QInputMethodEvent>
 #include <QMouseEvent>
 #include <QTest>
 
@@ -20,6 +21,28 @@ private:
         return {{"action",action},{"chords",chords},{"keys",QJsonArray{"ctrl+b","c"}}};
     }
 private slots:
+    void returnedCallbacksRespectPanelsAndKeypressesAreObserved() {
+        Actions actions;
+        actions.setSnapshot(snapshot({}));
+        QSignalSpy requests(&actions, &Actions::requested);
+        QSignalSpy presses(&actions, &Actions::keypress);
+        QSignalSpy failures(&actions, &Actions::failed);
+        actions.setModalOpen(true);
+        actions.run("pane.copy", {}, "api");
+        QCOMPARE(requests.count(), 0);
+        QCOMPARE(failures.count(), 1);
+        QObject receiver;
+        QKeyEvent press(QEvent::KeyPress, Qt::Key_X, Qt::NoModifier, "x");
+        QCoreApplication::sendEvent(&receiver, &press);
+        QCOMPARE(presses.count(), 1);
+        QInputMethodEvent input;
+        input.setCommitString("x");
+        QCoreApplication::sendEvent(&receiver, &input);
+        QCOMPARE(presses.count(), 2);
+        actions.setModalOpen(false);
+        actions.run("pane.copy", {}, "api");
+        QCOMPARE(requests.count(), 1);
+    }
     void mouseHistoryIsGlobalAndCannotNavigateBehindAPanel() {
         Actions actions;
         auto state = snapshot({});

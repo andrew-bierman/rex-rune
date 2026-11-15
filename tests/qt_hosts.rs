@@ -265,3 +265,22 @@ fn upstream_connection_failures_and_missing_ssh_fact_remain_visible_without_star
         assert!(hosts.slots.iter().all(|slot| slot.connection.is_none()));
     }
 }
+
+#[test]
+fn saving_a_host_edit_revokes_its_consent_without_copying_another_hosts_choice() {
+    let dir = scratch();
+    let path = dir.path().join("workspace.json");
+    let mut settings = settings();
+    settings.hosts[0].remote_control = true;
+    let endpoint = settings.hosts[0].endpoint.clone();
+    let mut hosts = Hosts::new(&settings);
+    let id = hosts.ids()[0].clone();
+    hosts
+        .edit(&mut settings, &path, &id, "Edited label", &endpoint, None)
+        .unwrap();
+    assert!(!settings.hosts[0].remote_control);
+    assert!(settings.hosts[1].remote_control);
+    let saved = Settings::load(&path).unwrap();
+    assert!(!saved.hosts[0].remote_control);
+    assert!(saved.hosts[1].remote_control);
+}

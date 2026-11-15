@@ -3,6 +3,7 @@
 #include <QMouseEvent>
 #include <QCoreApplication>
 #include <QKeySequence>
+#include <QInputMethodEvent>
 #include <algorithm>
 
 namespace {
@@ -191,6 +192,10 @@ bool Actions::handleKey(QKeyEvent *event, bool globalOnly) {
 }
 
 void Actions::run(const QString &id, const QVariantMap &args, const QString &origin) {
+    if (origin == "api" && (m_modal || m_recording || !m_pending.isEmpty())) {
+        emit failed("Returned client action skipped while a panel or key sequence is active");
+        return;
+    }
     QJsonObject command;
     for (const auto &value : m_commands) if (value.toObject()["id"].toString() == id) { command = value.toObject(); break; }
     if (command.isEmpty() || !command["enabled"].toBool()) { emit failed("Action is unavailable"); return; }
@@ -223,6 +228,11 @@ void Actions::beginRecording() {
 }
 void Actions::stopRecording() { m_recording = false; emit changed(); }
 bool Actions::eventFilter(QObject *, QEvent *event) {
+    if (event->type() == QEvent::KeyPress) emit keypress();
+    if (event->type() == QEvent::InputMethod) {
+        const auto *input = static_cast<QInputMethodEvent *>(event);
+        if (!input->preeditString().isEmpty() || !input->commitString().isEmpty()) emit keypress();
+    }
     if (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonDblClick || event->type() == QEvent::MouseButtonRelease) {
         const auto button = static_cast<QMouseEvent *>(event)->button();
         if (button == Qt::BackButton || button == Qt::ForwardButton) {

@@ -18,8 +18,9 @@ enum Arguments {
     Activity,
 }
 #[derive(Clone, Copy)]
-enum Remote {
+pub enum Remote {
     Never,
+    View { navigation: bool },
 }
 
 struct Spec {
@@ -103,7 +104,7 @@ const ACTIONS: &[Spec] = &[
         offline: true,
         repeats: false,
         arguments: Arguments::None,
-        remote: Remote::Never,
+        remote: Remote::View { navigation: false },
     },
     Spec {
         id: "client.host.switch",
@@ -175,7 +176,7 @@ const ACTIONS: &[Spec] = &[
         offline: false,
         repeats: true,
         arguments: Arguments::None,
-        remote: Remote::Never,
+        remote: Remote::View { navigation: true },
     },
     Spec {
         id: "client.tab.previous",
@@ -184,7 +185,7 @@ const ACTIONS: &[Spec] = &[
         offline: false,
         repeats: true,
         arguments: Arguments::None,
-        remote: Remote::Never,
+        remote: Remote::View { navigation: true },
     },
     Spec {
         id: "client.tab.goto",
@@ -193,7 +194,7 @@ const ACTIONS: &[Spec] = &[
         offline: false,
         repeats: false,
         arguments: Arguments::TabIndex,
-        remote: Remote::Never,
+        remote: Remote::View { navigation: true },
     },
     Spec {
         id: "client.history.back",
@@ -238,7 +239,7 @@ const ACTIONS: &[Spec] = &[
         offline: false,
         repeats: false,
         arguments: Arguments::Session,
-        remote: Remote::Never,
+        remote: Remote::View { navigation: true },
     },
     Spec {
         id: "pane.actions",
@@ -466,6 +467,15 @@ const ACTIONS: &[Spec] = &[
         remote: Remote::Never,
     },
     Spec {
+        id: "pane.scroll",
+        title: "Scroll terminal",
+        category: "Terminal",
+        offline: true,
+        repeats: true,
+        arguments: Arguments::Lines,
+        remote: Remote::View { navigation: false },
+    },
+    Spec {
         id: "pane.reconnect",
         title: "Retry terminal connection",
         category: "Terminal",
@@ -539,6 +549,17 @@ pub fn requires_person(id: &str) -> bool {
     )
 }
 
+pub fn remote(id: &str) -> Remote {
+    match id {
+        "pane.focus" => Remote::View { navigation: true },
+        "pane.zoom" => Remote::View { navigation: false },
+        _ => ACTIONS
+            .iter()
+            .find(|s| s.id == id)
+            .map_or(Remote::Never, |s| s.remote),
+    }
+}
+
 pub fn validate(id: &str, args: &Value) -> Result<()> {
     if crate::workspace::known(id) {
         return crate::workspace::validate(id, args);
@@ -598,7 +619,9 @@ pub fn validate(id: &str, args: &Value) -> Result<()> {
         }
         Arguments::Lines => {
             ensure!(
-                args["lines"].as_i64().is_some(),
+                args["lines"]
+                    .as_i64()
+                    .is_some_and(|n| id != "pane.scroll" || i32::try_from(n).is_ok()),
                 "scroll requires a whole line count"
             );
             ensure!(
@@ -624,6 +647,7 @@ fn declarations() -> Vec<InspectResponseAction> {
             action.kind = Some("client".into());
             action.args = schema(spec.arguments);
             action.repeats = Some(spec.repeats);
+            if matches!(spec.remote, Remote::Never) { action.description = Some("Not available remotely. Only the person at this computer can run this action.".into()); }
             action
         })
         .chain(
@@ -635,6 +659,7 @@ fn declarations() -> Vec<InspectResponseAction> {
                     action.category = Some((*category).into());
                     action.kind = Some("client".into());
                     action.args = crate::workspace::schema(id);
+                    if matches!(remote(id), Remote::Never) { action.description = Some("Not available remotely. Only the person at this computer can run this action.".into()); }
                     action.repeats = Some(matches!(
                         *id,
                         "pane.focus" | "pane.focus_next" | "pane.focus_previous" | "pane.resize"
@@ -725,7 +750,7 @@ pub fn state(model: &HostModel, settings: &Settings, generation: u64) -> Value {
                 else if spec.id == "pane.reconnect" { terminal.is_some() }
                 else if spec.category == "Terminal" { frame.is_some() && (spec.offline || model.connected) }
                 else { spec.offline || model.connected },
-            "remote":match spec.remote { Remote::Never => "never" }})
+            "remote":match spec.remote { Remote::Never => "never", Remote::View { .. } => "view" }})
     }).chain(crate::workspace::ACTIONS.iter().map(|(id,title,category)| {
         let available = match *id {
             "session.new" => true,
@@ -735,7 +760,7 @@ pub fn state(model: &HostModel, settings: &Settings, generation: u64) -> Value {
             _ => model.window().is_some(),
         };
         json!({"id":id,"title":title,"category":category,"kind":"client","handler":"workspace","hint":hint(id),
-            "args":crate::workspace::schema(id),"enabled":(model.connected || *id == "client.tab.mute") && available,"remote":"never",
+            "args":crate::workspace::schema(id),"enabled":(model.connected || *id == "client.tab.mute") && available,"remote": match remote(id) { Remote::Never => "never", Remote::View { .. } => "view" },
             "repeats":matches!(*id,"pane.focus"|"pane.focus_next"|"pane.focus_previous"|"pane.resize")})
     })).chain(snapshot.into_iter().flat_map(|s| s.reply.actions.iter()).filter(|a| a.kind.as_deref() != Some("client"))
         .map(|a| json!({"id":a.name,"title":a.title.as_deref().unwrap_or(&a.name),"category":a.category.as_deref().unwrap_or("Server"),

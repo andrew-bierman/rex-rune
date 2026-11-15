@@ -11,10 +11,8 @@ pub fn command(r: &Value) -> Result<Command> {
         "clear" => Command::Clear,
         "reset" => Command::Reset,
         "scroll" => Command::Scroll(
-            r["lines"]
-                .as_i64()
-                .context("invalid lines")?
-                .clamp(-65535, 65535) as isize,
+            isize::try_from(r["lines"].as_i64().context("invalid lines")?)
+                .context("line count is out of range")?,
         ),
         "search" => Command::Search(
             r["text"]

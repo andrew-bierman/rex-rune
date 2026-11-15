@@ -131,8 +131,9 @@ impl Adapter {
         std::mem::take(&mut model.client_actions)
             .into_iter()
             .filter(|queued| {
-                queued.generation == self.keymap_generation
+                model.connected
                     && !crate::keymap::requires_person(&queued.action.action)
+                    && queued.generation == self.keymap_generation
                     && crate::keymap::known(&queued.action.action)
                     && crate::keymap::validate(
                         &queued.action.action,

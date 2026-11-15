@@ -13,6 +13,7 @@ Pane {
     signal navigated()
     property var inventory: sidebar.frontend.hosts || ({rows: []})
     property var menuTarget: ({})
+    readonly property bool menuOpen: hostMenu.visible
     property var rows: []
     readonly property var iconPrefs: (frontend.preferences || {}).interface || ({})
     readonly property int iconCount: iconPrefs.tab_icon_count === undefined ? 1 : iconPrefs.tab_icon_count

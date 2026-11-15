@@ -37,6 +37,7 @@ Popup {
             Button { text:qsTr("Terminal");checkable:true;checked:controller.page==="Terminal";onClicked:controller.page="Terminal" }
             Button { text:qsTr("Interface");checkable:true;checked:controller.page==="Interface";onClicked:controller.page="Interface" }
             Button { text:qsTr("Notifications");checkable:true;checked:controller.page==="Notifications";onClicked: { controller.page="Notifications";frontend.notifications.check();frontend.notifications.checkSound() } }
+            Button { objectName:"remoteHostsSettingsButton";text:qsTr("Remote hosts");checkable:true;checked:controller.page==="Remote hosts";onClicked:controller.page="Remote hosts" }
             Button { text:qsTr("Fullscreen");visible:!search.text || "fullscreen window".includes(search.text.toLowerCase());onClicked:popup.fullscreenRequested() }
         }
         ScrollView {
@@ -47,6 +48,7 @@ Popup {
             ColumnLayout {
                 width:scroll.availableWidth
                 NotificationSettings { controller:controller;notifications:popup.frontend.notifications;query:search.text;visible:search.text.length>0 || controller.page==="Notifications";Layout.fillWidth:true }
+                RemoteSettings { frontend:popup.frontend;query:search.text;visible:search.text.length>0 ? "remote hosts control navigation consent".includes(search.text.toLowerCase()) : controller.page==="Remote hosts";Layout.fillWidth:true }
                 TerminalSettings { controller:controller;query:search.text;visible:search.text.length>0 || controller.page==="Terminal";Layout.fillWidth:true }
                 InterfaceSettings { controller:controller;query:search.text;visible:search.text.length>0 || controller.page==="Interface";Layout.fillWidth:true }
             }

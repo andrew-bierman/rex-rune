@@ -68,7 +68,7 @@ ApplicationWindow {
     }
     function find() { findBar.terminal = selectedTerminal(); findBar.open() }
     FindBar { id: findBar; anchors.top: parent.top; anchors.right: parent.right; z: 100; onClosed: root.restoreTerminal() }
-    readonly property bool panelOpen: downloadDialog.visible || downloadsPopup.visible || serverPopup.visible || serverConfirm.visible || pairDialog.visible || directoryPopup.visible || activityPopup.visible || settingsPopup.visible || commandPopup.visible || shortcutPopup.visible || findBar.visible || workspaceUI.modalOpen || hostDialogs.modalOpen || hostSwitcher.visible || (root.width < 960 && hostDrawer.visible)
+    readonly property bool panelOpen: actions.visible || hostSidebar.menuOpen || downloadDialog.visible || downloadsPopup.visible || serverPopup.visible || serverConfirm.visible || pairDialog.visible || directoryPopup.visible || activityPopup.visible || settingsPopup.visible || commandPopup.visible || shortcutPopup.visible || findBar.visible || workspaceUI.modalOpen || hostDialogs.modalOpen || hostSwitcher.visible || (root.width < 960 && hostDrawer.visible)
     function restoreTerminal() {
         if (root.panelOpen) return
         const term = selectedTerminal(); if (term) term.forceActiveFocus()
@@ -86,7 +86,15 @@ ApplicationWindow {
         }
         return true
     }
+    function remoteContext(keypress) {
+        const field = root.activeFocusItem && root.activeFocusItem.cursorPosition !== undefined && root.activeFocusItem.text !== undefined
+        backend.remoteContext(panelOpen, Boolean(field), workspaceActions.pending.length > 0, keypress || false)
+    }
+    onPanelOpenChanged: remoteContext(false)
+    onActiveFocusItemChanged: remoteContext(false)
     function action(id, args, origin) {
+        const command = ((state.keymap || {}).actions || []).find(row => row.id === id)
+        if (command && command.remote === "view") { backend.viewAction(id, args); return }
         const term = selectedTerminal()
         if (terminalAction(term, id)) return
         switch (id) {
@@ -114,17 +122,12 @@ ApplicationWindow {
         case "client.host.add": hostDialogs.openAdd(); break
         case "client.host.edit": hostDialogs.openEdit(state.host); break
         case "client.host.remove": hostDialogs.openRemove(state.host); break
-        case "client.sidebar.toggle": backend.hostAction("sidebar", {open: !backend.hosts.sidebar_open}); break
         case "client.history.back": backend.hostAction("history", {direction: -1}); break
         case "client.history.forward": backend.hostAction("history", {direction: 1}); break
         case "client.tab.next_global": backend.hostAction("cycle_tab", {direction: 1}); break
         case "client.tab.previous_global": backend.hostAction("cycle_tab", {direction: -1}); break
         case "session.next": backend.hostAction("cycle_session", {direction: 1}); break
         case "session.previous": backend.hostAction("cycle_session", {direction: -1}); break
-        case "client.tab.next": backend.hostAction("tab_step", {direction: 1}); break
-        case "client.tab.previous": backend.hostAction("tab_step", {direction: -1}); break
-        case "client.tab.goto": backend.hostAction("tab_goto", {index: args.index}); break
-        case "session.select": backend.hostAction("navigate", {session: args.session_id, window: args.window_id || ""}); break
         case "pane.actions": workspaceUI.openPaneMenu(root.width / 2, 52, state.pane); break
         case "pane.download": backend.fileAction("download.open", {}, {host: state.host, epoch: state.epoch, session: state.session, window: state.window, pane: state.pane}); break;
         case "pane.insert_path":
@@ -246,7 +249,20 @@ ApplicationWindow {
     }
     Binding { target: workspaceActions; property: "searching"; value: findBar.visible }
     Binding { target: workspaceActions; property: "modalOpen"; value: root.panelOpen }
-    Connections { target: workspaceActions; function onRequested(id, args, origin) { root.action(id, args, origin) } }
+    Connections { target: workspaceActions
+        function onRequested(id, args, origin) { root.action(id, args, origin) }
+        function onKeypress() { root.remoteContext(true) }
+        function onChanged() { root.remoteContext(false) }
+    }
+    Connections { target: backend
+        function onStateChanged() { root.remoteContext(false) }
+        function onRemoteCheck(request) {
+            root.remoteContext(false)
+            const field = root.activeFocusItem && root.activeFocusItem.cursorPosition !== undefined && root.activeFocusItem.text !== undefined
+            const unchanged = request.host === state.host && request.epoch === state.epoch && request.session === state.session && request.window === state.window && (!request.action.startsWith("pane.") || request.pane === state.pane)
+            backend.authorizeRemote(request, unchanged && root.active && root.visible && !root.panelOpen && !field && workspaceActions.pending.length === 0)
+        }
+    }
     HostDialogs { id: hostDialogs; frontend: backend; onFinished: Qt.callLater(root.restoreTerminal) }
     Switcher { id: hostSwitcher; objectName: "hostSwitcher"; parent: Overlay.overlay; frontend: backend; onFinished: Qt.callLater(root.restoreTerminal) }
     Drawer {
@@ -263,6 +279,7 @@ ApplicationWindow {
         Binding { target: hostDrawer; property: "visible"; value: Boolean(backend.hosts.sidebar_open) }
         onClosed: { if (backend.hosts.sidebar_open) backend.hostAction("sidebar", {open: false}); Qt.callLater(root.restoreTerminal) }
         HostSidebar {
+            id: hostSidebar
             anchors.fill: parent
             frontend: backend
             onAddHost: hostDialogs.openAdd()
@@ -468,6 +485,7 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     wrapMode: Text.Wrap
                     color: "#f0c987"
+                    textFormat: Text.PlainText
                     text: backend.problem || (!root.state.connected ? (root.state.status || "Connecting…") : (root.state.pane ? "Terminal input paused" : "Choose a terminal pane"))
                 }
                 ToolButton {
