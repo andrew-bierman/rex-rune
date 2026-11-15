@@ -104,6 +104,10 @@ path = "src/bin/download_probe.rs"
 name = "rex-update-probe"
 path = "src/bin/update_probe.rs"
 
+[[bin]]
+name = "rex-qt-backend"
+path = "src/bin/qt_backend.rs"
+
 # Rune at the pinned revision with Rex's Linux window-chrome additions (vendor/rune/README.md).
 [patch."https://github.com/anomalyco/rune.git"]
 rune = { path = "vendor/rune/crates/rune" }
