@@ -235,3 +235,5 @@ The QML-facing property exposes cached terminal metadata, omitting only unused c
 ## Local maintenance
 
 `maintenance` accepts only local status, preview, confirm, cancel and signed-check operations. A previewed fixed `rex skill` command is captured and consumed once; closing invalidates its generation. The CLI owns external file ownership rules. About copies fixed build/runtime/license identity, not workspace/config/environment data. Signed check state lives beside the separate Qt profile; update guidance never invokes a Rune installer or package helper.
+
+The adapter caches serialized immutable core frames by `Arc` identity for visible panes. It refreshes connection/status metadata independently and prunes inactive pane projections. This is an internal construction cache: records still contain complete frames, and consumers must continue treating each record as a coherent snapshot.

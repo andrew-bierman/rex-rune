@@ -10,7 +10,11 @@ use rex_rune::{
 use rexrs::api::session;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::path::PathBuf;
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+    sync::Arc,
+};
 
 pub const VERSION: u64 = 3;
 
@@ -19,6 +23,11 @@ struct Target {
     session: String,
     window: String,
     pane: String,
+}
+
+struct CachedFrame {
+    source: Arc<Frame>,
+    value: Value,
 }
 
 /// Selection belongs to this frontend; the server still decides the active tab.
@@ -31,6 +40,7 @@ pub struct Adapter {
     workspace: crate::workspace::Workspace,
     files: crate::files::Files,
     pane: Option<String>,
+    frames: HashMap<String, CachedFrame>,
 }
 
 fn visible_terminals(window: &session::Window) -> impl Iterator<Item = &session::LayerBlock> {
@@ -73,6 +83,7 @@ impl Adapter {
     pub fn clear_captures(&mut self) {
         self.workspace.clear();
         self.files.clear();
+        self.frames.clear();
         self.pane = None;
     }
     pub fn reconcile_downloads(&mut self, model: &HostModel) -> Vec<HostCommand> {
@@ -405,6 +416,14 @@ impl Adapter {
 
     /// Snapshot a bounded copy of host state, without serializing under its lock.
     pub fn state(&mut self, model: &HostModel) -> Value {
+        let visible: HashSet<_> = model
+            .window()
+            .into_iter()
+            .flat_map(visible_terminals)
+            .filter_map(|block| block.block_id.as_deref())
+            .collect();
+        self.frames
+            .retain(|pane, _| visible.contains(pane.as_str()));
         if self.pane.as_deref() == model.focused() {
             self.pane = None;
         }
@@ -413,7 +432,7 @@ impl Adapter {
         }
         let target = self.target(model);
         let (terminal_state, frame) = target.as_ref().map_or((Value::Null, Value::Null), |t| {
-            terminal_value(model, &t.pane)
+            self.terminal_value(model, &t.pane)
         });
         let windows = model.view().map_or_else(Vec::new, |v| {
             v.windows.iter().filter_map(|w| {
@@ -424,7 +443,7 @@ impl Adapter {
             let (placements, dividers) = rex_rune::layout::placements(window, None);
             let panes = placements.into_iter().filter_map(|placement| {
                 let block = visible_terminals(window).find(|b| b.block_id.as_ref() == Some(&placement.block))?;
-                let (terminal, frame) = terminal_value(model, &placement.block);
+                let (terminal, frame) = self.terminal_value(model, &placement.block);
                 Some(json!({"id":placement.block,"label":pane_title(model,block,self.settings.generated_titles),"user_label":block.label,
                     "session":model.selected,"window":window.window_id,"pane":placement.block,
                     "rect":placement.rect,"terminal":terminal,"frame":frame}))
@@ -445,24 +464,36 @@ impl Adapter {
     }
 }
 
-fn terminal_value(model: &HostModel, pane: &str) -> (Value, Value) {
-    let Some(connection) = model.terminals.get(pane) else {
-        return (Value::Null, Value::Null);
-    };
-    let (state, frame) = {
-        let m = connection.model.lock().expect("terminal model");
-        (
-            json!({"connected":model.connected && m.connected && m.control_connected,
+impl Adapter {
+    fn terminal_value(&mut self, model: &HostModel, pane: &str) -> (Value, Value) {
+        let Some(connection) = model.terminals.get(pane) else {
+            return (Value::Null, Value::Null);
+        };
+        let (state, frame) = {
+            let m = connection.model.lock().expect("terminal model");
+            (
+                json!({"connected":model.connected && m.connected && m.control_connected,
             "owner":m.owner,"status":m.status,"revision":m.revision,"generation":m.restore_generation}),
-            m.frame.clone(),
-        )
-    };
-    (
-        state,
-        frame
-            .as_ref()
-            .map_or(Value::Null, |frame| frame_value(frame)),
-    )
+                m.frame.clone(),
+            )
+        };
+        let Some(frame) = frame else {
+            self.frames.remove(pane);
+            return (state, Value::Null);
+        };
+        let cached = self
+            .frames
+            .entry(pane.into())
+            .or_insert_with(|| CachedFrame {
+                source: frame.clone(),
+                value: frame_value(&frame),
+            });
+        if !Arc::ptr_eq(&cached.source, &frame) {
+            cached.value = frame_value(&frame);
+            cached.source = frame;
+        }
+        (state, cached.value.clone())
+    }
 }
 
 fn frame_value(frame: &Frame) -> Value {
@@ -563,6 +594,51 @@ mod tests {
         assert_eq!(value["images"][0]["source"], json!([0, 0, 1, 1]));
         assert_eq!(value["images"][0]["size"], json!([16, 16]));
         assert_eq!(value["cell_pixels"], json!([8, 16]));
+    }
+
+    #[test]
+    fn metadata_wakes_and_replaced_frames_keep_current_terminal_content() {
+        use std::sync::Arc;
+        let mut model = attached_fixture();
+        model.views.get_mut("session-a").unwrap().windows[0].layers[0] =
+            serde_json::from_value(json!({
+                "kind":"tiled","bounds":[0,0,1,1],"layout":{"block_id":"pane-a"},
+                "blocks":[{"block_id":"pane-a","creator_name":"com.superlogical.terminal"}]
+            }))
+            .unwrap();
+        let mut terminal = ghostty_vt::Terminal::new(ghostty_vt::TerminalOptions {
+            cols: 8,
+            rows: 2,
+            ..Default::default()
+        })
+        .unwrap();
+        let mut renderer = rex_rune::terminal::Renderer::new().unwrap();
+        terminal.vt_write(b"A");
+        model.terminals["pane-a"].model.lock().unwrap().frame =
+            Some(Arc::new(renderer.frame(&terminal).unwrap()));
+        let mut adapter = Adapter::default();
+        let first = adapter.state(&model);
+        assert_eq!(first["frame"]["cells"][0][0]["text"], "A");
+        {
+            let mut pane = model.terminals["pane-a"].model.lock().unwrap();
+            pane.revision += 1;
+            pane.status = "Paused".into();
+            pane.control_connected = false;
+        }
+        let metadata = adapter.state(&model);
+        assert_eq!(metadata["frame"], first["frame"]);
+        assert_eq!(metadata["terminal"]["status"], "Paused");
+        assert_eq!(metadata["terminal"]["connected"], false);
+        terminal.vt_write(b"\rB");
+        {
+            let mut pane = model.terminals["pane-a"].model.lock().unwrap();
+            pane.revision = 0;
+            pane.restore_generation = 0;
+            pane.frame = Some(Arc::new(renderer.frame(&terminal).unwrap()));
+        }
+        let replaced = adapter.state(&model);
+        assert_eq!(replaced["frame"]["cells"][0][0]["text"], "B");
+        assert_eq!(replaced["panes"][0]["frame"], replaced["frame"]);
     }
 
     #[test]
