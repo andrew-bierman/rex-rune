@@ -76,3 +76,9 @@ database. Mouse reports, graphics, links and the full workspace action/keymap
 surface are not exposed. Extending that contract requires matching adapter and
 frontend changes and tests. JSON serialization cost and QPainter performance
 on large, fast-updating grids have not been benchmarked.
+
+## Downstream ownership
+
+The adapter lives in `qt/backend/` and imports public `rex_rune` APIs. It is not exported by the upstream library. `Cargo.toml` adds only an optional-by-selection executable target; default Rune features and dependencies are unchanged. There are no downstream changes in `src/` or `vendor/`. A separate crate would currently add workspace/lockfile maintenance without removing another upstream source edit, so it is deferred.
+
+The adapter owns frontend selection, JSON framing, publication pacing and stale-target rejection. `HostConnection` owns protocol connections, authoritative sessions, reconnection and terminal streams; its terminal sender owns key/paste/resize delivery, and Ghostty owns VT state. No parallel connection/reconnect/parser implementation exists in Qt. Public core APIs are not a stable compatibility promise: upstream model/command/frame changes may require adapter updates. See [upstream maintenance](qt-upstream-maintenance.md).

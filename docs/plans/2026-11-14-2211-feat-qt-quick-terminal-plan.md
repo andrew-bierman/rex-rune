@@ -29,6 +29,8 @@ The user wants familiar native Qt interaction patterns on Omarchy while retainin
 - Build an alternate frontend rather than reskin Rune (session-settled: user-directed — chosen over a Rune color reskin: native Qt controls and interaction are the requested outcome). Governs R1.
 - Reuse the Rust connection and Ghostty terminal core (session-settled: user-directed — chosen over a protocol and VT rewrite: preserve tested Rex behavior). Governs R2.
 
+- Keep an upstream-tracking downstream fork and a thin optional Qt layer (session-settled: user-directed, 2026-11-15). Preserve Rune source/build, reuse public core workers, and isolate any unavoidable core changes into separately documented commits. Prefer a separate crate only when evidence shows less upstream churn; do not build a hypothetical GTK abstraction. Governs R8.
+
 ### Requirements
 
 - R1. Provide a separate Qt Quick executable with session, tab and pane selection and a dominant single terminal canvas.
@@ -38,6 +40,8 @@ The user wants familiar native Qt interaction patterns on Omarchy while retainin
 - R5. Startup attachment never creates sessions or changes server lifecycle/configuration; use separate frontend preferences or no persisted preferences.
 - R6. Prove shell output/input, PTY dimensions, selection and full-screen editor save through the frontend on private fixtures.
 - R7. Preserve existing Rune features/build and document limitations, reproducible commands and evidence without private environment data.
+
+- R8. Keep `origin` owned and `upstream` shuv1337/rex-rune distinct; test and document an upstream integration rehearsal, core/Qt gates and conflict hotspots. Audit the final diff for core edits and duplicate backend behavior.
 
 ### Scope Boundaries
 
@@ -71,7 +75,7 @@ flowchart LR
 
 **Dependencies:** none.
 
-**Files:** `Cargo.toml`, `src/bin/qt_backend.rs`, `src/qt_backend.rs`, adapter tests beside the module.
+**Files:** `Cargo.toml`, `qt/backend/main.rs`, `qt/backend/adapter.rs`, adapter tests beside the module.
 
 **Approach:** implement the versioned adapter using existing host/terminal models. Validate selected identities, ownership and connection flags; errors stay protocol records and diagnostics stay stderr. Keep implementation independent of Qt and new Cargo dependencies.
 
