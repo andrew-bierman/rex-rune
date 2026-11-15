@@ -34,10 +34,13 @@ QPair<QColor,QColor> selectionColors(const QVariantMap &preferences, QColor fore
     const auto appearance=preferences.value("_appearance").toMap();
     const auto fillSource=config.value("selection_background","theme").toString();
     const auto inkSource=config.value("selection_foreground","theme").toString();
-    auto fill=fillSource=="cell_foreground" ? foreground : fillSource=="cell_background" ? background
-        : appearance.value("selection_background").isNull() ? QColor("#244866") : QColor::fromRgb(appearance.value("selection_background").toUInt());
-    auto ink=inkSource=="cell_foreground" ? foreground : inkSource=="cell_background" ? background
-        : appearance.value("selection_foreground").isNull() ? foreground : QColor::fromRgb(appearance.value("selection_foreground").toUInt());
+    const auto resolve = [&](const QString &source, const QVariant &theme, QColor fallback) {
+        if (source == "cell_foreground") return foreground;
+        if (source == "cell_background") return background;
+        return theme.isNull() ? fallback : QColor::fromRgb(theme.toUInt());
+    };
+    auto fill = resolve(fillSource, appearance.value("selection_background"), QColor("#244866"));
+    auto ink = resolve(inkSource, appearance.value("selection_foreground"), foreground);
     if ((fillSource!="theme" || inkSource!="theme") && ink==fill && foreground!=background)
         ink=fill==background ? foreground : background;
     return {fill,ink};

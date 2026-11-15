@@ -240,6 +240,8 @@ void TerminalItem::paint(QPainter *p) {
     }
     const auto terminalConfig=m_preferences.value("terminal").toMap();
     const auto shape = terminalConfig.value("cursor_force").toBool() ? terminalConfig.value("cursor_style","block").toString() : m_frame["cursor_shape"].toString();
+    const auto program=terminalConfig.value("font").toMap().value("bold_italic","both").toString();
+    const auto cursorText=m_preferences.value("_appearance").toMap().value("cursor_text");
     const bool solidCursor = hasActiveFocus() && window() && window()->isActive() && shape == "block";
 
     for (int y = 0; y < cells.size() && y * m_cellHeight < height(); ++y) {
@@ -263,7 +265,6 @@ void TerminalItem::paint(QPainter *p) {
                 const auto fill=selectionColors(m_preferences,color(cell["fg"]),color(cell["bg"])).first;
                 if (!terminalConfig.value("selection_rounded").toBool()) p->fillRect(rect,fill);
                 else {
-                    // Only the outside of the continuous selection receives rounded corners.
                     const qreal r=std::min(qreal(3),m_cellWidth/2);
                     QPainterPath path;path.setFillRule(Qt::WindingFill);path.addRoundedRect(rect,r,r);
                     if(selectedAt(x-1,y)) path.addRect(QRectF(rect.left(),rect.top(),r,rect.height()));
@@ -281,14 +282,12 @@ void TerminalItem::paint(QPainter *p) {
             const bool wide = x + 1 < row.size() && row[x + 1].toObject()["spacer_tail"].toBool();
             const QRectF rect(m_paddingX + x * m_cellWidth, m_paddingY + y * m_cellHeight, m_cellWidth * (wide ? 2 : 1), m_cellHeight);
             QFont font = m_font;
-            const auto program=terminalConfig.value("font").toMap().value("bold_italic","both").toString();
             font.setBold(m_font.bold() || (cell["bold"].toBool() && (program=="both" || program=="bold_only")));
             font.setItalic(m_font.italic() || (cell["italic"].toBool() && (program=="both" || program=="italic_only")));
             p->save();
             p->setClipRect(rect);
             p->setFont(font);
             if (cell["faint"].toBool()) p->setOpacity(.5);
-            const auto cursorText=m_preferences.value("_appearance").toMap().value("cursor_text");
             const auto fg = x == cx && y == cy && solidCursor ? (cursorText.isNull() ? color(cell["bg"]) : QColor::fromRgb(cursorText.toUInt()))
                 : selectedAt(x,y) ? selectionColors(m_preferences,color(cell["fg"]),color(cell["bg"])).second
                 : currentAt(x, y) ? QColor("#001528") : color(cell["fg"]);

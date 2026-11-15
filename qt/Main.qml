@@ -62,8 +62,9 @@ ApplicationWindow {
     }
     function find() { findBar.terminal = selectedTerminal(); findBar.open() }
     FindBar { id: findBar; anchors.top: parent.top; anchors.right: parent.right; z: 100; onClosed: root.restoreTerminal() }
+    readonly property bool panelOpen: settingsPopup.visible || commandPopup.visible || shortcutPopup.visible || findBar.visible || workspaceUI.modalOpen || hostDialogs.modalOpen || hostSwitcher.visible || (root.width < 960 && hostDrawer.visible)
     function restoreTerminal() {
-        if (settingsPopup.visible || commandPopup.visible || shortcutPopup.visible || findBar.visible || workspaceUI.modalOpen || hostDialogs.modalOpen || hostSwitcher.visible || (root.width < 960 && hostDrawer.visible)) return
+        if (root.panelOpen) return
         const term = selectedTerminal(); if (term) term.forceActiveFocus()
     }
     function terminalAction(term, id) {
@@ -151,7 +152,7 @@ ApplicationWindow {
         }
     }
     Binding { target: workspaceActions; property: "searching"; value: findBar.visible }
-    Binding { target: workspaceActions; property: "modalOpen"; value: settingsPopup.visible || commandPopup.visible || shortcutPopup.visible || findBar.visible || workspaceUI.modalOpen || hostDialogs.modalOpen || hostSwitcher.visible || (root.width < 960 && hostDrawer.visible) }
+    Binding { target: workspaceActions; property: "modalOpen"; value: root.panelOpen }
     Connections { target: workspaceActions; function onRequested(id, args, origin) { root.action(id, args, origin) } }
     HostDialogs { id: hostDialogs; frontend: backend; onFinished: Qt.callLater(root.restoreTerminal) }
     Switcher { id: hostSwitcher; objectName: "hostSwitcher"; parent: Overlay.overlay; frontend: backend; onFinished: Qt.callLater(root.restoreTerminal) }

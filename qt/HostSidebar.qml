@@ -19,8 +19,10 @@ Pane {
         const selected = key(rows[list.currentIndex])
         const result = []
         const needle = search.text.toLowerCase()
+        const labelCounts = new Map()
+        for (const host of inventory.rows || []) labelCounts.set(host.label, (labelCounts.get(host.label) || 0) + 1)
         for (const host of inventory.rows || []) {
-            const collision = inventory.rows.filter(row => row.label === host.label).length > 1
+            const collision = labelCounts.get(host.label) > 1
             const hostName = host.label + (collision ? " · " + host.endpoint : "")
             const hostMatch = host.label.toLowerCase().includes(needle)
             const children = []

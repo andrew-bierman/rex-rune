@@ -3,7 +3,7 @@
 //! license to deliver an old input event to a newly selected pane.
 use anyhow::{Context, Result, bail, ensure};
 use rex_rune::{
-    connection::{Command, Connection, HostCommand, HostConnection, HostModel},
+    connection::{Command, Connection, HostCommand, HostConnection, HostModel, activity::TERMINAL},
     terminal::{CursorShape, Frame},
 };
 use rexrs::api::session;
@@ -37,7 +37,7 @@ fn visible_terminals(window: &session::Window) -> impl Iterator<Item = &session:
         .iter()
         .filter(|layer| layer.state.as_deref() != Some("minimized"))
         .flat_map(|layer| &layer.blocks)
-        .filter(|block| block.creator_name.as_deref() == Some("com.superlogical.terminal"))
+        .filter(|block| block.creator_name.as_deref() == Some(TERMINAL))
         .filter(|block| {
             window
                 .zoomed_block_id
@@ -48,7 +48,7 @@ fn visible_terminals(window: &session::Window) -> impl Iterator<Item = &session:
 
 fn pane_title(model: &HostModel, block: &session::LayerBlock, generated: bool) -> String {
     let label = block.label.as_deref().filter(|label| !label.is_empty());
-    let default = block.creator_name.as_deref() == Some("com.superlogical.terminal")
+    let default = block.creator_name.as_deref() == Some(TERMINAL)
         && label.is_none_or(|label| {
             block
                 .flavor

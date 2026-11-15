@@ -1,4 +1,3 @@
-//! Qt-owned host identities, presentation inventory and navigation. Core workers own transport.
 use anyhow::{Context, Result, ensure};
 use rex_rune::{
     connection::{HostCommand, HostConnection, HostModel},
@@ -408,7 +407,6 @@ impl Hosts {
         let i = self.index(&visit.host)?;
         ensure!(self.slots[i].connection.is_some(), "host is disconnected");
         if !self.slots[i].model.connected {
-            // An explicit offline session choice is a preference, never a queued focus replay.
             self.slots[i]
                 .connection
                 .as_ref()

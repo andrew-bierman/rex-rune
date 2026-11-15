@@ -379,7 +379,6 @@ impl Backend {
         let epoch = request["epoch"]
             .as_u64()
             .context("missing connection epoch")?;
-        // Navigation may supersede a pending selection; input may not.
         if matches!(op, "select_session" | "select_window") {
             self.hosts.require_active(&id)?;
             self.epoch(request)?;

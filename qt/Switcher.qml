@@ -22,8 +22,10 @@ Popup {
         const result = []
         const needle = query.text.toLowerCase()
         const hosts = (popup.frontend.hosts || {}).rows || []
+        const labelCounts = new Map()
+        for (const host of hosts) labelCounts.set(host.label, (labelCounts.get(host.label) || 0) + 1)
         for (const host of hosts) {
-            const collision = hosts.filter(row => row.label === host.label).length > 1
+            const collision = labelCounts.get(host.label) > 1
             const hostName = host.label + (collision ? " · " + host.endpoint : "")
             if (scope === "hosts") result.push({host: host.id, epoch: host.epoch, label: host.label, detail: [collision ? host.endpoint : "", host.connected ? "" : host.status].filter(Boolean).join(" · "), active: host.active})
             else for (const session of host.sessions) {

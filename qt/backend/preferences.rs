@@ -1,4 +1,3 @@
-//! Editable Qt preferences are a projection of the public settings, never a second host store.
 use anyhow::{Context, Result, ensure};
 use rex_rune::{
     settings::Settings,
@@ -120,7 +119,6 @@ pub fn apply(settings: &mut Settings, path: &Path, patch: &Value) -> Result<()> 
     }
     ThemeDirs::from_env().resolve(&next.terminal_theme, next.chrome_theme)?;
     next.save(path)?;
-    // Settings::save is atomic; publish only after the file is safely written.
     *settings = next;
     Ok(())
 }
