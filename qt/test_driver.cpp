@@ -3,7 +3,10 @@
 #include "terminal.h"
 
 #include <QClipboard>
+#include <QDesktopServices>
+#include <QUrl>
 #include <QFile>
+#include <QSaveFile>
 #include <QGuiApplication>
 #include <QInputMethodEvent>
 #include <QJsonDocument>
@@ -12,6 +15,7 @@
 #include <QQuickWindow>
 #include <QTest>
 #include <QTextStream>
+#include <QWheelEvent>
 #include <stdexcept>
 
 namespace {
@@ -21,9 +25,10 @@ TerminalItem *selectedTerminal(QQuickItem *root, const QString &id) {
     return nullptr;
 }
 void writeJson(const QString &path, const QJsonObject &value) {
-    QFile file(path);
+    QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly)) throw std::runtime_error("cannot write artifact");
-    file.write(QJsonDocument(value).toJson());
+    const auto data = QJsonDocument(value).toJson();
+    if (file.write(data) != data.size() || !file.commit()) throw std::runtime_error("cannot commit artifact");
 }
 Qt::Key key(const QString &name) {
     static const QHash<QString, Qt::Key> keys = {{"Return",Qt::Key_Return}, {"Enter",Qt::Key_Return},
@@ -80,9 +85,12 @@ void keyContract() {
 
 TestDriver::TestDriver(QQuickWindow *window, Frontend *backend, const QString &script, const QString &report)
     : m_window(window), m_backend(backend), m_terminal(window->findChild<TerminalItem *>("terminal")), m_script(script), m_report(report) {
+    for (const auto &scheme : {"https", "http", "ftp", "mailto"}) QDesktopServices::setUrlHandler(scheme, this, "openedUrl");
     m_timer.setInterval(100);
     connect(&m_timer, &QTimer::timeout, this, &TestDriver::step);
 }
+
+void TestDriver::openedUrl(const QUrl &url) { m_openedUrls << url.toString(); }
 
 void TestDriver::start() {
     try {
@@ -110,16 +118,21 @@ void TestDriver::clickControl(const QString &name) {
 void TestDriver::step() {
     try {
         if (m_index >= m_steps.size()) { finish(true); return; }
-        m_terminal = selectedTerminal(m_window->contentItem(), m_backend->snapshot()["pane"].toString());
+        const auto pane = m_backend->snapshot()["pane"].toString();
+        if (!pane.isEmpty()) m_lastPane = pane;
+        m_terminal = selectedTerminal(m_window->contentItem(), pane);
+        if (!m_terminal && !m_backend->snapshot()["connected"].toBool()) m_terminal = selectedTerminal(m_window->contentItem(), m_lastPane);
         const auto s = m_steps[m_index].toObject();
         const auto op = s["op"].toString();
         bool complete = true;
         if (!m_terminal && op != "waitState" && op != "waitText" && op != "waitProblem" && op != "pause")
             throw std::runtime_error("selected terminal item missing");
-        if (op == "waitText" || op == "waitState" || op == "waitClipboard" || op == "waitProblem") {
+        if (op == "waitText" || op == "waitState" || op == "waitClipboard" || op == "waitPrimary" || op == "waitProblem" || op == "waitOpenedUrl") {
             if (!m_waiting) { m_wait.start(); m_waiting = true; }
             if (op == "waitText") complete = m_terminal && m_terminal->visibleText().contains(s["text"].toString());
-            else if (op == "waitClipboard") complete = QGuiApplication::clipboard()->text().contains(s["text"].toString());
+            else if (op == "waitPrimary") complete = s["exact"].toBool() ? QGuiApplication::clipboard()->text(QClipboard::Selection) == s["text"].toString() : QGuiApplication::clipboard()->text(QClipboard::Selection).contains(s["text"].toString());
+            else if (op == "waitClipboard") complete = s["exact"].toBool() ? QGuiApplication::clipboard()->text() == s["text"].toString() : QGuiApplication::clipboard()->text().contains(s["text"].toString());
+            else if (op == "waitOpenedUrl") complete = m_openedUrls.contains(s["text"].toString());
             else if (op == "waitProblem") complete = m_backend->problem().contains(s["text"].toString());
             else {
                 QJsonValue value(m_backend->snapshot());
@@ -135,6 +148,33 @@ void TestDriver::step() {
             if (!item) throw std::runtime_error("visible pane item missing");
             QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier,
                 item->mapToScene(QPointF(item->width() / 2, item->height() / 2)).toPoint());
+        } else if (op == "find") {
+            QMetaObject::invokeMethod(m_window, "find");
+        } else if (op == "searchText") {
+            auto *item = m_window->findChild<QQuickItem *>("terminalSearch");
+            if (!item) throw std::runtime_error("search field missing");
+            item->forceActiveFocus();
+            for (QChar character : s["text"].toString()) QTest::keyClick(m_window, character.toLatin1(), Qt::NoModifier, 2);
+        } else if (op == "searchPrevious" || op == "searchNext") {
+            clickControl(op == "searchPrevious" ? "findPrevious" : "findNext");
+        } else if (op == "searchKey") {
+            QTest::keyClick(m_window, key(s["key"].toString()), modifiers(s["mods"].toString()));
+        } else if (op == "wheel") {
+            const auto pos = m_terminal->mapToScene(QPointF(m_terminal->cellWidth() * (s["x"].toInt() + .5), m_terminal->cellHeight() * (s["y"].toInt() + .5)));
+            QWheelEvent event(pos, m_window->mapToGlobal(pos.toPoint()), {}, QPoint(0, s["delta"].toInt()), Qt::NoButton,
+                              modifiers(s["mods"].toString()), Qt::NoScrollPhase, false);
+            QCoreApplication::sendEvent(m_window, &event);
+        } else if (op == "pointer") {
+            const auto pos = m_terminal->mapToScene(QPointF(m_terminal->cellWidth() * (s["x"].toInt() + .5), m_terminal->cellHeight() * (s["y"].toInt() + .5))).toPoint();
+            const auto mods = modifiers(s["mods"].toString());
+            const auto button = s["button"] == "middle" ? Qt::MiddleButton : s["button"] == "right" ? Qt::RightButton : Qt::LeftButton;
+            if (s["phase"] == "double" || s["phase"] == "triple") {
+                QTest::mouseDClick(m_window, button, mods, pos);
+                QTest::mouseRelease(m_window, button, mods, pos);
+                if (s["phase"] == "triple") QTest::mouseClick(m_window, button, mods, pos, 20);
+            } else if (s["phase"] == "down") QTest::mousePress(m_window, button, mods, pos);
+            else if (s["phase"] == "up") QTest::mouseRelease(m_window, button, mods, pos);
+            else QTest::mouseMove(m_window, pos);
         } else if (op == "type") {
             m_terminal->forceActiveFocus();
             const auto text = s["text"].toString();
@@ -165,6 +205,12 @@ void TestDriver::step() {
         } else if (op == "paste") {
             QGuiApplication::clipboard()->setText(s["text"].toString());
             clickControl("pasteButton");
+        } else if (op == "clipboardPolicy") {
+            m_terminal->setProperty("copyOnSelection", s["copyOnSelection"].toBool());
+            m_terminal->setProperty("primarySelection", s["primarySelection"].toBool());
+        } else if (op == "windowVisible") {
+            m_window->setVisible(s["visible"].toBool());
+            if (s["visible"].toBool()) m_window->requestActivate();
         } else if (op == "resize") {
             m_window->resize(s["width"].toInt(), s["height"].toInt());
         } else if (op == "select") {
@@ -177,7 +223,7 @@ void TestDriver::step() {
             QTest::keyClick(m_window, Qt::Key_Return);
         } else if (op == "copy") {
             clickControl("copyButton");
-        } else if (op == "selectAll") {
+        } else if (op == "selectAll" || op == "promptPrevious" || op == "promptNext") {
             const auto menu = m_window->findChild<QObject *>("actionsMenu");
             if (!menu) throw std::runtime_error("terminal menu not found");
             complete = false;
@@ -186,7 +232,7 @@ void TestDriver::step() {
                 m_wait.start();
                 m_waiting = true;
             } else if (!m_menuActivated && menu->property("opened").toBool()) {
-                clickControl("selectAllButton");
+                clickControl(op == "selectAll" ? "selectAllButton" : op == "promptPrevious" ? "previousPromptButton" : "nextPromptButton");
                 m_menuActivated = true;
             } else if (m_menuActivated && !menu->property("visible").toBool()) {
                 complete = true;
@@ -196,6 +242,8 @@ void TestDriver::step() {
         } else if (op == "snapshot") {
             auto snapshot = m_backend->snapshot();
             snapshot["clipboard"] = QGuiApplication::clipboard()->text();
+            snapshot["supportsSelection"] = QGuiApplication::clipboard()->supportsSelection();
+            snapshot["selectionText"] = QGuiApplication::clipboard()->text(QClipboard::Selection);
             snapshot["problem"] = m_backend->problem();
             QJsonArray panes;
             for (const auto &id : m_backend->paneIds()) {
@@ -206,6 +254,7 @@ void TestDriver::step() {
                     {"x",at.x()},{"y",at.y()},{"width",item->width()},{"height",item->height()},
                     {"text",item->visibleText()}});
             }
+            snapshot["openedUrls"] = QJsonArray::fromStringList(m_openedUrls);
             snapshot["qt_panes"] = panes;
             snapshot["qt_columns"] = m_terminal->columns();
             snapshot["qt_rows"] = m_terminal->rows();

@@ -1,5 +1,6 @@
 //! Child process owned by the Qt frontend. Standard output is JSON lines only.
 mod adapter;
+mod terminal;
 
 use adapter::{Adapter, VERSION};
 use anyhow::Result;
@@ -73,6 +74,22 @@ fn main() -> Result<()> {
             Err(flume::RecvTimeoutError::Timeout) => {}
         }
         dirty |= host.wake.drain().next().is_some();
+        let clipboard = {
+            let mut model = host.model.lock().expect("host model");
+            model
+                .clipboard
+                .take()
+                .filter(|copy| {
+                    rex_rune::connection::clipboard::accepts(&model, &copy.session, &copy.block)
+                })
+                .map(|copy| {
+                    json!({"type":"clipboard","version":VERSION,"epoch":model.connection_epoch,
+                    "session":copy.session,"pane":copy.block,"text":copy.text})
+                })
+        };
+        if let Some(copy) = clipboard {
+            publish(&copy)?;
+        }
         let notice = {
             let mut model = host.model.lock().expect("host model");
             for connection in model.terminals.values() {

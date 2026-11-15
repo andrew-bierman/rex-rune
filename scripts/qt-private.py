@@ -7,6 +7,7 @@ desktop. No personal Rex socket, session or config is used. Artifacts remain
 under ignored .build-tools/qt-acceptance-* unless --artifacts is supplied.
 """
 import argparse
+import base64
 import json
 import os
 from pathlib import Path
@@ -172,10 +173,10 @@ def main():
             {'op': 'snapshot', 'path': str(work / 'navigation.json')},
         ]
 
-        def run(script, report, client_env=None):
+        def run(script, report, client_env=None, backend=None):
             path = work / script
             log = (work / (script + '.log')).open('w')
-            return subprocess.Popen([str(args.driver.resolve()), '--backend', str(args.backend.resolve()),
+            return subprocess.Popen([str(args.driver.resolve()), '--backend', str((backend or args.backend).resolve()),
                                      '--endpoint', endpoint, '--session', sid, '--script', str(path),
                                      '--report', str(work / report)], env=client_env or env, stdout=log, stderr=log)
 
@@ -205,8 +206,28 @@ def main():
         navigation = json.loads((work / 'navigation.json').read_text())
         state = navigation.get('state', navigation)
         index = next(i for i, session in enumerate(state['sessions']) if session['id'] == other)
+        # Reorder one real clipboard record at the child-process boundary. The real
+        # backend/server still perform the reconnect; this probes the UI epoch guard.
+        proxy = work / 'replay-clipboard.py'
+        proxy.write_text('#!/usr/bin/env python3\n' +
+            'import json,subprocess,sys,threading\n' +
+            f'child=subprocess.Popen([{str(args.backend.resolve())!r},*sys.argv[1:]],stdin=subprocess.PIPE,stdout=subprocess.PIPE,text=True)\n' +
+            'def forward():\n for line in sys.stdin:\n  try: child.stdin.write(line);child.stdin.flush()\n  except BrokenPipeError: break\n child.stdin.close()\n' +
+            'threading.Thread(target=forward,daemon=True).start()\nsaved=None;replayed=False\n' +
+            'try:\n for line in child.stdout:\n  item=json.loads(line);sys.stdout.write(line);sys.stdout.flush()\n' +
+            '  if item.get("type")=="clipboard" and saved is None:saved=item\n' +
+            '  if saved and not replayed and item.get("type")=="state" and item.get("connected") and (item.get("terminal") or {}).get("connected") and item.get("epoch",0)>saved["epoch"]:\n' +
+            f'   open({str(work / "clipboard-replayed.json")!r},"w").write(json.dumps(saved))\n' +
+            '   print(json.dumps(saved),flush=True);replayed=True\n' +
+            'finally:\n child.terminate();child.wait()\n')
+        proxy.chmod(0o700)
+        old_clipboard = 'QT_OLD_CLIPBOARD'
+        old_encoded = base64.b64encode(old_clipboard.encode()).decode()
         reconnect = [
             {'op': 'waitState', 'field': 'terminal.connected', 'value': True},
+            {'op': 'type', 'text': f"printf '\\033]52;c;{old_encoded}\\007'"}, {'op': 'key', 'key': 'Return'},
+            {'op': 'waitClipboard', 'text': old_clipboard, 'exact': True},
+            {'op': 'selectAll'}, {'op': 'copy'}, {'op': 'waitClipboard', 'text': 'qt-private$'},
             {'op': 'snapshot', 'path': str(work / 'reconnect-ready.json')},
             {'op': 'pause', 'ms': 500},
             {'op': 'key', 'key': 'Return'},
@@ -221,7 +242,7 @@ def main():
             {'op': 'snapshot', 'path': str(work / 'reconnected.json')},
         ]
         (work / 'reconnect.json').write_text(json.dumps(reconnect))
-        client = run('reconnect.json', 'reconnect-report.json')
+        client = run('reconnect.json', 'reconnect-report.json', backend=proxy)
         wait(lambda: (work / 'reconnect-ready.json').exists() or client.poll() is not None, 'reconnect fixture readiness')
         assert client.poll() is None, 'reconnect driver failed before readiness'
         server.send_signal(signal.SIGSTOP)
@@ -234,6 +255,11 @@ def main():
         server_paused = False
         assert client.wait(timeout=50) == 0, 'reconnect acceptance failed'
         reconnected = json.loads((work / 'reconnected.json').read_text())
+        before_clipboard = json.loads((work / 'reconnect-ready.json').read_text())['clipboard']
+        replayed = json.loads((work / 'clipboard-replayed.json').read_text())
+        assert replayed['text'] == old_clipboard and replayed['epoch'] < reconnected['epoch'], 'stale clipboard probe did not cross an epoch'
+        assert reconnected['clipboard'] == before_clipboard != old_clipboard, 'stale clipboard replay changed the Qt clipboard'
+
         text = api('com.superlogical.terminal.format', session_id=reconnected['session'], block_id=reconnected['pane'],
                    args={'format': 'text', 'trim': True, 'unwrap': True})['content']
         assert 'QT_AFTER_reconnect' in text and 'must-not-replay' not in text, 'failed input was replayed after reconnect'
@@ -257,8 +283,10 @@ def main():
             {'op': 'waitState', 'field': 'terminal.connected', 'value': True},
             {'op': 'type', 'text': "printf '\\nQT_SESSION_%s\\n' other"}, {'op': 'key', 'key': 'Return'},
             {'op': 'waitText', 'text': 'QT_SESSION_other'},
+            {'op': 'selectAll'}, {'op': 'copy'}, {'op': 'waitClipboard', 'text': 'QT_SESSION_other'},
             {'op': 'snapshot', 'path': str(work / 'before-disconnect.json')},
             {'op': 'waitState', 'field': 'connected', 'value': False},
+            {'op': 'paste', 'text': 'private-offline-seed'}, {'op': 'copy'}, {'op': 'waitClipboard', 'text': 'QT_SESSION_other'},
             {'op': 'type', 'text': 'must-not-replay'},
             {'op': 'snapshot', 'path': str(work / 'disconnected.json')},
             {'op': 'screenshot', 'path': str(work / 'disconnected.png')},

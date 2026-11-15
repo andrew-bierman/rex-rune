@@ -25,7 +25,9 @@ public:
     Q_INVOKABLE void selectWindow(const QString &id);
     Q_INVOKABLE void selectPane(const QString &id);
     Q_INVOKABLE void refresh();
+    Q_INVOKABLE void setVisible(bool visible);
     Q_INVOKABLE void dismissProblem();
+    void reportProblem(const QString &message);
 signals:
     void stateChanged();
     void paneIdsChanged();
@@ -40,5 +42,6 @@ private:
     QStringList m_paneIds;
     QString m_problem;
     bool m_hello = false;
+    bool m_visible = false;
     bool m_stopping = false;
 };

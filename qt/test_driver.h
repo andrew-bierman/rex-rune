@@ -6,11 +6,14 @@
 class Frontend;
 class TerminalItem;
 class QQuickWindow;
+class QUrl;
 class TestDriver : public QObject {
     Q_OBJECT
 public:
     TestDriver(QQuickWindow *window, Frontend *backend, const QString &script, const QString &report);
     void start();
+private slots:
+    void openedUrl(const QUrl &url);
 private:
     void step();
     void finish(bool success, const QString &message = {});
@@ -20,6 +23,7 @@ private:
     TerminalItem *m_terminal;
     QString m_script;
     QString m_report;
+    QString m_lastPane;
     QJsonArray m_steps;
     int m_index = 0;
     QTimer m_timer;
@@ -27,4 +31,5 @@ private:
     bool m_waiting = false;
     bool m_menuActivated = false;
     QJsonArray m_evidence;
+    QStringList m_openedUrls;
 };

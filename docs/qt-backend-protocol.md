@@ -36,7 +36,10 @@ input commands retain their order independently of display publication.
 `cols`, `rows`, `fg`, `bg`, `cursor`, `cursor_color`, `cursor_shape`, `cells` and
 `wrapped`. Each cell has `text`, `spacer_tail`, resolved `fg`/`bg`, `bold`,
 `italic`, `faint`, `invisible`, `underline`, `underline_color`, `strikethrough`
-and `overline`. Colors are RGB integers. A wide character occupies its leading
+and `overline`. Additional frame fields expose core `mouse_tracking`, search
+matches/index/total, tracked selection rows/text/error/revision, and validated
+link spans from `Frame::link_at`. Terminal state includes the restore generation.
+Colors are RGB integers. A wide character occupies its leading
 cell and a spacer tail; a combining sequence stays together in `text`. Qt
 places these strings at measured cell coordinates without parsing VT output.
 
@@ -60,6 +63,11 @@ rejection; both child and frontend must be upgraded together:
 | `paste` | complete target plus `text` |
 | `resize` | complete target plus `cols`, `rows`, `cell_width`, `cell_height` |
 | `claim` | complete target |
+| `scroll` | visible target plus signed `lines` |
+| `search`, `search_step`, `prompt_step` | visible target plus `text` or `older` |
+| `selection` | visible target, restore `generation`, request `revision`, phase and pixel/cell geometry |
+| `mouse`, `wheel` | focused target plus the core pointer `payload` |
+| `visibility` | current epoch plus window `visible` |
 | `refresh`, `shutdown` | none |
 
 A complete target names `session`, `window`, `pane` and current connection `epoch`.
@@ -79,8 +87,14 @@ declaration, reads no Rune settings, and exposes no server lifecycle operation.
 
 ## Extension limits
 
-This version sends the current multi-pane scene, not a scrollback database. Mouse reports, graphics, links and the full workspace action/keymap
-surface are not exposed. Extending that contract requires matching adapter and
+This version sends the current multi-pane scene, not a scrollback database. Graphics and the full workspace action/keymap surface are not yet exposed.
+Selection, formatting and scrollback/search stay in the core; Qt never parses
+VT output or builds its own history database. Local viewport requests can be
+issued during pauses; the core worker determines when its stream can process
+them. A cached acknowledged selection can still be copied while input is paused.
+OSC 52 copies are emitted once only for the focused visible pane and current
+epoch; reads are never answered. PRIMARY and copy-on-selection default off.
+Links open only after a Ctrl press/release on the same validated link. Extending that contract requires matching adapter and
 frontend changes and tests. JSON serialization cost and QPainter performance
 on large, fast-updating grids have not been benchmarked.
 

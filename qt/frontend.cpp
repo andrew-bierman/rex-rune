@@ -1,4 +1,6 @@
 #include "frontend.h"
+#include <QClipboard>
+#include <QGuiApplication>
 
 #include <QJsonDocument>
 #include <QJsonArray>
@@ -69,7 +71,8 @@ bool Frontend::sendTarget(const QString &op, QJsonObject fields) {
 
 bool Frontend::sendPane(const QString &id, const QString &op, QJsonObject fields) {
     const auto pane = paneSnapshot(id);
-    if (!m_hello || !pane["terminal"].toObject()["connected"].toBool()) return false;
+    const bool local = op == "scroll" || op == "search" || op == "search_step" || op == "prompt_step" || op == "selection";
+    if (!m_hello || (local ? !pane["frame"].isObject() : !pane["terminal"].toObject()["connected"].toBool())) return false;
     for (const auto *name : {"session", "window", "pane"}) {
         const auto value = pane[name].toString();
         if (value.isEmpty()) return false;
@@ -117,14 +120,23 @@ void Frontend::read() {
             return;
         }
         const auto type = object["type"].toString();
-        if (type == "hello") m_hello = true;
+        if (type == "hello") { m_hello = true; setVisible(m_visible); }
         else if (type == "state" && m_hello) {
+            const bool newEpoch = m_state["epoch"] != object["epoch"];
             m_state = object;
+            if (newEpoch) setVisible(m_visible);
             QStringList ids;
             for (const auto &pane : object["panes"].toArray()) ids << pane.toObject()["id"].toString();
             if (ids != m_paneIds) { m_paneIds = ids; emit paneIdsChanged(); }
             emit stateChanged();
         }
+        else if (type == "clipboard" && m_visible && object["epoch"] == m_state["epoch"]
+                 && object["session"] == m_state["session"] && object["pane"] == m_state["pane"]
+                 && m_state["connected"].toBool()) QGuiApplication::clipboard()->setText(object["text"].toString());
         else if (type == "error") { m_problem = object["message"].toString(); emit problemChanged(); }
     }
 }
+
+void Frontend::setVisible(bool visible) { m_visible = visible; if (m_hello && m_state["epoch"].isDouble()) send({{"op", "visibility"}, {"visible", visible}}); }
+
+void Frontend::reportProblem(const QString &message) { m_problem = message; emit problemChanged(); }

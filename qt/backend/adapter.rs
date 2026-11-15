@@ -1,4 +1,4 @@
-//! Private version-one JSON-lines adapter for the standalone Qt frontend.
+//! Private version-two JSON-lines adapter for the standalone Qt frontend.
 //!
 //! Transport, terminal parsing and ownership stay in the existing host workers.
 //! Every terminal request names its complete target; local selection is not a
@@ -90,17 +90,28 @@ impl Adapter {
     }
 
     fn connection(&self, model: &HostModel, request: &Value, resize: bool) -> Result<Connection> {
+        self.connection_scope(model, request, resize, resize, false)
+    }
+
+    fn connection_scope(
+        &self,
+        model: &HostModel,
+        request: &Value,
+        visible: bool,
+        owner: bool,
+        local: bool,
+    ) -> Result<Connection> {
         let target: Target =
             serde_json::from_value(request.clone()).context("missing terminal target")?;
         ensure!(
-            if resize {
+            if visible {
                 self.visible_target(model, &target)
             } else {
                 self.target(model).as_ref() == Some(&target)
             },
             "terminal target is no longer selected or visible"
         );
-        ensure!(model.connected, "connection lost; input paused");
+        ensure!(local || model.connected, "connection lost; input paused");
         ensure!(
             request["epoch"].as_u64() == Some(model.connection_epoch),
             "terminal connection changed; input paused"
@@ -112,11 +123,11 @@ impl Adapter {
         {
             let terminal = connection.model.lock().expect("terminal model");
             ensure!(
-                terminal.connected && terminal.control_connected,
+                local || terminal.connected && terminal.control_connected,
                 "terminal disconnected; input paused"
             );
             ensure!(
-                !resize || terminal.owner,
+                !owner || terminal.owner,
                 "another client owns terminal size"
             );
         }
@@ -146,6 +157,9 @@ impl Adapter {
         match op {
             "shutdown" => return Ok(false),
             "refresh" => host.commands.send(HostCommand::RefreshSessions)?,
+            "visibility" => host.commands.send(HostCommand::Visibility(
+                request["visible"].as_bool().context("invalid visibility")?,
+            ))?,
             "select_session" => {
                 let session = field("session")?;
                 ensure!(
@@ -200,6 +214,14 @@ impl Adapter {
                     session: target.session,
                     blocks: vec![target.pane],
                 })?;
+            }
+            "scroll" | "search" | "search_step" | "prompt_step" | "selection" | "mouse"
+            | "wheel" => {
+                let local = !matches!(op, "mouse" | "wheel");
+                let connection = self.connection_scope(&model, request, local, false, local)?;
+                connection
+                    .commands
+                    .try_send(crate::terminal::command(request)?)?;
             }
             "key" | "paste" | "resize" => {
                 let op = request["op"].as_str().expect("checked op");
@@ -333,12 +355,27 @@ fn frame_value(frame: &Frame) -> Value {
             "strikethrough":c.style.strikethrough,"overline":c.style.overline,
             "underline_color":c.underline_color})
     }).collect::<Vec<_>>()).collect::<Vec<_>>();
-    json!({"cols":frame.cols,"rows":frame.rows,"fg":frame.fg,"bg":frame.bg,
+    let mut links = Vec::new();
+    let mut index = 0;
+    while index < usize::from(frame.cols) * usize::from(frame.rows) {
+        if let Some(link) = frame.link_at(index) {
+            index = link.end.saturating_add(1).max(index + 1);
+            links.push(json!({"uri":link.uri,"start":link.start,"end":link.end}));
+        } else {
+            index += 1;
+        }
+    }
+    json!({"links":links,"cols":frame.cols,"rows":frame.rows,"fg":frame.fg,"bg":frame.bg,
         "cursor":frame.cursor,"cursor_color":frame.cursor_color,
         "cursor_shape":match frame.cursor_shape {
             CursorShape::Block => "block", CursorShape::Bar => "bar",
             CursorShape::Underline => "underline", CursorShape::Hollow => "hollow",
-        },"cells":cells,"wrapped":frame.wrapped})
+        },"cells":cells,"wrapped":frame.wrapped,
+        "mouse_tracking":frame.mouse_tracking,"selection_rows":frame.selection_rows,
+        "selection_text":frame.selection_text.as_deref(),"selection_error":frame.selection_error,
+        "selection_revision":frame.selection_revision,
+        "search":frame.search.as_ref().map(|s| json!({"total":s.total,"index":s.index,"selected":s.selected.map(|m| json!({"start":m.start,"end":m.end})),
+            "matches":s.matches.iter().map(|m| json!({"start":m.start,"end":m.end})).collect::<Vec<_>>()}))})
 }
 
 #[cfg(test)]
@@ -590,6 +627,44 @@ mod tests {
         assert_eq!(value["cells"][0][2]["text"], "e\u{301}");
         assert_eq!(value["cells"].as_array().unwrap().len(), 3);
     }
+    #[test]
+    fn frame_links_use_the_core_safe_scheme_policy() {
+        let mut terminal = ghostty_vt::Terminal::new(ghostty_vt::TerminalOptions {
+            cols: 40,
+            rows: 3,
+            max_scrollback: 1024,
+        })
+        .unwrap();
+        terminal.vt_write(b"\x1b]8;;https://example.com\x1b\\Safe\x1b]8;;\x1b\\ \x1b]8;;file:///tmp/private\x1b\\Unsafe\x1b]8;;\x1b\\");
+        let frame = rex_rune::terminal::Renderer::new()
+            .unwrap()
+            .frame(&terminal)
+            .unwrap();
+        let value = frame_value(&frame);
+        let links = value["links"].as_array().unwrap();
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0]["uri"], "https://example.com/");
+        assert_eq!(links[0]["start"], 0);
+        assert_eq!(links[0]["end"], 3);
+    }
+
+    #[test]
+    fn local_history_navigation_can_cancel_a_visible_unfocused_pane() {
+        let model = split_fixture();
+        let adapter = Adapter::default();
+        let request = json!({"epoch":0,"session":"session-a","window":"window-a","pane":"pane-b"});
+        assert!(
+            adapter
+                .connection_scope(&model, &request, true, false, true)
+                .is_ok()
+        );
+        assert!(
+            adapter
+                .connection_scope(&model, &request, false, false, false)
+                .is_err()
+        );
+    }
+
     fn split_fixture() -> HostModel {
         let mut model = attached_fixture();
         let window = &mut model.views.get_mut("session-a").unwrap().windows[0];
@@ -685,5 +760,23 @@ mod tests {
         assert_eq!(state["panes"][2]["rect"], json!([0.4, 0.5, 0.6, 0.5]));
         assert_eq!(state["panes"][3]["id"], "pane-d");
         assert_eq!(state["panes"][3]["rect"], json!([0.2, 0.3, 0.4, 0.5]));
+    }
+    #[test]
+    fn local_history_remains_usable_while_terminal_input_is_paused() {
+        let mut model = attached_fixture();
+        model.connected = false;
+        model.terminals["pane-a"]
+            .model
+            .lock()
+            .unwrap()
+            .control_connected = false;
+        let request = json!({"epoch":0,"session":"session-a","window":"window-a","pane":"pane-a"});
+        let adapter = Adapter::default();
+        assert!(
+            adapter
+                .connection_scope(&model, &request, true, false, true)
+                .is_ok()
+        );
+        assert!(adapter.connection(&model, &request, false).is_err());
     }
 }

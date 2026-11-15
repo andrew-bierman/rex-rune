@@ -1,12 +1,17 @@
 #include "terminal.h"
 
 #include <QClipboard>
+#include <QDesktopServices>
+#include <QUrl>
+#include <QStyleHints>
 #include <QFontDatabase>
 #include <QFontMetricsF>
 #include <QGuiApplication>
 #include <QInputMethodEvent>
 #include <QKeyEvent>
 #include <QMouseEvent>
+#include <QHoverEvent>
+#include <QWheelEvent>
 #include <QPainter>
 #include <QQuickWindow>
 #include <algorithm>
@@ -97,9 +102,10 @@ QJsonObject terminalKey(const QKeyEvent &event, const QString &action) {
 
 TerminalItem::TerminalItem(QQuickItem *parent) : QQuickPaintedItem(parent) {
     setFlag(ItemAcceptsInputMethod);
-    setAcceptedMouseButtons(Qt::LeftButton);
+    setAcceptedMouseButtons(Qt::LeftButton | Qt::MiddleButton | Qt::RightButton);
     setActiveFocusOnTab(false);
     setClip(true);
+    setAcceptHoverEvents(true);
     m_font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
     m_font.setStyleHint(QFont::Monospace);
     m_font.setPixelSize(16);
@@ -136,17 +142,22 @@ void TerminalItem::updateState() {
     const auto state = m_frontend->paneSnapshot(m_paneId);
     if (state == m_state && !m_foregroundPending) return;
     m_state = state;
-    const auto target = QString::number(state["epoch"].toInteger()) + "/" + state["session"].toString() + '/' + state["window"].toString() + '/' + state["pane"].toString();
+    const auto target = QString::number(state["epoch"].toInteger()) + "/" + state["session"].toString() + '/' + state["window"].toString() + '/' + state["pane"].toString() + "/" + QString::number(state["terminal"].toObject()["generation"].toInteger());
     if (target != m_target) {
         m_target = target;
         m_frame = {};
+        m_copyRevision = m_selectionRevision = 0;
+        m_dragging = m_primaryCopy = m_reporting = false;
+        m_mouseButton.clear();
+        m_linkUri.clear();
+        m_clickClock.invalidate();
         m_pressed.clear();
-        m_anchor = m_extent = -1;
         m_lastResize.clear();
     }
     if (state["frame"].isObject()) m_frame = state["frame"].toObject();
     else if (state["connected"].toBool()) m_frame = {};
     if (m_foregroundPending && window() && window()->isActive() && m_frontend->sendPane(m_paneId, "claim")) m_foregroundPending = false;
+    if (m_copyRevision && m_frame["selection_revision"].toInteger() >= qint64(m_copyRevision)) finishCopy();
     resizeTerminal();
     emit textChanged();
     update();
@@ -190,7 +201,18 @@ void TerminalItem::paint(QPainter *p) {
     p->fillRect(boundingRect(), m_frame.isEmpty() ? QColor("#001528") : color(m_frame["bg"]));
     if (m_frame.isEmpty()) return;
     const auto cells = m_frame["cells"].toArray();
-    const auto cols = m_frame["cols"].toInt();
+    const auto selectionRows = m_frame["selection_rows"].toArray();
+    const auto selectedAt = [&selectionRows](int x, int y) {
+        if (y >= selectionRows.size() || !selectionRows[y].isArray()) return false;
+        const auto range = selectionRows[y].toArray();
+        return range.size() == 2 && x >= range[0].toInt() && x <= range[1].toInt();
+    };
+    const auto current = m_frame["search"].toObject()["selected"].toObject();
+    const auto currentStart = current["start"].toArray(), currentEnd = current["end"].toArray();
+    const auto currentAt = [&](int x, int y) {
+        return currentStart.size() == 2 && currentEnd.size() == 2 && y >= currentStart[1].toInt() && y <= currentEnd[1].toInt()
+            && (y != currentStart[1].toInt() || x >= currentStart[0].toInt()) && (y != currentEnd[1].toInt() || x <= currentEnd[0].toInt());
+    };
     const auto cursor = m_frame["cursor"].toArray();
     const int cx = cursor.size() == 2 ? cursor[0].toInt() : -1;
     const int cy = cursor.size() == 2 ? cursor[1].toInt() : -1;
@@ -201,15 +223,26 @@ void TerminalItem::paint(QPainter *p) {
     }
     const auto shape = m_frame["cursor_shape"].toString();
     const bool solidCursor = hasActiveFocus() && window() && window()->isActive() && shape == "block";
-    const int first = std::min(m_anchor, m_extent), last = std::max(m_anchor, m_extent);
+
     for (int y = 0; y < cells.size() && y * m_cellHeight < height(); ++y) {
         const auto row = cells[y].toArray();
         for (int x = 0; x < row.size() && x * m_cellWidth < width(); ++x) {
             const auto cell = row[x].toObject();
             const QRectF rect(x * m_cellWidth, y * m_cellHeight, m_cellWidth, m_cellHeight);
             p->fillRect(rect, color(cell["bg"]));
-            const int index = y * cols + x;
-            if (first >= 0 && index >= first && index <= last) p->fillRect(rect, QColor(124, 196, 255, 95));
+
+            for (const auto &value : m_frame["search"].toObject()["matches"].toArray()) {
+                const auto match = value.toObject();
+                const auto start = match["start"].toArray(), end = match["end"].toArray();
+                if (!selectedAt(x, y) && start.size() == 2 && end.size() == 2 && y >= start[1].toInt() && y <= end[1].toInt()
+                    && (y != start[1].toInt() || x >= start[0].toInt()) && (y != end[1].toInt() || x <= end[0].toInt()))
+                    {
+                    const bool current = match == m_frame["search"].toObject()["selected"].toObject();
+                    p->fillRect(rect, QColor(124, 196, 255, current ? 204 : 45));
+                    p->setPen(QColor(124, 196, 255, 180)); p->drawRect(rect.adjusted(.5, .5, -.5, -.5));
+                }
+            }
+            if (selectedAt(x, y)) p->fillRect(rect, QColor(124, 196, 255, 95));
             if (y == cy && x >= cx && x < cx + cursorCells && solidCursor) p->fillRect(rect, color(m_frame["cursor_color"]));
         }
         for (int x = 0; x < row.size() && x * m_cellWidth < width(); ++x) {
@@ -224,7 +257,7 @@ void TerminalItem::paint(QPainter *p) {
             p->setClipRect(rect);
             p->setFont(font);
             if (cell["faint"].toBool()) p->setOpacity(.5);
-            const auto fg = x == cx && y == cy && solidCursor ? color(cell["bg"]) : color(cell["fg"]);
+            const auto fg = x == cx && y == cy && solidCursor ? color(cell["bg"]) : currentAt(x, y) && !selectedAt(x, y) ? QColor("#001528") : color(cell["fg"]);
             p->setPen(fg);
             p->drawText(QPointF(rect.x(), rect.y() + m_ascent), cell["text"].toString());
             const auto underline = cell["underline"].toString();
@@ -267,7 +300,7 @@ bool TerminalItem::sendKey(QKeyEvent *event, const QString &action) {
 }
 void TerminalItem::keyPressEvent(QKeyEvent *event) {
     if (sendKey(event, event->isAutoRepeat() ? "repeat" : "press")) {
-        m_anchor = m_extent = -1;
+        selection("clear", {});
         update();
     }
     event->accept();
@@ -285,6 +318,10 @@ void TerminalItem::focusInEvent(QFocusEvent *event) {
     update();
 }
 void TerminalItem::focusOutEvent(QFocusEvent *event) {
+    m_linkUri.clear();
+    if (m_dragging) selection("up", m_selectionPosition);
+    m_dragging = false;
+    m_copyRevision = 0;
     m_pressed.clear();
     QQuickPaintedItem::focusOutEvent(event);
     update();
@@ -308,53 +345,138 @@ int TerminalItem::cellAt(const QPointF &point) const {
     if (cols <= 0 || rows <= 0) return -1;
     return std::clamp(int(point.y() / m_cellHeight), 0, rows - 1) * cols + std::clamp(int(point.x() / m_cellWidth), 0, cols - 1);
 }
+void TerminalItem::selection(const QString &phase, const QPointF &point, int clicks) {
+    const int at = std::max(0, cellAt(point)), cols = std::max(1, m_frame["cols"].toInt());
+    m_selectionPosition = point;
+    ++m_selectionRevision;
+    m_copyRevision = 0;
+    m_primaryCopy = false;
+    if (m_frontend) m_frontend->sendPane(m_paneId, "selection", {
+        {"phase", phase}, {"clicks", clicks}, {"revision", qint64(m_selectionRevision)},
+        {"generation", m_state["terminal"].toObject()["generation"]},
+        {"x", at % cols}, {"y", at / cols}, {"px", point.x()}, {"py", point.y()},
+        {"columns", cols}, {"cell_width", int(std::ceil(m_cellWidth))}, {"height", int(height())}});
+}
+bool TerminalItem::pointer(QMouseEvent *event, const QString &action) {
+    if (!m_frame["mouse_tracking"].toBool() || ((event->modifiers() & Qt::ShiftModifier) && !m_reporting)) return false;
+    const int at = std::max(0, cellAt(event->position())), cols = std::max(1, m_frame["cols"].toInt());
+    QStringList mods;
+    if (event->modifiers() & Qt::ControlModifier) mods.append("ctrl");
+    if (event->modifiers() & Qt::AltModifier) mods.append("alt");
+    if (event->modifiers() & Qt::MetaModifier) mods.append("super");
+    const auto button = event->button() == Qt::LeftButton ? "left" : event->button() == Qt::RightButton ? "right" : "middle";
+    QJsonObject payload{{"action", action}, {"x", at % cols}, {"y", at / cols}, {"mods", mods.join("+")}};
+    if (action == "press") { m_reporting = true; m_mouseButton = button; }
+    if (m_reporting) payload["button"] = m_mouseButton;
+    if (action == "release") { m_reporting = false; m_mouseButton.clear(); }
+    if (m_frontend) m_frontend->sendPane(m_paneId, "mouse", {{"payload", payload}});
+    return true;
+}
 void TerminalItem::mousePressEvent(QMouseEvent *event) {
     forceActiveFocus(Qt::MouseFocusReason);
-    m_anchor = m_extent = cellAt(event->position());
-    m_dragging = true;
-    update();
-    event->accept();
-}
-void TerminalItem::mouseMoveEvent(QMouseEvent *event) {
-    if (m_dragging) {
-        const auto extent = cellAt(event->position());
-        if (extent != m_extent) {
-            m_extent = extent;
-            update();
+    if (event->button() == Qt::MiddleButton && m_primarySelection && (!m_frame["mouse_tracking"].toBool() || (event->modifiers() & Qt::ShiftModifier)) && QGuiApplication::clipboard()->supportsSelection()) {
+        if (m_frontend) m_frontend->sendPane(m_paneId, "paste", {{"text", QGuiApplication::clipboard()->text(QClipboard::Selection)}});
+        event->accept(); return;
+    }
+    if (event->button() == Qt::LeftButton && (event->modifiers() & Qt::ControlModifier) && !(event->modifiers() & Qt::ShiftModifier)) {
+        const auto at = cellAt(event->position());
+        for (const auto &value : m_frame["links"].toArray()) {
+            const auto link = value.toObject();
+            if (at >= link["start"].toInt() && at <= link["end"].toInt()) {
+                m_linkUri = link["uri"].toString();
+                m_linkTarget = m_target;
+                m_linkStart = link["start"].toInt();
+                m_linkEnd = link["end"].toInt();
+                event->accept(); return;
+            }
         }
     }
+    if (!pointer(event, "press") && event->button() == Qt::LeftButton) {
+        if (m_clickClock.isValid() && m_clickClock.elapsed() < QGuiApplication::styleHints()->mouseDoubleClickInterval()
+            && (event->position() - m_clickPosition).manhattanLength() < 5) m_clicks = std::min(3, m_clicks + 1);
+        else m_clicks = 1;
+        m_clickClock.restart(); m_clickPosition = event->position();
+        selection("down", event->position(), m_clicks); m_dragging = true;
+    }
     event->accept();
 }
-void TerminalItem::mouseReleaseEvent(QMouseEvent *event) { m_dragging = false; event->accept(); }
-void TerminalItem::selectAll() {
-    m_anchor = 0;
-    m_extent = m_frame["cols"].toInt() * m_frame["rows"].toInt() - 1;
-    update();
-}
-QString TerminalItem::selectedText() const {
-    if (m_anchor < 0 || m_extent < 0) return {};
-    const int cols = m_frame["cols"].toInt();
-    if (cols <= 0) return {};
-    const int first = std::min(m_anchor, m_extent), last = std::max(m_anchor, m_extent);
-    const auto cells = m_frame["cells"].toArray();
-    const auto wrapped = m_frame["wrapped"].toArray();
-    QString result;
-    for (int y = first / cols; y <= last / cols && y < cells.size(); ++y) {
-        const auto row = cells[y].toArray();
-        QString line;
-        int start = y == first / cols ? first % cols : 0;
-        if (start > 0 && start < row.size() && row[start].toObject()["spacer_tail"].toBool()) --start;
-        const int end = y == last / cols ? last % cols : cols - 1;
-        for (int x = start; x <= end && x < row.size(); ++x) if (!row[x].toObject()["spacer_tail"].toBool()) line += cellText(row[x].toObject());
-        const bool continues = y < wrapped.size() && wrapped[y].toBool();
-        if (end == cols - 1 && !continues) while (line.endsWith(' ')) line.chop(1);
-        result += line;
-        if (y != last / cols && !continues) result += '\n';
+void TerminalItem::mouseDoubleClickEvent(QMouseEvent *event) {
+    forceActiveFocus(Qt::MouseFocusReason);
+    if (!pointer(event, "press") && event->button() == Qt::LeftButton) {
+        m_clicks = 2; m_clickClock.restart(); m_clickPosition = event->position();
+        selection("down", event->position(), 2); m_dragging = true;
     }
-    return result;
+    event->accept();
 }
-void TerminalItem::copy() { const auto text = selectedText(); if (!text.isEmpty()) QGuiApplication::clipboard()->setText(text); }
+void TerminalItem::mouseMoveEvent(QMouseEvent *event) { if (!m_linkUri.isEmpty()) { event->accept(); return; } if (!m_dragging) pointer(event, "motion"); if (m_dragging) selection("move", event->position()); event->accept(); }
+void TerminalItem::mouseReleaseEvent(QMouseEvent *event) {
+    if (!m_linkUri.isEmpty()) {
+        const auto uri = m_linkUri;
+        m_linkUri.clear();
+        if (event->button() == Qt::LeftButton && (event->modifiers() & Qt::ControlModifier) &&
+            !(event->modifiers() & Qt::ShiftModifier) && m_target == m_linkTarget) {
+            const int at = cellAt(event->position());
+            for (const auto &value : m_frame["links"].toArray()) {
+                const auto link = value.toObject();
+                if (link["uri"].toString() == uri && link["start"].toInt() == m_linkStart && link["end"].toInt() == m_linkEnd && at >= m_linkStart && at <= m_linkEnd) {
+                    if (!QDesktopServices::openUrl(QUrl(uri)) && m_frontend) m_frontend->reportProblem("Could not open link");
+                    break;
+                }
+            }
+        }
+        event->accept(); return;
+    }
+    if (!m_dragging && m_reporting) pointer(event, "release");
+    if (m_dragging) {
+        selection("up", event->position());
+        if (m_copyOnSelection || m_primarySelection) { m_copyRevision = m_selectionRevision; m_primaryCopy = m_primarySelection; }
+    }
+    m_dragging = false; event->accept();
+}
+void TerminalItem::wheelEvent(QWheelEvent *event) {
+    if (m_frontend) {
+        m_scrollFraction -= event->pixelDelta().isNull() ? event->angleDelta().y() / 120.0 * QGuiApplication::styleHints()->wheelScrollLines() : event->pixelDelta().y() / m_cellHeight;
+        const int lines = int(m_scrollFraction);
+        m_scrollFraction -= lines;
+        if (m_frame["mouse_tracking"].toBool() && !(event->modifiers() & Qt::ShiftModifier)) {
+            const int at = std::max(0, cellAt(event->position())), cols = std::max(1, m_frame["cols"].toInt());
+            for (int i = 0; i < std::min(8, std::abs(lines)); ++i)
+                m_frontend->sendPane(m_paneId, "wheel", {{"payload", QJsonObject{{"x", at % cols}, {"y", at / cols}, {"delta_x", 0}, {"delta_y", lines < 0 ? -1 : 1}}}});
+        } else m_frontend->sendPane(m_paneId, "scroll", {{"lines", lines}});
+    }
+    event->accept();
+}
+void TerminalItem::selectAll() { selection("all", {}); }
+QString TerminalItem::selectedText() const { return m_frame["selection_text"].toString(); }
+void TerminalItem::copy() {
+    m_primaryCopy = false;
+    m_copyRevision = m_selectionRevision;
+    finishCopy();
+}
+void TerminalItem::finishCopy() {
+    if (!m_frontend || m_frontend->snapshot()["pane"].toString() != m_paneId || !window() || !window()->isActive() || !window()->isVisible()) { m_copyRevision = 0; return; }
+    if (m_frame["selection_revision"].toInteger() >= qint64(m_copyRevision)) {
+        const auto text = selectedText();
+        if (!text.isEmpty() && m_frame["selection_error"].isNull()) {
+            if (!m_primaryCopy || m_copyOnSelection) QGuiApplication::clipboard()->setText(text);
+            if (m_primaryCopy && QGuiApplication::clipboard()->supportsSelection()) QGuiApplication::clipboard()->setText(text, QClipboard::Selection);
+        }
+        if (!m_frame["selection_error"].toString().isEmpty()) m_frontend->reportProblem(m_frame["selection_error"].toString());
+        m_primaryCopy = false;
+        m_copyRevision = 0;
+    }
+}
 void TerminalItem::paste() {
     if (m_frontend) m_frontend->sendPane(m_paneId, "paste", {{"text", QGuiApplication::clipboard()->text()}});
     forceActiveFocus();
+}
+
+void TerminalItem::search(const QString &text) { if (m_frontend) m_frontend->sendPane(m_paneId, "search", {{"text", text}}); }
+void TerminalItem::searchStep(bool older) { if (m_frontend) m_frontend->sendPane(m_paneId, "search_step", {{"older", older}}); }
+void TerminalItem::promptStep(bool older) { if (m_frontend) m_frontend->sendPane(m_paneId, "prompt_step", {{"older", older}}); }
+
+void TerminalItem::hoverMoveEvent(QHoverEvent *event) {
+    QMouseEvent motion(QEvent::MouseMove, event->position(), event->globalPosition(), Qt::NoButton, Qt::NoButton, event->modifiers());
+    pointer(&motion, "motion");
+    event->accept();
 }

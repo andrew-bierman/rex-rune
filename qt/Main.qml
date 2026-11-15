@@ -21,6 +21,9 @@ ApplicationWindow {
     palette.buttonText: "#e8eef6"
     palette.highlight: "#7cc4ff"
     palette.highlightedText: "#001528"
+    onActiveChanged: backend.setVisible(active && visible)
+    onVisibleChanged: backend.setVisible(active && visible)
+    Component.onCompleted: backend.setVisible(active && visible)
     property var state: backend.state
     function selectedIndex(items, id) {
         for (let i = 0; i < items.length; i++) if (items[i].id === id) return i
@@ -31,9 +34,11 @@ ApplicationWindow {
         const card = paneRepeater.itemAt(i)
         return card ? card.terminal : null
     }
+    function find() { findBar.terminal = selectedTerminal(); findBar.open() }
+    FindBar { id: findBar; anchors.top: parent.top; anchors.right: parent.right; z: 100; onClosed: root.restoreTerminal() }
     function restoreTerminal() { const term = selectedTerminal(); if (term) term.forceActiveFocus() }
     property string selectedPane: state.pane || ""
-    onSelectedPaneChanged: Qt.callLater(restoreTerminal)
+    onSelectedPaneChanged: { if (findBar.visible) findBar.close(); Qt.callLater(restoreTerminal) }
 
     ColumnLayout {
         anchors.fill: parent
@@ -109,9 +114,11 @@ ApplicationWindow {
                         y: more.height
                         MenuItem {
                             objectName: "selectAllButton"
-                            text: "Select visible text"
+                            text: "Select all terminal text"
                             onTriggered: { root.selectedTerminal() && root.selectedTerminal().selectAll(); root.restoreTerminal() }
                         }
+                        MenuItem { objectName: "previousPromptButton"; text: "Previous prompt"; onTriggered: { const term = root.selectedTerminal(); if (term) term.promptStep(true); root.restoreTerminal() } }
+                        MenuItem { objectName: "nextPromptButton"; text: "Next prompt"; onTriggered: { const term = root.selectedTerminal(); if (term) term.promptStep(false); root.restoreTerminal() } }
                         MenuItem { text: "Refresh sessions"; onTriggered: backend.refresh() }
                     }
                 }
