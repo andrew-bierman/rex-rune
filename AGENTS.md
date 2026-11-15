@@ -88,6 +88,13 @@ Some probes connect to the configured Rex server and create sessions there. Of t
 - The client was `rex-linux` through 0.7.x, and four things keep that name so those installs still update: the product id in signed release metadata, the bridge tarballs, the `rex-linux` command, and the `[rex-linux]` package repository. Do not rename them; [docs/releases.md](docs/releases.md#the-rex-linux-bridge) says what depends on each and how to retire them.
 - Outside pull requests are not accepted. Never ask a contributor to open a PR or invite one in issue replies; welcome issues (including issues pointing at fork commits or branches), harvest changes from forks following [`docs/fork-harvest-2026-11.md`](docs/fork-harvest-2026-11.md)'s approach (cherry-pick or rewrite what fits), credit the author with a `Co-authored-by:` trailer, and mention the author in [CHANGELOG.md](CHANGELOG.md).
 
+## Qt downstream desktop isolation
+
+- Run automated Qt GUI checks only offscreen or on a disposable private compositor, with private HOME, config, clipboard and service fixtures. Do not use the person's desktop for automated input, captures or stress tests.
+- Use a dedicated Hyprland workspace, such as `rex-qt-development`, for every visible agent-operated demo or computer-use window. Launch there without switching the person's active workspace, verify placement, and never crowd the primary workspace. Do not change global window rules or desktop configuration to do this.
+- Never attach to, resize, type into or capture an unrelated working pane or window. Keep the existing `rex-client-comparison` Rex group label; name only newly created task tabs or panes.
+- If the desktop becomes unresponsive or not-responding dialogs start repeating, stop this task's GUI clients and probes first. Preserve Rex servers, active sessions and unrelated work; resume GUI checks only after the person has indicated recovery. Keep visible demos closed until startup, popup, disconnect/reconnect and output responsiveness checks pass.
+
 ## Vendored patches
 
 `vendor/rune`, `vendor/rexrs` and `vendor/ghostty-vt` are upstream snapshots plus small, documented patches, wired in through `[patch]` in `Cargo.toml`. Rules:
