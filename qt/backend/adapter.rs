@@ -3,11 +3,11 @@
 //! Transport, terminal parsing and ownership stay in the existing host workers.
 //! Every terminal request names its complete target; local selection is not a
 //! license to deliver an old input event to a newly selected pane.
-use crate::{
+use anyhow::{Context, Result, bail, ensure};
+use rex_rune::{
     connection::{Command, Connection, HostCommand, HostConnection, HostModel},
     terminal::{CursorShape, Frame},
 };
-use anyhow::{Context, Result, bail, ensure};
 use rexrs::api::session;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -447,7 +447,7 @@ mod tests {
     }
 
     fn attached_fixture() -> HostModel {
-        use crate::connection::{Model, TerminalSender};
+        use rex_rune::connection::{Model, TerminalSender};
         use std::sync::{Arc, Mutex};
         let mut model = fixture();
         let (commands, _) = flume::unbounded();
@@ -521,7 +521,7 @@ mod tests {
         })
         .unwrap();
         terminal.vt_write("\x1b[38;2;1;2;3;48;2;4;5;6;1m界e\u{301}".as_bytes());
-        let frame = crate::terminal::Renderer::new()
+        let frame = rex_rune::terminal::Renderer::new()
             .unwrap()
             .frame(&terminal)
             .unwrap();

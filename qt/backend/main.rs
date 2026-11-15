@@ -1,9 +1,11 @@
 //! Child process owned by the Qt frontend. Standard output is JSON lines only.
+mod adapter;
+
+use adapter::{Adapter, VERSION};
 use anyhow::Result;
 use clap::Parser;
 use rex_rune::{
     connection::{HostConnection, wait_for_hosts},
-    qt_backend::{Adapter, VERSION},
     transport,
 };
 use serde_json::{Value, json};

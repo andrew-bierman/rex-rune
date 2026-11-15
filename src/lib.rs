@@ -19,7 +19,6 @@ pub mod legacy;
 pub mod links;
 pub mod platform;
 pub mod qr;
-pub mod qt_backend;
 pub mod settings;
 pub mod ssh;
 pub mod tailnet;
