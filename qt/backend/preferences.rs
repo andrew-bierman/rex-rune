@@ -20,9 +20,11 @@ const FIELDS: &[&str] = &[
     "interface",
     "vertical_tabs",
     "generated_titles",
+    "notifications",
 ];
 fn editable(settings: &Settings) -> Value {
     let mut source = serde_json::to_value(settings).expect("settings serialize");
+    source["notifications"]["play_sounds"] = json!(settings.notifications.play_sounds);
     source["terminal"]["show_recent_paths"] = json!(settings.terminal.show_recent_paths);
     Value::Object(
         FIELDS

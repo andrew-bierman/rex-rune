@@ -60,6 +60,7 @@ def main():
                'HYPRLAND_INSTANCE_SIGNATURE', 'SWAYSOCK', 'SESSION_MANAGER')}
     for name in ('home', 'config', 'state', 'cache'):
         (work / name).mkdir(mode=0o700)
+    env["DBUS_SESSION_BUS_ADDRESS"] = "unix:path=" + str(work / "absent-notification-bus")
     env.update(HOME=str(work / 'home'), XDG_CONFIG_HOME=str(work / 'config'),
                XDG_STATE_HOME=str(work / 'state'), XDG_CACHE_HOME=str(work / 'cache'),
                XDG_RUNTIME_DIR=str(runtime), WLR_BACKENDS='headless', WLR_RENDERER='pixman',

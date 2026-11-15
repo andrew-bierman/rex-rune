@@ -200,3 +200,22 @@ local frontend capabilities and are never offered to remote requesters.
 ## Native terminal presentation
 
 Frames include public `cell_pixels` and static `images` placements with screen/id/generation cache keys and already decoded RGBA bytes. Qt paints this public core output and releases removed/retargeted image caches; it does not parse graphics protocols. Linux native scan identity drives physical bindings and terminal wire keys while logical text stays layout-owned. Composition preedit stays local; one committed string uses the existing paste command.
+## Desktop activity delivery
+
+Each coherent `state` publication carries `activity.rows` with its one-shot
+`news`/`newsState` decision, captured host/session/window/connection epoch and
+activity epoch, and local seen/mute eligibility. The native frontend consumes
+this once as it reads the publication, independently of QML rendering and clock
+wakes. `preferences.notifications` contains the shared notification switches,
+including an explicit false `play_sounds` default. Service health and tests are
+local Qt controls and expose no remote operation.
+
+`programNotices` drains the public core's OSC notice queue exactly once. Each
+event has a unique publication event number, captured connection/activity epochs,
+title/body and a destination key. Current cached activity rows map its block to a
+tab. `notificationSessions` supplies session-only targets when a cached tab is
+not available; no additional terminal query is made. Stale epochs and removed
+sessions are discarded. Connection boundaries clear queued notices and bells,
+so the next connection cannot adopt old effects. Notification actions validate
+the still-retained captured destination and use the existing closed host
+navigation operation; activation of the native window remains best effort.

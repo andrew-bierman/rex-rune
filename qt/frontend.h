@@ -4,9 +4,11 @@
 #include <QObject>
 #include <QProcess>
 #include <QVariantMap>
+#include "notifications.h"
 
 class Frontend : public QObject {
     Q_OBJECT
+    Q_PROPERTY(Notifications *notifications READ notifications CONSTANT)
     Q_PROPERTY(QVariantMap state READ state NOTIFY stateChanged)
     Q_PROPERTY(QVariantMap activityState READ activityState NOTIFY activityChanged)
     Q_PROPERTY(QVariantMap preferences READ preferences NOTIFY preferencesChanged)
@@ -18,6 +20,7 @@ class Frontend : public QObject {
 public:
     explicit Frontend(QObject *parent = nullptr);
     ~Frontend() override;
+    Notifications *notifications() { return &m_notifications; }
     QVariantMap state() const { return m_state.toVariantMap(); }
     QVariantMap activityState() const { return m_state["activity"].toObject().toVariantMap(); }
     QVariantMap preferences() const { return m_state["preferences"].toObject().toVariantMap(); }
@@ -50,6 +53,7 @@ public:
     Q_INVOKABLE void dismissHostFormProblem();
     void reportProblem(const QString &message);
 signals:
+    void notificationActivated(const QString &token);
     void stateChanged();
     void hostsChanged();
     void activityChanged();
@@ -66,6 +70,7 @@ private:
     bool send(QJsonObject message);
     void read();
     void fail(const QString &message);
+    Notifications m_notifications;
     QProcess m_process;
     QByteArray m_buffer;
     QJsonObject m_state;

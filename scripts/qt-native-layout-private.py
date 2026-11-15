@@ -31,7 +31,7 @@ def main():
             'HYPRLAND_INSTANCE_SIGNATURE','SWAYSOCK','SESSION_MANAGER') and not k.startswith(('WLR_','REX_','HERDR_'))}
         for name in ('home','config','cache','state'):
             (work/name).mkdir(mode=0o700)
-        env.update(HOME=str(work/'home'),XDG_CONFIG_HOME=str(work/'config'),
+        env.update(DBUS_SESSION_BUS_ADDRESS='unix:path='+str(work/'absent-bus'),HOME=str(work/'home'),XDG_CONFIG_HOME=str(work/'config'),
             XDG_CACHE_HOME=str(work/'cache'),XDG_STATE_HOME=str(work/'state'),XDG_RUNTIME_DIR=runtime,
             WLR_BACKENDS='headless',WLR_RENDERER='pixman',WLR_HEADLESS_OUTPUTS='1',
             XKB_DEFAULT_LAYOUT='fr',QT_QPA_PLATFORM='wayland',QT_QUICK_BACKEND='software',

@@ -5,7 +5,11 @@
 #include <QJsonDocument>
 #include <QJsonArray>
 
-Frontend::Frontend(QObject *parent) : QObject(parent) {
+Frontend::Frontend(QObject *parent) : QObject(parent), m_notifications(this) {
+    connect(&m_notifications, &Notifications::activated, this, [this](const QVariantMap &target, const QString &token) {
+        hostAction("navigate", {{"session", target.value("session")}, {"window", target.value("window")}}, target);
+        emit notificationActivated(token);
+    });
     connect(&m_process, &QProcess::readyReadStandardOutput, this, &Frontend::read);
     connect(&m_process, &QProcess::readyReadStandardError, this, [this] {
         // Diagnostics never enter the protocol stream or the terminal canvas.
@@ -139,6 +143,7 @@ void Frontend::performAction(const QString &action, const QVariantMap &args, con
 void Frontend::dismissProblem() { m_problem.clear(); emit problemChanged(); }
 
 void Frontend::fail(const QString &message) {
+    m_notifications.clear();
     m_problem = message;
     m_state["connected"] = false;
     auto server = m_state["server"].toObject();
@@ -181,6 +186,7 @@ void Frontend::read() {
             const bool newPreferences = m_state["preferences"] != object["preferences"];
             const bool newHosts = m_state["hosts"] != object["hosts"];
             m_state = object;
+            m_notifications.consume(object);
             if (newEpoch) setVisible(m_visible);
             QStringList ids;
             for (const auto &pane : object["panes"].toArray()) ids << pane.toObject()["id"].toString();

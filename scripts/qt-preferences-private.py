@@ -28,6 +28,7 @@ def main():
     for name in ('home', 'config', 'state', 'cache', 'runtime'):
         (work / name).mkdir(mode=0o700)
     endpoint = 'unix://' + str(work / 'rex.sock')
+    env["DBUS_SESSION_BUS_ADDRESS"] = "unix:path=" + str(work / "absent-notification-bus")
     env.update(HOME=str(work / 'home'), XDG_CONFIG_HOME=str(work / 'config'), XDG_STATE_HOME=str(work / 'state'),
                XDG_CACHE_HOME=str(work / 'cache'), XDG_RUNTIME_DIR=str(work / 'runtime'), SHELL='/bin/sh',
                REX_SERVER=endpoint, QT_QPA_PLATFORM='offscreen', QT_QUICK_BACKEND='software', QT_QPA_PLATFORMTHEME='generic', QT_FORCE_STDERR_LOGGING='1')

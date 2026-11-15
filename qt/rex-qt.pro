@@ -1,9 +1,9 @@
-QT += core gui qml quick quickcontrols2
+QT += core gui qml quick quickcontrols2 dbus
 CONFIG += c++17 warn_on
 TARGET = rex-qt
 TEMPLATE = app
-SOURCES += main.cpp frontend.cpp terminal.cpp actions.cpp settings.cpp activity.cpp platform.cpp terminal_shapes.cpp
-HEADERS += frontend.h terminal.h actions.h settings.h activity.h platform.h terminal_shapes.h
+SOURCES += main.cpp frontend.cpp terminal.cpp actions.cpp settings.cpp activity.cpp platform.cpp terminal_shapes.cpp notifications.cpp sounds.cpp
+HEADERS += frontend.h terminal.h actions.h settings.h activity.h platform.h terminal_shapes.h notifications.h sounds.h
 RESOURCES += resources.qrc
 contains(CONFIG, test_driver) {
     QT += testlib

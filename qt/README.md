@@ -18,7 +18,7 @@ make -j2
 ./rex-qt --backend ../../target/release/rex-qt-backend --endpoint unix:///path/to/rex.sock --rex-session SESSION_ID
 ```
 
-Qt 6.7 or newer with Core, Gui, Qml, Quick and QuickControls2 development files,
+Qt 6.7 or newer with Core, Gui, Qml, Quick, QuickControls2 and DBus development files,
 qmake6 and a C++17 compiler are required. This milestone was built against Qt
 6.12. The backend path defaults to `rex-qt-backend` beside the Qt executable;
 use an absolute `--backend` path when launching from another directory.
@@ -43,6 +43,16 @@ Qt settings default to `$XDG_CONFIG_HOME/rex-qt/workspace.json` (or
 `~/.config/rex-qt/workspace.json`); `--config PATH` selects a separate profile.
 The core's sibling-file rule names the read-only override `workspace.shortcuts.json`.
 Rune preferences are never imported or written by default.
+
+Linux desktop notifications use freedesktop D-Bus asynchronously, replace each
+unseen tab's previous notification, and withdraw it when seen, muted, removed or
+disconnected. Program OSC notices use the same captured destinations. Clicking
+navigates the captured host/session/tab and asks Qt to activate the window;
+Wayland focus remains compositor-controlled because public Qt does not accept a
+notification activation token. Settings offers searchable service health and an
+immediate test, including failure and recovery. Activity sounds are independently
+off by default, coalesce by severity and use a bounded player on a worker thread.
+No service or sound test is run automatically.
 
 Find searches the screen and scrollback in the core. The terminal menu offers
 prompt navigation and history-wide selection. Shift overrides program mouse
@@ -110,9 +120,7 @@ session creation and cleanup.
 
 ## Current limits
 
-The Linux Qt frontend is progressing toward Rune source-build parity. General
-notifications, downloads,
-and remote-control compatibility are still in progress. Server settings, explicit confirmed stop/setup and local pairing QR rendering are implemented; real tailnet/remote SSH operation remains unverified.
+The Linux Qt frontend is progressing toward Rune source-build parity. Downloads and remote-control compatibility are still being integrated. Server settings, explicit confirmed stop/setup and local pairing QR rendering are implemented; real tailnet/remote SSH operation remains unverified.
 Terminal history/search/selection, mouse reports, safe links, effective shortcuts,
 workspace lifecycle and saved-host navigation are implemented and privately tested.
 Underline variants, local composition/preedit, static core-decoded graphics and Linux physical-key fidelity are implemented and privately verified. A real French-layout Wayland seat is covered. Third-party IME candidate UI and X11 runtime remain unverified. Large-grid performance is not benchmarked. Native CLIPBOARD/PRIMARY and middle paste have real isolated Wayland
@@ -137,3 +145,15 @@ The Qt resources reference the existing IBM Plex Mono Regular font from `vendor/
 Activity reads unopened-session coverage, status, progress and ages from the public core cache. Its native list preserves captured selection across report updates, supports priority/session views and navigation, and shares local seen/mute semantics with tab/session words. Tab/header/sidebar/Activity program cues use the existing licensed Symbols Nerd Font. The MIT name-mapping policy follows Rune, while generic family glyphs intentionally differ from Superlogical's branded artwork; those artwork files and their distinct notices are not bundled by Qt. Icon count and colour policies apply consistently across these surfaces.
 
 Insert path and Go to directory use a captured native browser; directory changes insert quoted text without Enter. Recent paths use the separate endpoint-scoped Qt profile. Local file URLs from clipboard or drag/drop use the core uploader on supported servers; API 10 refuses them visibly. Already-dispatched uploads have no public cancellation/progress/completion interface, so Qt reports only that the request was submitted. Downloads are a separate remaining capability.
+
+Native notification and sound acceptance uses only a fake private D-Bus service
+and executable player. Build the service test with `qmake6 qt/tests/notifications.pro`
+in a separate build directory, then run:
+
+```sh
+python3 scripts/qt-notifications-private.py --test-bin /path/to/notification-services-test
+python3 scripts/qt-notification-window-private.py --driver /path/to/rex-qt-test-driver --backend /path/to/rex-qt-backend
+```
+
+The window fixture creates its own Rex server and sessions. Neither fixture uses
+the personal notification bus, audio player, display, server or settings.

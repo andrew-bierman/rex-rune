@@ -31,6 +31,7 @@ def main():
     for folder in ('home', 'config', 'cache', 'state', 'runtime', 'tmp'):
         (work / folder).mkdir(mode=0o700)
     endpoints = ['unix://' + str(work / f'rex-{i}.sock') for i in range(2)]
+    env["DBUS_SESSION_BUS_ADDRESS"] = "unix:path=" + str(work / "absent-notification-bus")
     env.update(HOME=str(work / 'home'), XDG_CONFIG_HOME=str(work / 'config'), XDG_CACHE_HOME=str(work / 'cache'),
                XDG_STATE_HOME=str(work / 'state'), XDG_RUNTIME_DIR=str(work / 'runtime'), TMPDIR=str(work / 'tmp'),
                REX_SERVER=endpoints[0], SHELL='/bin/sh', PS1='hosts-private$ ', QT_QPA_PLATFORM='offscreen',

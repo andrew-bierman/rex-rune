@@ -46,6 +46,7 @@ int main(int argc, char **argv) {
     parser.addOption({"report", "Acceptance JSON report", "path"});
 #endif
     parser.process(app);
+    qmlRegisterUncreatableType<Notifications>("RexQt", 1, 0, "Notifications", "Created by the application");
     qmlRegisterType<ActivityModel>("RexQt", 1, 0, "ActivityModel");
     qmlRegisterType<SettingsController>("RexQt", 1, 0, "SettingsController");
     qmlRegisterType<TerminalPreview>("RexQt", 1, 0, "TerminalPreview");

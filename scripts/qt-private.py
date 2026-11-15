@@ -55,7 +55,7 @@ def main():
         {'keys': 'ctrl+shift+c', 'action': None}, {'keys': 'ctrl+shift+v', 'action': None}
     ]))
     endpoint = 'unix://' + str(work / 'rex.sock')
-    env.update(HOME=str(work / 'home'), XDG_CONFIG_HOME=str(work / 'config'),
+    env.update(DBUS_SESSION_BUS_ADDRESS='unix:path='+str(work/'absent-bus'),HOME=str(work / 'home'), XDG_CONFIG_HOME=str(work / 'config'),
                XDG_STATE_HOME=str(work / 'state'), XDG_CACHE_HOME=str(work / 'cache'),
                XDG_RUNTIME_DIR=str(work / 'runtime'), SHELL='/bin/sh', PS1='qt-private$ ',
                REX_SERVER=endpoint, QT_QPA_PLATFORM='offscreen', QT_QUICK_BACKEND='software',

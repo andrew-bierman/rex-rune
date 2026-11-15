@@ -27,7 +27,7 @@ def main():
         env={k:v for k,v in os.environ.items() if not k.startswith(('REX_','HERDR_')) and k not in ('DISPLAY','WAYLAND_DISPLAY','WAYLAND_SOCKET','DBUS_SESSION_BUS_ADDRESS')}
         for name in ('home','config','state','cache'): (work/name).mkdir(mode=0o700)
         endpoint='unix://'+runtime+'/rex.sock'
-        env.update(HOME=str(work/'home'),XDG_CONFIG_HOME=str(work/'config'),XDG_STATE_HOME=str(work/'state'),
+        env.update(DBUS_SESSION_BUS_ADDRESS='unix:path='+str(work/'absent-bus'),HOME=str(work/'home'),XDG_CONFIG_HOME=str(work/'config'),XDG_STATE_HOME=str(work/'state'),
             XDG_CACHE_HOME=str(work/'cache'),XDG_RUNTIME_DIR=runtime,SHELL='/bin/sh',PS1='private$ ',REX_SERVER=endpoint,
             QT_QPA_PLATFORM='offscreen',QT_QUICK_BACKEND='software',QT_QPA_PLATFORMTHEME='generic',QT_SCALE_FACTOR=args.scale)
         def api(method,**payload):

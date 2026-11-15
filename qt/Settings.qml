@@ -36,6 +36,7 @@ Popup {
         RowLayout {
             Button { text:qsTr("Terminal");checkable:true;checked:controller.page==="Terminal";onClicked:controller.page="Terminal" }
             Button { text:qsTr("Interface");checkable:true;checked:controller.page==="Interface";onClicked:controller.page="Interface" }
+            Button { text:qsTr("Notifications");checkable:true;checked:controller.page==="Notifications";onClicked: { controller.page="Notifications";frontend.notifications.check();frontend.notifications.checkSound() } }
             Button { text:qsTr("Fullscreen");visible:!search.text || "fullscreen window".includes(search.text.toLowerCase());onClicked:popup.fullscreenRequested() }
         }
         ScrollView {
@@ -45,6 +46,7 @@ Popup {
             contentWidth:availableWidth
             ColumnLayout {
                 width:scroll.availableWidth
+                NotificationSettings { controller:controller;notifications:popup.frontend.notifications;query:search.text;visible:search.text.length>0 || controller.page==="Notifications";Layout.fillWidth:true }
                 TerminalSettings { controller:controller;query:search.text;visible:search.text.length>0 || controller.page==="Terminal";Layout.fillWidth:true }
                 InterfaceSettings { controller:controller;query:search.text;visible:search.text.length>0 || controller.page==="Interface";Layout.fillWidth:true }
             }

@@ -4,6 +4,7 @@ mod adapter;
 mod files;
 mod hosts;
 mod keymap;
+mod notification_events;
 mod preferences;
 mod programs;
 mod server;
@@ -64,6 +65,8 @@ struct Backend {
     setup_rx: Option<std::sync::mpsc::Receiver<SetupReply>>,
     settings: Settings,
     activity: activity::Activity,
+    program_notices: Vec<Value>,
+    next_notice: u64,
     visible: bool,
     preferences: Value,
     path: PathBuf,
@@ -117,6 +120,8 @@ impl Backend {
             preferences: preferences::snapshot(&settings),
             settings,
             activity: activity::Activity::default(),
+            program_notices: Vec::new(),
+            next_notice: 0,
             visible: false,
             path: options.config,
             hosts,
@@ -626,6 +631,13 @@ impl Backend {
                 .adapters
                 .get(&slot.id)
                 .context("host adapter unavailable")?;
+            for notice in std::mem::take(&mut model.notices) {
+                if model.connected {
+                    self.next_notice = self.next_notice.wrapping_add(1);
+                    self.program_notices.push(json!({"event":self.next_notice,"host":slot.id,"epoch":model.connection_epoch,"activityEpoch":model.activity_epoch,
+                        "session":notice.session,"block":notice.block,"title":notice.title,"body":notice.body}));
+                }
+            }
             for (session, block) in std::mem::take(&mut model.bells) {
                 self.activity
                     .bell_for_block(&slot.id, &model, &session, &block);
@@ -669,7 +681,10 @@ impl Backend {
             self.settings.terminal_theme_declared = true;
             self.settings.save(&self.path)?;
         }
-        Ok((dirty || !self.after_state.is_empty(), events))
+        Ok((
+            dirty || !self.after_state.is_empty() || !self.program_notices.is_empty(),
+            events,
+        ))
     }
     fn state(&mut self) -> Value {
         let mut state = self.hosts.active_slot().and_then(|slot| self.adapters.get_mut(&slot.id).map(|adapter| adapter.state(&slot.model)))
@@ -757,6 +772,7 @@ impl Backend {
     fn augment_activity(&mut self, state: &mut Value) {
         let mut rows = Vec::new();
         let mut sessions = Vec::new();
+        let mut notification_sessions = Vec::new();
         let mut reading = false;
         let mut incomplete = false;
         let now = Instant::now();
@@ -770,6 +786,14 @@ impl Backend {
                         .zip(slot.model.window()?.window_id.as_deref())
                 })
                 .flatten();
+            if slot.model.connected {
+                for session in &slot.model.sessions {
+                    notification_sessions.push(json!({"key":serde_json::to_string(&(slot.id.as_str(),session.session_id.as_str(),Option::<String>::None,slot.model.connection_epoch)).unwrap(),
+                        "host":slot.id,"hostLabel":config.label,"epoch":slot.model.connection_epoch,"activityEpoch":slot.model.activity_epoch,
+                        "session":session.session_id,"sessionLabel":session.label,"label":session.label,"window":null,
+                        "seen":self.visible && slot.id==self.hosts.active && slot.model.selected.as_deref()==Some(session.session_id.as_str()),"muted":false}));
+                }
+            }
             let projection = self.activity.snapshot(
                 &slot.id,
                 &config.label,
@@ -878,6 +902,22 @@ impl Backend {
                     .unwrap_or(Value::Null);
             }
         }
+        let notices = notification_events::project(
+            &mut self.program_notices,
+            &rows,
+            &notification_sessions,
+            |notice| {
+                self.hosts.slots.iter().any(|slot| {
+                    slot.id == notice["host"]
+                        && slot.connection.is_some()
+                        && notice["epoch"]
+                            .as_u64()
+                            .is_some_and(|epoch| slot.model.connection_epoch < epoch)
+                })
+            },
+        );
+        state["programNotices"] = json!(notices);
+        state["notificationSessions"] = json!(notification_sessions);
         state["activity"] = json!({"rows":rows,"reading":reading,"incomplete":incomplete,"view":self.settings.activity_view});
     }
     fn after_state(&mut self) -> Vec<Value> {

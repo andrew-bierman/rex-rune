@@ -3,5 +3,5 @@ CONFIG += c++17 console testcase
 CONFIG -= app_bundle
 TEMPLATE = app
 TARGET = rex-qt-actions-test
-SOURCES += actions.cpp actions_test.cpp
-HEADERS += actions.h
+SOURCES += actions.cpp actions_test.cpp platform.cpp
+HEADERS += actions.h platform.h

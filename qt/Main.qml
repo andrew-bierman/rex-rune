@@ -140,6 +140,10 @@ ApplicationWindow {
             else backend.performAction(id, args, origin)
         }
     }
+    Connections {
+        target: backend
+        function onNotificationActivated(token) { root.show(); root.raise(); root.requestActivate() }
+    }
     ActivityModel {
         id: activityModel
         objectName: "activityModel"

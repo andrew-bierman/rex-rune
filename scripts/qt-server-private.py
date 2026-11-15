@@ -56,7 +56,7 @@ def exercise(args):
     env = {k: v for k, v in os.environ.items() if not k.startswith(('REX_', 'HERDR_')) and k not in ('DISPLAY', 'WAYLAND_DISPLAY', 'DBUS_SESSION_BUS_ADDRESS')}
     for name in ('home', 'config', 'state', 'cache', 'runtime', 'tools'):
         (work / name).mkdir(mode=0o700)
-    env.update(HOME=str(work/'home'), XDG_CONFIG_HOME=str(work/'config'), XDG_STATE_HOME=str(work/'state'), XDG_CACHE_HOME=str(work/'cache'), XDG_RUNTIME_DIR=str(work/'runtime'), QT_QPA_PLATFORM='offscreen', QT_QUICK_BACKEND='software', QT_QPA_PLATFORMTHEME='generic', SHELL='/bin/sh')
+    env.update(DBUS_SESSION_BUS_ADDRESS='unix:path='+str(work/'absent-bus'), HOME=str(work/'home'), XDG_CONFIG_HOME=str(work/'config'), XDG_STATE_HOME=str(work/'state'), XDG_CACHE_HOME=str(work/'cache'), XDG_RUNTIME_DIR=str(work/'runtime'), QT_QPA_PLATFORM='offscreen', QT_QUICK_BACKEND='software', QT_QPA_PLATFORMTHEME='generic', SHELL='/bin/sh')
     real_rex = shutil.which('rex')
     endpoint = 'unix://' + str(work / 'server.sock')
     env['REX_SERVER'] = endpoint
@@ -192,7 +192,7 @@ for line in sys.stdin:
     fixture.chmod(0o700)
     steps=[{'op':'waitState','field':'server.can_pair','value':True},{'op':'resize','width':640,'height':480},{'op':'click','control':'settingsButton'},{'op':'waitControl','control':'settingsPopup','property':'opened','value':True},{'op':'click','control':'serverSettingsButton'},{'op':'click','control':'pairDeviceButton'},{'op':'waitControl','control':'pairQr','property':'visible','value':True},{'op':'pause','ms':200},{'op':'screenshot','path':str(work/'pair-640.png')},{'op':'controlKey','key':'Escape'},{'op':'waitState','field':'server.pair','value':None}]
     script=work/'steps.json';script.write_text(json.dumps(steps))
-    env=dict(os.environ,QT_QPA_PLATFORM='offscreen',QT_QUICK_BACKEND='software',QT_QPA_PLATFORMTHEME='generic',HOME=str(work),XDG_CONFIG_HOME=str(work),XDG_RUNTIME_DIR=str(work))
+    env=dict(os.environ,DBUS_SESSION_BUS_ADDRESS='unix:path='+str(work/'absent-bus'),QT_QPA_PLATFORM='offscreen',QT_QUICK_BACKEND='software',QT_QPA_PLATFORMTHEME='generic',HOME=str(work),XDG_CONFIG_HOME=str(work),XDG_RUNTIME_DIR=str(work))
     with (work/'native.log').open('w') as log:
         subprocess.run([str(args.driver.resolve()),'--backend',str(fixture),'--script',str(script),'--report',str(work/'report.json')],env=env,stdout=log,stderr=log,check=True,timeout=40)
     decoded=subprocess.run(['zbarimg','--quiet','--raw',str(work/'pair-640.png')],capture_output=True,check=True).stdout.rstrip(b'\r\n')

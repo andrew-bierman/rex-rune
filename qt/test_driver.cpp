@@ -10,6 +10,7 @@
 #include <QUrl>
 #include <QFile>
 #include <QSaveFile>
+#include <QSet>
 #include <QGuiApplication>
 #include <QInputMethodEvent>
 #include <QJsonDocument>
@@ -341,6 +342,9 @@ void TestDriver::step() {
             snapshot["supportsSelection"] = QGuiApplication::clipboard()->supportsSelection();
             snapshot["selectionText"] = QGuiApplication::clipboard()->text(QClipboard::Selection);
             snapshot["problem"] = m_backend->problem();
+            snapshot["notification_service"] = m_backend->notifications()->service();
+            snapshot["notification_test"] = m_backend->notifications()->testResult();
+            snapshot["sound_health"] = m_backend->notifications()->soundHealth();
             QJsonArray panes;
             for (const auto &id : m_backend->paneIds()) {
                 auto *item = selectedTerminal(m_window->contentItem(), id);
@@ -415,7 +419,17 @@ void TestDriver::step() {
             snapshot["qt_terminal_focus"] = m_terminal && m_terminal->hasActiveFocus();
             writeJson(s["path"].toString(), snapshot);
         } else if (op == "screenshot") {
-            if (!m_window->grabWindow().save(s["path"].toString())) throw std::runtime_error("cannot save window image");
+            m_window->update();
+            QTest::qWait(100);
+            const auto image = m_window->grabWindow();
+            if (s["notBlank"].toBool()) {
+                if (image.size() != QSize(s["width"].toInt(), s["height"].toInt())) throw std::runtime_error("unexpected capture size");
+                QSet<QRgb> colors;
+                for (int y = 0; y < image.height() && colors.size() <= 32; ++y)
+                    for (int x = 0; x < image.width() && colors.size() <= 32; ++x) colors.insert(image.pixel(x,y));
+                if (colors.size() <= 32) throw std::runtime_error("native control capture was blank");
+            }
+            if (!image.save(s["path"].toString())) throw std::runtime_error("cannot save window image");
         } else if (op == "assertCellPixel") {
             const auto image=m_window->grabWindow();
             const auto origin=m_terminal->mapToScene(QPointF(0,0));
