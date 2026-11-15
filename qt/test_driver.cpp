@@ -180,9 +180,15 @@ void TestDriver::step() {
                     if (value.isArray()) { bool ok = false; const int index = part.toInt(&ok); const auto values = value.toArray(); value = ok && index >= 0 && index < values.size() ? values[index] : QJsonValue(); }
                     else value = value.toObject()[part];
                 }
-                complete = s.contains("tolerance") && value.isDouble() && s["value"].isDouble()
-                    ? std::abs(value.toDouble() - s["value"].toDouble()) <= s["tolerance"].toDouble()
-                    : value == s["value"];
+                if (s.contains("greaterThan") || s.contains("lessThan")) {
+                    complete = value.isDouble()
+                        && (!s.contains("greaterThan") || (s["greaterThan"].isDouble() && value.toDouble() > s["greaterThan"].toDouble()))
+                        && (!s.contains("lessThan") || (s["lessThan"].isDouble() && value.toDouble() < s["lessThan"].toDouble()));
+                } else {
+                    complete = s.contains("tolerance") && value.isDouble() && s["value"].isDouble()
+                        ? std::abs(value.toDouble() - s["value"].toDouble()) <= s["tolerance"].toDouble()
+                        : value == s["value"];
+                }
             }
             if (!complete && m_wait.elapsed() > s["timeout"].toInt(15000)) throw std::runtime_error(("timeout at " + op + ": " + s["text"].toString() + s["field"].toString()).toStdString());
         } else if (op == "measureEcho") {

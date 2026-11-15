@@ -296,6 +296,7 @@ def main():
                         {'op':'waitState','field':'files.download','value':None},
                         {'op':'click','control':'downloadsButton'},
                         {'op':'waitControl','control':'downloadRowAction0','property':'visible','value':True},
+                        {'op':'waitState','field':'downloads.0.progress','greaterThan':0,'lessThan':1,'timeout':30000},
                         {'op':'snapshot','path':str(marker)}]
                     if mode in ('cancel','confirm'): sequence += [{'op':'click','control':'downloadRowAction0'}, {'op':'waitState','field':'downloads.0.running','value':False}]
                     if mode=='disconnect':

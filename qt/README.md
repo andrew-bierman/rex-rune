@@ -89,7 +89,7 @@ QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME=generic QT_QUICK_BACKEND=software
 Scripts are JSON arrays. Operations are:
 
 - `waitText`: `text`, optional `timeout` in milliseconds (default 15000).
-- `waitState`: dot-separated `field` and JSON `value`, with optional numeric `tolerance`.
+- `waitState`: dot-separated `field` and JSON `value`, with optional numeric `tolerance`. Numeric observations may instead use strict `greaterThan` / `lessThan` bounds.
 - `dragDivider`: zero-based divider `index` and desired normalized `ratio`, through real pointer events.
 - `waitClipboard`: `text` substring and optional `timeout`.
 - `waitProblem`: visible error `text` substring and optional `timeout`.
