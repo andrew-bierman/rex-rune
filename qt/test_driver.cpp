@@ -17,6 +17,7 @@
 #include <QTest>
 #include <QTextStream>
 #include <QWheelEvent>
+#include <cmath>
 #include <stdexcept>
 
 namespace {
@@ -132,7 +133,8 @@ void TestDriver::clickControl(const QString &name) {
         QCoreApplication::sendEvent(m_window, &wheel);
         QTest::qWait(30);
         QPointer<QQuickItem> moving = clip;
-        QTest::qWaitFor([moving] { return !moving || !moving->property("moving").toBool(); }, 1500);
+        if (!QTest::qWaitFor([moving] { return !moving || !moving->property("moving").toBool(); }, 1500))
+            throw std::runtime_error("control list did not stop scrolling");
     }
     if (!item) item = controlItem(m_window->contentItem(), name);
     if (!item) throw std::runtime_error("control disappeared after scrolling");
@@ -172,9 +174,27 @@ void TestDriver::step() {
                     if (value.isArray()) { bool ok = false; const int index = part.toInt(&ok); const auto values = value.toArray(); value = ok && index >= 0 && index < values.size() ? values[index] : QJsonValue(); }
                     else value = value.toObject()[part];
                 }
-                complete = value == s["value"];
+                complete = s.contains("tolerance") && value.isDouble() && s["value"].isDouble()
+                    ? std::abs(value.toDouble() - s["value"].toDouble()) <= s["tolerance"].toDouble()
+                    : value == s["value"];
             }
             if (!complete && m_wait.elapsed() > s["timeout"].toInt(15000)) throw std::runtime_error(("timeout at " + op + ": " + s["text"].toString() + s["field"].toString()).toStdString());
+        } else if (op == "dragDivider") {
+            auto *canvas = m_window->findChild<QQuickItem *>("terminalCanvas");
+            const auto dividers = m_backend->snapshot()["dividers"].toArray();
+            const int index = s["index"].toInt();
+            if (!canvas || index < 0 || index >= dividers.size()) throw std::runtime_error("divider missing");
+            const auto divider = dividers[index].toObject();
+            const auto rect = divider["rect"].toArray();
+            const bool horizontal = divider["horizontal"].toBool();
+            const auto position = [&](double ratio) {
+                const double x = (rect[0].toDouble() + rect[2].toDouble() * (horizontal ? ratio : .5)) * canvas->width();
+                const double y = (rect[1].toDouble() + rect[3].toDouble() * (horizontal ? .5 : ratio)) * canvas->height();
+                return canvas->mapToScene(QPointF(x, y)).toPoint();
+            };
+            QTest::mousePress(m_window, Qt::LeftButton, Qt::NoModifier, position(divider["ratio"].toDouble()));
+            QTest::mouseMove(m_window, position(s["ratio"].toDouble()), 100);
+            QTest::mouseRelease(m_window, Qt::LeftButton, Qt::NoModifier, position(s["ratio"].toDouble()));
         } else if (op == "clickPane") {
             const auto ids = m_backend->paneIds();
             const int index = s["index"].toInt();

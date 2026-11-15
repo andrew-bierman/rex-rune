@@ -1,5 +1,8 @@
 #[path = "../qt/backend/keymap.rs"]
 mod qt_keymap;
+#[path = "../qt/backend/workspace.rs"]
+#[allow(dead_code)]
+mod workspace;
 use rex_rune::{connection::HostModel, settings::Settings};
 use serde_json::{Value, json};
 

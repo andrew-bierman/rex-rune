@@ -29,6 +29,8 @@ pub struct Adapter {
     pub settings: rex_rune::settings::Settings,
     pub settings_path: Option<PathBuf>,
     pub keymap_generation: u64,
+    pub endpoint: String,
+    workspace: crate::workspace::Workspace,
     pane: Option<String>,
     pending_session: Option<String>,
     pending_window: Option<String>,
@@ -207,6 +209,23 @@ impl Adapter {
         }
         match op {
             "shutdown" => return Ok(false),
+            "workspace" => {
+                let mut settings = self.settings.clone();
+                let outcome =
+                    self.workspace
+                        .handle(&model, &mut settings, &self.endpoint, request)?;
+                if outcome.settings_changed {
+                    settings.save(
+                        self.settings_path
+                            .as_ref()
+                            .context("settings path unavailable")?,
+                    )?;
+                    self.settings = settings;
+                }
+                for command in outcome.commands {
+                    host.commands.send(command)?;
+                }
+            }
             "refresh" => {
                 self.reload_shortcuts(host)?;
                 host.commands.send(HostCommand::RefreshSessions)?;
@@ -384,9 +403,9 @@ impl Adapter {
                     blocks: vec![target.pane],
                 })?;
             }
-            "scroll" | "search" | "search_step" | "prompt_step" | "selection" | "mouse"
-            | "wheel" => {
-                let local = !matches!(op, "mouse" | "wheel");
+            "clear" | "reset" | "scroll" | "search" | "search_step" | "prompt_step"
+            | "selection" | "mouse" | "wheel" => {
+                let local = !matches!(op, "mouse" | "wheel" | "clear" | "reset");
                 let connection = self.connection_scope(&model, request, local, false, local)?;
                 connection
                     .commands
@@ -472,7 +491,7 @@ impl Adapter {
         });
         let windows = model.view().map_or_else(Vec::new, |v| {
             v.windows.iter().filter_map(|w| {
-            Some(json!({"id":w.window_id.as_ref()?,"label":w.label.as_deref().unwrap_or("Shell")}))
+            Some(json!({"id":w.window_id.as_ref()?,"label":w.label.as_deref().unwrap_or("Shell"),"user_label":w.label.as_deref().unwrap_or("")}))
         }).collect()
         });
         let (panes, dividers) = model.window().map_or_else(|| (Vec::new(), Vec::new()), |window| {
@@ -492,8 +511,10 @@ impl Adapter {
             "session":model.selected,"window":model.window().and_then(|w| w.window_id.as_ref()),
             "pane":target.as_ref().map(|t| &t.pane),
             "sessions":model.sessions.iter().map(|s| json!({"id":s.session_id,"label":s.label})).collect::<Vec<_>>(),
+            "zoomed":model.window().is_some_and(|window|window.zoomed_block_id.is_some()),
             "windows":windows,"panes":panes,"dividers":dividers,"terminal":terminal_state,"frame":frame,
-            "keymap":crate::keymap::state(model, &self.settings, self.keymap_generation)})
+            "keymap":crate::keymap::state(model, &self.settings, self.keymap_generation),
+            "workspace":self.workspace.state(model)})
     }
 }
 

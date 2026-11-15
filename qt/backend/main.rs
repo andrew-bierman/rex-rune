@@ -2,6 +2,7 @@
 mod adapter;
 mod keymap;
 mod terminal;
+mod workspace;
 
 use adapter::{Adapter, VERSION};
 use anyhow::Result;
@@ -45,6 +46,7 @@ fn main() -> Result<()> {
     let options = Options::parse();
     let mut adapter = Adapter::default();
     adapter.configure(options.config)?;
+    adapter.endpoint = options.endpoint.clone();
     let host = HostConnection::spawn_labeled(
         options.endpoint,
         options.session,

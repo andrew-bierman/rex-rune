@@ -28,6 +28,7 @@ public:
     Q_INVOKABLE void reloadShortcuts();
     Q_INVOKABLE void recordShortcut(const QString &action, const QStringList &keys, const QVariantMap &args, const QString &mode, const QString &operation);
     Q_INVOKABLE void performAction(const QString &action, const QVariantMap &args, const QString &origin);
+    Q_INVOKABLE void workspaceAction(const QString &action, const QVariantMap &args, const QVariantMap &captured);
     Q_INVOKABLE void setVisible(bool visible);
     Q_INVOKABLE void dismissProblem();
     void reportProblem(const QString &message);

@@ -72,6 +72,8 @@ rejection; both child and frontend must be upgraded together:
 | `shortcut` | `action`, `keys`, `args`, `mode`, `operation` (`bind`, `remove`, `restore`) |
 | `action` | server `action`, `args`, `origin`, target, current keymap `generation` and `revision` |
 | `reconnect` | visible target |
+| `clear`, `reset` | focused live target |
+| `workspace` | captured target, typed `action`, `args`, viewport `width` and `height` for best-fit splits |
 | `refresh`, `shutdown` | none |
 
 A complete target names `session`, `window`, `pane` and current connection `epoch`.
@@ -103,7 +105,7 @@ origin. Generation/revision and target checks discard stale dispatches; failed
 actions are not replayed. Core-queued client actions are validated and emitted once
 after the matching state publication. Current client actions deny remote access.
 
-This version sends the current multi-pane scene, not a scrollback database. Graphics and the full workspace lifecycle surface are not yet exposed.
+This version sends the current multi-pane scene, not a scrollback database. Graphics, saved-host management and other remaining parity surfaces are not yet exposed.
 Selection, formatting and scrollback/search stay in the core; Qt never parses
 VT output or builds its own history database. Local viewport requests can be
 issued during pauses; the core worker determines when its stream can process
@@ -111,7 +113,14 @@ them. A cached acknowledged selection can still be copied while input is paused.
 OSC 52 copies are emitted once only for the focused visible pane and current
 epoch; reads are never answered. PRIMARY and copy-on-selection default off.
 Links open only after a Ctrl press/release on the same validated link. Extending that contract requires matching adapter and
-frontend changes and tests. JSON serialization cost and QPainter performance
+frontend changes and tests. The workspace adapter maps a closed action enum to
+public host commands and layout helpers. It accepts no arbitrary RPC method.
+Creation is explicit; tab/split creation inherits CWD through core `NewTerminal`.
+The `workspace` state is a pending confirmation or null; acceptance consumes its
+ID once and rechecks epoch, endpoint and captured view/target. Close-others IDs
+are frozen at question creation. A vanished or changed target clears the question
+permanently. The frontend preserves explicitly supplied capture epochs instead of
+restamping them. Tab muting changes only Qt settings. JSON serialization cost and QPainter performance
 on large, fast-updating grids have not been benchmarked.
 
 ## Downstream ownership

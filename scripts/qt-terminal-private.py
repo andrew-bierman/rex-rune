@@ -53,11 +53,13 @@ def main():
                 {'op': 'selectAll'}, {'op': 'copy'}, {'op': 'waitClipboard', 'text': 'HISTORY_OLD_needle'},
                 {'op': 'find'}, {'op': 'searchText', 'text': 'HISTORY_OLD_needle'},
                 {'op': 'waitState', 'field': 'frame.search.total', 'value': 2},
+                {'op': 'waitState', 'field': 'frame.search.index', 'value': 0},
                 {'op': 'searchKey', 'key': 'Return'}, {'op': 'waitText', 'text': 'HISTORY_OLD_needle'},
+                {'op': 'waitState', 'field': 'frame.search.index', 'value': 1},
                 {'op': 'snapshot', 'path': str(work / 'history.json')},
                 {'op': 'screenshot', 'path': str(work / 'search.png')},
-                {'op': 'searchPrevious'}, {'op': 'pause', 'ms': 150}, {'op': 'snapshot', 'path': str(work / 'previous.json')},
-                {'op': 'searchNext'}, {'op': 'pause', 'ms': 150}, {'op': 'snapshot', 'path': str(work / 'next.json')},
+                {'op': 'searchPrevious'}, {'op': 'waitState', 'field': 'frame.search.index', 'value': 0}, {'op': 'snapshot', 'path': str(work / 'previous.json')},
+                {'op': 'searchNext'}, {'op': 'waitState', 'field': 'frame.search.index', 'value': 1}, {'op': 'snapshot', 'path': str(work / 'next.json')},
                 {'op': 'searchKey', 'key': 'Escape'}, {'op': 'waitState', 'field': 'frame.search', 'value': None},
                 {'op': 'wheel', 'delta': -1200}, {'op': 'pause', 'ms': 300},
                 {'op': 'type', 'text': 'python3 ' + shlex.quote(str(mouse))}, {'op': 'key', 'key': 'Return'},
@@ -65,6 +67,13 @@ def main():
                 {'op': 'pointer', 'phase': 'down', 'x': 4, 'y': 3},
                 {'op': 'pointer', 'phase': 'up', 'x': 4, 'y': 3},
                 {'op': 'wheel', 'x': 4, 'y': 3, 'delta': 120},
+                {'op': 'pointer', 'phase': 'down', 'button': 'right', 'x': 4, 'y': 3},
+                {'op': 'pointer', 'phase': 'up', 'button': 'right', 'x': 4, 'y': 3},
+                {'op': 'waitControl', 'control': 'workspaceMenu', 'property': 'visible', 'value': True},
+                {'op': 'controlKey', 'key': 'Escape'},
+                {'op': 'waitControl', 'control': 'workspaceMenu', 'property': 'visible', 'value': False},
+                {'op': 'pointer', 'phase': 'down', 'button': 'right', 'x': 4, 'y': 3, 'mods': 'shift'},
+                {'op': 'pointer', 'phase': 'up', 'button': 'right', 'x': 4, 'y': 3, 'mods': 'shift'},
                 {'op': 'pointer', 'phase': 'down', 'x': 0, 'y': 0, 'mods': 'shift'},
                 {'op': 'pointer', 'phase': 'move', 'x': 5, 'y': 0, 'mods': 'shift'},
                 {'op': 'pointer', 'phase': 'up', 'x': 5, 'y': 0, 'mods': 'shift'},
@@ -136,7 +145,7 @@ def main():
             assert 'WIDE_界 é ' in snapshot['clipboard']
             assert '0' * 200 + 'WRAPPED_END' in snapshot['clipboard'], 'soft wraps changed copied text'
             assert json.loads((work / 'before-copy.json').read_text())['clipboard'] == snapshot['clipboard'], 'copy-on-selection was enabled by default'
-            assert (work / 'mouse.bin').read_bytes() == b'\x1b[<0;5;4M\x1b[<0;5;4m' + b'\x1b[<64;5;4M' * 3, 'mouse/wheel cell bytes or Shift override differed'
+            assert (work / 'mouse.bin').read_bytes() == b'\x1b[<0;5;4M\x1b[<0;5;4m' + b'\x1b[<64;5;4M' * 3 + b'\x1b[<2;5;4M\x1b[<2;5;4m', 'mouse/wheel cell bytes, local menu or Shift override differed'
             assert json.loads((work / 'hidden.json').read_text())['clipboard'] == 'OSC52_OK', 'hidden program changed clipboard'
             selection = json.loads((work / 'selection.json').read_text())
             assert json.loads((work / 'auto-copy.json').read_text())['clipboard'] == 'READY'

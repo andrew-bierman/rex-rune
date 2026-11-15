@@ -44,7 +44,7 @@ void Frontend::start(const QString &program, const QString &endpoint, const QStr
 bool Frontend::send(QJsonObject message) {
     if (m_process.state() != QProcess::Running) return false;
     message["version"] = 2;
-    message["epoch"] = m_state["epoch"];
+    if (!message.contains("epoch")) message["epoch"] = m_state["epoch"];
     const auto data = QJsonDocument(message).toJson(QJsonDocument::Compact) + '\n';
     return m_process.write(data) == data.size();
 }
@@ -89,6 +89,13 @@ void Frontend::selectPane(const QString &id) {
     send({{"op", "select_pane"}, {"session", m_state["session"]}, {"window", m_state["window"]}, {"pane", id}});
 }
 void Frontend::refresh() { send({{"op", "refresh"}}); }
+void Frontend::workspaceAction(const QString &action, const QVariantMap &args, const QVariantMap &captured) {
+    auto message = QJsonObject::fromVariantMap(captured);
+    message["op"] = "workspace";
+    message["action"] = action;
+    message["args"] = QJsonObject::fromVariantMap(args);
+    send(message);
+}
 void Frontend::reloadShortcuts() { send({{"op","keymap_reload"}}); }
 void Frontend::recordShortcut(const QString &action, const QStringList &keys, const QVariantMap &args, const QString &mode, const QString &operation) {
     send({{"op","shortcut"},{"action",action},{"keys",QJsonArray::fromStringList(keys)},

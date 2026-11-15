@@ -8,6 +8,8 @@ use serde_json::Value;
 pub fn command(r: &Value) -> Result<Command> {
     let integer = |name: &str| r[name].as_u64().with_context(|| format!("invalid {name}"));
     Ok(match r["op"].as_str().context("missing op")? {
+        "clear" => Command::Clear,
+        "reset" => Command::Reset,
         "scroll" => Command::Scroll(
             r["lines"]
                 .as_i64()
@@ -67,6 +69,18 @@ pub fn command(r: &Value) -> Result<Command> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn clear_and_reset_use_the_existing_terminal_worker() {
+        assert!(matches!(
+            command(&json!({"op":"clear"})).unwrap(),
+            Command::Clear
+        ));
+        assert!(matches!(
+            command(&json!({"op":"reset"})).unwrap(),
+            Command::Reset
+        ));
+    }
 
     #[test]
     fn selection_preserves_generation_revision_and_geometry() {

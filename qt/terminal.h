@@ -38,6 +38,9 @@ public:
     Q_INVOKABLE void copy();
     Q_INVOKABLE void paste();
     Q_INVOKABLE void selectAll();
+    Q_INVOKABLE void copyId();
+    Q_INVOKABLE void clear();
+    Q_INVOKABLE void reset();
     void foreground();
     int columns() const;
     int rows() const;
@@ -49,6 +52,7 @@ signals:
     void actionsChanged();
     void paneIdChanged();
     void textChanged();
+    void contextMenuRequested(qreal x, qreal y);
 protected:
     void keyPressEvent(QKeyEvent *event) override;
     void keyReleaseEvent(QKeyEvent *event) override;

@@ -15,7 +15,7 @@ Popup {
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
     property var rows: actions.commands.filter(row => {
         const terms = (row.title + " " + row.category + " " + row.id + " " + (row.hint || "")).toLowerCase()
-        return terms.includes(search.text.toLowerCase()) && !(row.args && row.args.required && row.args.required.length)
+        return terms.includes(search.text.toLowerCase()) && (row.handler === "workspace" || !(row.args && row.args.required && row.args.required.length))
     })
     onOpened: { search.clear(); search.forceActiveFocus(); list.currentIndex = 0 }
     onClosed: finished()

@@ -33,6 +33,33 @@ struct Spec {
 // Only implemented operations are declared. Later capabilities extend this table.
 const ACTIONS: &[Spec] = &[
     Spec {
+        id: "pane.copy_id",
+        title: "Copy pane ID",
+        category: "Terminal",
+        offline: true,
+        repeats: false,
+        arguments: Arguments::None,
+        remote: Remote::Never,
+    },
+    Spec {
+        id: "pane.clear",
+        title: "Clear terminal",
+        category: "Terminal",
+        offline: false,
+        repeats: false,
+        arguments: Arguments::None,
+        remote: Remote::Never,
+    },
+    Spec {
+        id: "pane.reset",
+        title: "Reset terminal",
+        category: "Terminal",
+        offline: false,
+        repeats: false,
+        arguments: Arguments::None,
+        remote: Remote::Never,
+    },
+    Spec {
         id: "session.refresh",
         title: "Refresh sessions",
         category: "Navigate",
@@ -203,6 +230,9 @@ fn schema(arguments: Arguments) -> Option<Value> {
 }
 
 pub fn validate(id: &str, args: &Value) -> Result<()> {
+    if crate::workspace::known(id) {
+        return crate::workspace::validate(id, args);
+    }
     let spec = ACTIONS
         .iter()
         .find(|spec| spec.id == id)
@@ -248,7 +278,7 @@ pub fn validate(id: &str, args: &Value) -> Result<()> {
 }
 
 pub fn known(id: &str) -> bool {
-    ACTIONS.iter().any(|spec| spec.id == id)
+    ACTIONS.iter().any(|spec| spec.id == id) || crate::workspace::known(id)
 }
 
 fn declarations() -> Vec<InspectResponseAction> {
@@ -263,6 +293,22 @@ fn declarations() -> Vec<InspectResponseAction> {
             action.repeats = Some(spec.repeats);
             action
         })
+        .chain(
+            crate::workspace::ACTIONS
+                .iter()
+                .map(|(id, title, category)| {
+                    let mut action = InspectResponseAction::new(*id);
+                    action.title = Some((*title).into());
+                    action.category = Some((*category).into());
+                    action.kind = Some("client".into());
+                    action.args = crate::workspace::schema(id);
+                    action.repeats = Some(matches!(
+                        *id,
+                        "pane.focus" | "pane.focus_next" | "pane.focus_previous" | "pane.resize"
+                    ));
+                    action
+                }),
+        )
         .collect()
 }
 
@@ -347,7 +393,18 @@ pub fn state(model: &HostModel, settings: &Settings, generation: u64) -> Value {
                 else if spec.category == "Terminal" { frame.is_some() && (spec.offline || model.connected) }
                 else { spec.offline || model.connected },
             "remote":match spec.remote { Remote::Never => "never" }})
-    }).chain(snapshot.into_iter().flat_map(|s| s.reply.actions.iter()).filter(|a| a.kind.as_deref() != Some("client"))
+    }).chain(crate::workspace::ACTIONS.iter().map(|(id,title,category)| {
+        let available = match *id {
+            "session.new" => true,
+            "session.rename" | "session.close" | "client.tab.new" => model.selected.is_some(),
+            "pane.move_to_new_tab" => false,
+            id if id.starts_with("pane.") => terminal.is_some(),
+            _ => model.window().is_some(),
+        };
+        json!({"id":id,"title":title,"category":category,"kind":"client","handler":"workspace","hint":hint(id),
+            "args":crate::workspace::schema(id),"enabled":(model.connected || *id == "client.tab.mute") && available,"remote":"never",
+            "repeats":matches!(*id,"pane.focus"|"pane.focus_next"|"pane.focus_previous"|"pane.resize")})
+    })).chain(snapshot.into_iter().flat_map(|s| s.reply.actions.iter()).filter(|a| a.kind.as_deref() != Some("client"))
         .map(|a| json!({"id":a.name,"title":a.title.as_deref().unwrap_or(&a.name),"category":a.category.as_deref().unwrap_or("Server"),
             "kind":"server","hint":hint(&a.name),"args":a.args,"repeats":a.repeats.unwrap_or(false),"enabled":model.connected,"remote":"never"}))).collect::<Vec<_>>();
     let mut bindings = map

@@ -24,14 +24,14 @@ qmake6 and a C++17 compiler are required. This milestone was built against Qt
 use an absolute `--backend` path when launching from another directory.
 
 The Session, Tab and Pane controls select existing server state. All visible server panes are shown at their authoritative split/layer placements. Closing this app leaves sessions and programs running. No
-frontend settings or Rune preferences are read or written. Ordinary keys reach
+Rune preferences are read or written. Ordinary keys reach
 Rex's `client.key`; clipboard paste uses the core paste command. The window
 claims size when it comes forward; typing and pasting also claim through the
 core. Navigation and copying do not claim size. Another client's owned size is
 respected until this client claims the pane again.
 
-Drag to select visible cells, then use Copy. Paste uses the Qt clipboard.
-Terminal actions (`⋯`) contains Select visible text. Workspace shortcuts use Rex Rune's public layered keymap: defaults, host
+Drag to select terminal text, then use Copy. Paste uses the Qt clipboard.
+Terminal actions (`⋯`) contains Select all terminal text. Workspace shortcuts use Rex Rune's public layered keymap: defaults, host
 configuration, Qt's read-only override file, then recorded changes. Every binding
 is removable or replaceable in Settings → Shortcuts. Commands, hints and key
 dispatch use that same effective map. Unconsumed keys retain `client.key` and
@@ -45,6 +45,15 @@ Find searches the screen and scrollback in the core. The terminal menu offers
 prompt navigation and history-wide selection. Shift overrides program mouse
 reporting for selection. Copy-on-selection and PRIMARY are opt-in policies;
 link opening requires Ctrl press/release on the same validated link.
+
+The `+` menu, pane headers and Commands expose explicit session/tab creation,
+splits, focus, zoom, move, resize, balance, rename, reorder and local tab muting.
+Divider dragging sends server resize requests; geometry changes only with server
+state. Close dialogs name the captured target and default to Keep running.
+Close others uses the IDs captured when its dialog opened. Moving a pane to a new
+tab is unavailable in the current Rex API; moving it to an existing tab is supported.
+Plain right-click opens the pane menu; Shift-right-click reports to a program
+that requested mouse input. Clear and Reset use the existing core commands.
 
 
 ## Verification driver
@@ -67,7 +76,8 @@ QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME=generic QT_QUICK_BACKEND=software
 Scripts are JSON arrays. Operations are:
 
 - `waitText`: `text`, optional `timeout` in milliseconds (default 15000).
-- `waitState`: dot-separated `field` and exact JSON `value`.
+- `waitState`: dot-separated `field` and JSON `value`, with optional numeric `tolerance`.
+- `dragDivider`: zero-based divider `index` and desired normalized `ratio`, through real pointer events.
 - `waitClipboard`: `text` substring and optional `timeout`.
 - `waitProblem`: visible error `text` substring and optional `timeout`.
 - `type`: ASCII `text`, sent as Qt key events.

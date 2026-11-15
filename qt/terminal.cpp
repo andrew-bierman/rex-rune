@@ -364,7 +364,7 @@ void TerminalItem::selection(const QString &phase, const QPointF &point, int cli
         {"columns", cols}, {"cell_width", int(std::ceil(m_cellWidth))}, {"height", int(height())}});
 }
 bool TerminalItem::pointer(QMouseEvent *event, const QString &action) {
-    if (!m_frame["mouse_tracking"].toBool() || ((event->modifiers() & Qt::ShiftModifier) && !m_reporting)) return false;
+    if (!m_frame["mouse_tracking"].toBool() || ((event->modifiers() & Qt::ShiftModifier) && event->button() != Qt::RightButton && !m_reporting)) return false;
     const int at = std::max(0, cellAt(event->position())), cols = std::max(1, m_frame["cols"].toInt());
     QStringList mods;
     if (event->modifiers() & Qt::ControlModifier) mods.append("ctrl");
@@ -380,6 +380,10 @@ bool TerminalItem::pointer(QMouseEvent *event, const QString &action) {
 }
 void TerminalItem::mousePressEvent(QMouseEvent *event) {
     forceActiveFocus(Qt::MouseFocusReason);
+    if (event->button() == Qt::RightButton && !(event->modifiers() & Qt::ShiftModifier)) {
+        emit contextMenuRequested(event->position().x(), event->position().y());
+        event->accept(); return;
+    }
     if (event->button() == Qt::MiddleButton && m_primarySelection && (!m_frame["mouse_tracking"].toBool() || (event->modifiers() & Qt::ShiftModifier)) && QGuiApplication::clipboard()->supportsSelection()) {
         if (m_frontend) m_frontend->sendPane(m_paneId, "paste", {{"text", QGuiApplication::clipboard()->text(QClipboard::Selection)}});
         event->accept(); return;
@@ -489,3 +493,7 @@ void TerminalItem::hoverMoveEvent(QHoverEvent *event) {
 
 void TerminalItem::scroll(int lines) { if (m_frontend) m_frontend->sendPane(m_paneId, "scroll", {{"lines", lines}}); }
 void TerminalItem::reconnect() { if (m_frontend) m_frontend->sendPane(m_paneId, "reconnect"); }
+
+void TerminalItem::copyId() { QGuiApplication::clipboard()->setText(m_paneId); }
+void TerminalItem::clear() { if (m_frontend) m_frontend->sendPane(m_paneId, "clear"); }
+void TerminalItem::reset() { if (m_frontend) m_frontend->sendPane(m_paneId, "reset"); }

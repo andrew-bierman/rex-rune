@@ -26,19 +26,24 @@ ApplicationWindow {
     onVisibleChanged: backend.setVisible(active && visible)
     Component.onCompleted: backend.setVisible(active && visible)
     property var state: backend.state
+    property var dividerIds: []
+    onStateChanged: {
+        const ids = (state.dividers || []).map(split => split.before + "/" + split.after)
+        if (JSON.stringify(ids) !== JSON.stringify(dividerIds)) dividerIds = ids
+    }
     function selectedIndex(items, id) {
         for (let i = 0; i < items.length; i++) if (items[i].id === id) return i
         return -1
     }
-    function selectedTerminal() {
-        const i = backend.paneIds.indexOf(root.state.pane)
+    function selectedTerminal(pane) {
+        const i = backend.paneIds.indexOf(pane || root.state.pane)
         const card = paneRepeater.itemAt(i)
         return card ? card.terminal : null
     }
     function find() { findBar.terminal = selectedTerminal(); findBar.open() }
     FindBar { id: findBar; anchors.top: parent.top; anchors.right: parent.right; z: 100; onClosed: root.restoreTerminal() }
     function restoreTerminal() {
-        if (commandPopup.visible || shortcutPopup.visible || findBar.visible) return
+        if (commandPopup.visible || shortcutPopup.visible || findBar.visible || workspaceUI.modalOpen) return
         const term = selectedTerminal(); if (term) term.forceActiveFocus()
     }
     function action(id, args, origin) {
@@ -51,6 +56,9 @@ ApplicationWindow {
         case "pane.copy": if (term) term.copy(); break
         case "pane.paste": if (term) term.paste(); break
         case "pane.select_all": if (term) term.selectAll(); break
+        case "pane.copy_id": if (term) term.copyId(); break
+        case "pane.clear": if (term) term.clear(); break
+        case "pane.reset": if (term) term.reset(); break
         case "client.search": find(); break
         case "client.find.next": if (term) term.searchStep(false); break
         case "client.find.previous": if (term) term.searchStep(true); break
@@ -58,13 +66,40 @@ ApplicationWindow {
         case "client.prompt.next": if (term) term.promptStep(false); break
         case "client.scroll": if (term) term.scroll(args.lines); break
         case "pane.reconnect": if (term) term.reconnect(); break
-        default: backend.performAction(id, args, origin)
+        default:
+            const spec = ((root.state.keymap || {}).actions || []).find(row => row.id === id)
+            if (spec && spec.handler === "workspace") workspaceUI.run(id, args)
+            else backend.performAction(id, args, origin)
         }
     }
     Commands { id: commandPopup; objectName: "commandsPopup"; parent: Overlay.overlay; actions: workspaceActions; onFinished: root.restoreTerminal() }
     ShortcutSettings { id: shortcutPopup; objectName: "shortcutPopup"; parent: Overlay.overlay; actions: workspaceActions; frontend: backend; onFinished: root.restoreTerminal() }
+    WorkspaceActions {
+        id: workspaceUI
+        objectName: "workspaceUI"
+        anchors.fill: parent
+        z: 200
+        frontend: backend
+        canvasWidth: canvas.width
+        canvasHeight: canvas.height
+        onFinished: Qt.callLater(root.restoreTerminal)
+        onTerminalAction: (id, captured) => {
+            if (captured.host !== root.state.host || captured.epoch !== root.state.epoch || captured.session !== root.state.session || captured.window !== root.state.window) return
+            const term = selectedTerminal(captured.pane)
+            if (!term) return
+            switch (id) {
+            case "pane.copy": term.copy(); break
+            case "pane.paste": term.paste(); break
+            case "pane.select_all": term.selectAll(); break
+            case "pane.copy_id": term.copyId(); break
+            case "pane.clear": term.clear(); break
+            case "pane.reset": term.reset(); break
+            case "pane.reconnect": term.reconnect(); break
+            }
+        }
+    }
     Binding { target: workspaceActions; property: "searching"; value: findBar.visible }
-    Binding { target: workspaceActions; property: "modalOpen"; value: commandPopup.visible || shortcutPopup.visible || findBar.visible }
+    Binding { target: workspaceActions; property: "modalOpen"; value: commandPopup.visible || shortcutPopup.visible || findBar.visible || workspaceUI.modalOpen }
     Connections { target: workspaceActions; function onRequested(id, args, origin) { root.action(id, args, origin) } }
     property string selectedPane: state.pane || ""
     onSelectedPaneChanged: { if (findBar.visible) findBar.close(); Qt.callLater(restoreTerminal) }
@@ -109,6 +144,7 @@ ApplicationWindow {
                 }
                 ComboBox {
                     objectName: "panes"
+                    visible: root.width >= 900
                     Layout.fillWidth: true
                     Layout.preferredWidth: 150
                     Layout.maximumWidth: 200
@@ -155,6 +191,12 @@ ApplicationWindow {
                     onClicked: workspaceActions.run("client.settings")
                 }
                 ToolButton {
+                    objectName: "workspaceButton"
+                    text: "+"
+                    Accessible.name: qsTr("Session, tab and pane actions")
+                    onClicked: workspaceUI.openMenu(this)
+                }
+                ToolButton {
                     id: more
                     objectName: "moreButton"
                     text: "⋯"
@@ -197,6 +239,7 @@ ApplicationWindow {
         }
         Item {
             id: canvas
+            objectName: "terminalCanvas"
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.margins: 8
@@ -206,6 +249,36 @@ ApplicationWindow {
                 visible: backend.paneIds.length === 0
                 text: root.state.connected ? "Choose a terminal session" : "Connecting…"
                 color: "#a2b0c4"
+            }
+            Repeater {
+                model: root.dividerIds
+                delegate: Item {
+                    id: dividerHandle
+                    required property string modelData
+                    property var split: (root.state.dividers || []).find(row => row.before + "/" + row.after === modelData)
+                    property var rect: split ? split.rect : [0, 0, 0, 0]
+                    x: Math.round((rect[0] + (split && split.horizontal ? rect[2] * split.ratio : 0)) * canvas.width) - (split && split.horizontal ? 4 : 0)
+                    y: Math.round((rect[1] + (split && !split.horizontal ? rect[3] * split.ratio : 0)) * canvas.height) - (split && !split.horizontal ? 4 : 0)
+                    width: split && split.horizontal ? 8 : rect[2] * canvas.width
+                    height: split && !split.horizontal ? 8 : rect[3] * canvas.height
+                    z: 1000
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: dividerHandle.split && dividerHandle.split.horizontal ? Qt.SplitHCursor : Qt.SplitVCursor
+                        property var captured: null
+                        property var initial: null
+                        onPressed: { captured = workspaceUI.capture(); initial = dividerHandle.split }
+                        onPositionChanged: mouse => {
+                            if (!pressed || !initial) return
+                            const point = mapToItem(canvas, mouse.x, mouse.y)
+                            const r = initial.rect
+                            const ratio = initial.horizontal ? (point.x / canvas.width - r[0]) / r[2] : (point.y / canvas.height - r[1]) / r[3]
+                            workspaceUI.send("pane.resize_divider", {before: initial.before, after: initial.after, ratio: ratio}, captured)
+                        }
+                        onReleased: { captured = null; initial = null }
+                        onCanceled: { captured = null; initial = null }
+                    }
+                }
             }
             Repeater {
                 id: paneRepeater
@@ -226,27 +299,29 @@ ApplicationWindow {
                     border.width: backend.paneIds.length > 1 ? 1 : 0
                     border.color: root.selectedPane === modelData ? "#7cc4ff" : "#26374b"
                     clip: true
-                    Label {
+                    PaneHeader {
                         id: heading
-                        x: 8
-                        y: 3
-                        width: parent.width - 16
-                        height: backend.paneIds.length > 1 ? 22 : 0
+                        width: parent.width
+                        height: backend.paneIds.length > 1 || root.state.zoomed ? implicitHeight : 0
                         visible: height > 0
-                        text: card.pane.label || "Terminal"
-                        elide: Text.ElideRight
-                        color: root.selectedPane === card.modelData ? "#e8eef6" : "#a2b0c4"
+                        pane: card.pane
+                        workspace: workspaceUI
+                        focused: root.selectedPane === card.modelData
                     }
                     TerminalView {
                         id: terminalView
                         objectName: "terminal"
                         x: 4
-                        y: heading.visible ? 26 : 0
+                        y: heading.height
                         width: Math.max(0, parent.width - 8)
                         height: Math.max(0, parent.height - y)
                         frontend: backend
                         actions: workspaceActions
                         paneId: card.modelData
+                        onContextMenuRequested: (x, y) => {
+                            const point = terminalView.mapToItem(workspaceUI, x, y)
+                            workspaceUI.openPaneMenu(point.x, point.y, card.modelData)
+                        }
                         Accessible.name: "Terminal " + (card.pane.label || "")
                         Component.onCompleted: if (root.selectedPane === card.modelData) root.restoreTerminal()
                     }
