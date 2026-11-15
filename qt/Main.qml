@@ -1,3 +1,4 @@
+import "IconPolicy.js" as IconPolicy
 import QtQuick
 import QtQuick.Window
 import QtQuick.Controls
@@ -54,7 +55,7 @@ ApplicationWindow {
     readonly property int iconCount: interfacePrefs.tab_icon_count === undefined ? 1 : interfacePrefs.tab_icon_count
     function coloredIcon(presentation, index) {
         const mode = interfacePrefs.tab_icon_color || "never"
-        return mode === "always" || (mode === "active_tab" && presentation.inFront) || (mode === "active_pane" && presentation.inFront && index === 0)
+        return IconPolicy.colored(mode, presentation.inFront, index)
     }
     function selectedIndex(items, id) {
         for (let i = 0; i < items.length; i++) if (items[i].id === id) return i

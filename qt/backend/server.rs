@@ -1,4 +1,3 @@
-//! Cached facts and person-confirmed, single-use server operations.
 use anyhow::{Context, Result, ensure};
 use rex_rune::{connection::HostModel, qr, ssh};
 use serde_json::{Value, json};
@@ -184,7 +183,7 @@ impl Server {
             .collect();
         self.pair_report = Some(model.server_info.clone());
         self.pair = Some(
-            json!({"host":host,"epoch":model.connection_epoch,"address":address,"matrix":matrix,"report":null}),
+            json!({"host":host,"epoch":model.connection_epoch,"address":address,"matrix":matrix}),
         );
         Ok(())
     }
@@ -201,10 +200,7 @@ impl Server {
             })
             .map(|d| d.as_secs());
         let listeners: Vec<Value> = process.into_iter().flat_map(|p| &p.listeners).map(|l| json!({"transport":l.transport,"address":address(&l.endpoint),"primary":l.primary})).collect();
-        let mut pair = self.pair.clone().unwrap_or(Value::Null);
-        if let Some(pair) = pair.as_object_mut() {
-            pair.remove("report");
-        }
+        let pair = self.pair.clone().unwrap_or(Value::Null);
         json!({"host":host,"epoch":model.connection_epoch,"connected":model.connected,"status":if model.connected {"Reported on this connection"} else {"Disconnected · last reported"},"version":info.rex_version(),"platform":build.and_then(|b| b.platform.as_deref()),"commit":build.and_then(|b| b.commit.as_deref()),"built_at":build.and_then(|b| b.built_at.as_deref()),"dirty":build.and_then(|b| b.dirty),"api":info.api_revisions,"pid":process.and_then(|p| p.pid),"instance_id":process.and_then(|p| p.instance_id.as_deref()),"host_id":process.and_then(|p| p.host_id.as_deref()),"tailscale_state":process.and_then(|p| p.tailscale.as_ref()).map(|t| t.state.as_str()),"started_at":process.and_then(|p| p.started_at.as_deref()),"sessions":process.and_then(|p| p.session_count),"uptime_seconds":uptime,"listeners":listeners,"can_pair":pair_address(model).is_some(),"can_stop":model.connected && (endpoint.starts_with("unix://") || endpoint.starts_with("ssh://")),"can_setup":model.ssh_server_missing && !model.connected && ssh::Target::parse(endpoint).ok().flatten().is_some_and(|t| ssh::setup::start_args(&t).is_ok()),"pair":pair,"stop_result":model.server_stop_result})
     }
 }

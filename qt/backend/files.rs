@@ -1,4 +1,3 @@
-//! Captured path browsing and explicit local-file uploads through the public core.
 use anyhow::{Context, Result, bail, ensure};
 use rex_rune::{
     connection::{HostCommand, HostModel, directory::Request},
@@ -17,7 +16,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq, Eq)]
 struct Target {
     epoch: u64,
     session: String,
@@ -249,7 +248,7 @@ impl Files {
     fn match_browser(&self, target: &Target, endpoint: &str) -> Result<()> {
         let b = self.browser.as_ref().context("Path browser is closed.")?;
         ensure!(
-            b.endpoint == endpoint && b.target.value() == target.value(),
+            b.endpoint == endpoint && b.target == *target,
             "Path browser target changed."
         );
         Ok(())

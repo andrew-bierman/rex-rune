@@ -1,3 +1,4 @@
+import "IconPolicy.js" as IconPolicy
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
@@ -17,7 +18,7 @@ Pane {
     readonly property int iconCount: iconPrefs.tab_icon_count === undefined ? 1 : iconPrefs.tab_icon_count
     function colored(presentation, index) {
         const mode = iconPrefs.tab_icon_color || "never"
-        return mode === "always" || (mode === "active_tab" && presentation.inFront) || (mode === "active_pane" && presentation.inFront && index === 0)
+        return IconPolicy.colored(mode, presentation.inFront, index)
     }
     function key(row) { return row ? [row.kind, row.host, row.session || "", row.window || ""].join("/") : "" }
     function rebuild(reset) {

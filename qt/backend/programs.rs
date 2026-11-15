@@ -2,7 +2,6 @@
 //! Bundled Nerd Font glyphs do not redistribute Superlogical artwork.
 use serde_json::{Value, json};
 const ALIASES: &[(&str, &str)] = &[
-    // Shell's variants for the programs a terminal sits in.
     ("top", "shell-top"),
     ("atop", "shell-top"),
     ("gtop", "shell-top"),
@@ -19,7 +18,6 @@ const ALIASES: &[(&str, &str)] = &[
     ("lnav", "shell-log"),
     ("distrobox", "shell-container"),
     ("toolbox", "shell-container"),
-    // Editors.
     ("nvim", "neovim"),
     ("nvim-qt", "neovim"),
     ("neovide", "neovim"),
@@ -34,7 +32,6 @@ const ALIASES: &[(&str, &str)] = &[
     ("pico", "nano"),
     ("subl", "sublime"),
     ("sublime_text", "sublime"),
-    // Agents.
     ("claude", "claude-code"),
     ("claude code", "claude-code"),
     ("pool", "poolside"),
@@ -55,7 +52,6 @@ const ALIASES: &[(&str, &str)] = &[
     ("bob", "ibm-bob"),
     ("hf", "hugging-face"),
     ("huggingface-cli", "hugging-face"),
-    // Version control.
     ("lazygit", "git-changes"),
     ("gitui", "git-changes"),
     ("tig", "git-changes"),
@@ -68,7 +64,6 @@ const ALIASES: &[(&str, &str)] = &[
     ("lazyjj", "jj"),
     ("but", "git-butler"),
     ("gitbutler", "git-butler"),
-    // Containers.
     ("docker-compose", "docker"),
     ("lazydocker", "docker"),
     ("podman-compose", "podman"),
@@ -80,7 +75,6 @@ const ALIASES: &[(&str, &str)] = &[
     ("orb", "orbstack"),
     ("orbctl", "orbstack"),
     ("container", "apple-container"),
-    // Languages and their tools.
     ("nodejs", "node"),
     ("npm", "node"),
     ("npx", "node"),
@@ -131,7 +125,6 @@ const ALIASES: &[(&str, &str)] = &[
     ("gradlew", "gradle"),
     ("bazelisk", "bazel"),
     ("buck2", "buck"),
-    // Data.
     ("psql", "postgres"),
     ("pg_dump", "postgres"),
     ("sqlite3", "sqlite"),
@@ -150,7 +143,6 @@ const ALIASES: &[(&str, &str)] = &[
     ("jupyter-qtconsole", "jupyter"),
     ("snow", "snowflake"),
     ("snowsql", "snowflake"),
-    // Infrastructure and services.
     ("tofu", "terraform"),
     ("brew", "homebrew"),
     ("nix-build", "nix"),
@@ -183,8 +175,6 @@ const ALIASES: &[(&str, &str)] = &[
     ("ntn", "notion"),
 ];
 
-/// Scripts known by where they live rather than by their name, as the official client knows
-/// them: a path ending in one of these, at a `/`.
 const SCRIPTS: &[(&str, &str)] = &[
     ("copilot/npm-loader.js", "copilot"),
     ("pi-coding-agent/dist/cli.js", "pi"),
@@ -192,8 +182,6 @@ const SCRIPTS: &[(&str, &str)] = &[
     ("vibe/_bin/vibe-rs", "mistral"),
 ];
 
-/// Slugs that are not a program's command: Shell (the fallback) and its variants, which only
-/// [`ALIASES`] name, and .NET, whose command is `dotnet`.
 const NOT_COMMANDS: &[&str] = &[
     "shell",
     "shell-top",

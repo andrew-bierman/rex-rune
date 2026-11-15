@@ -1,4 +1,3 @@
-//! Read-only public activity projection and client-local seen state.
 use crate::{hosts, programs};
 use rex_rune::connection::{
     HostModel,
@@ -34,8 +33,6 @@ impl Activity {
         self.folds.retain(|key, _| ids.contains(&key.0));
         self.bells.retain(|key| ids.contains(&key.0));
     }
-    /// The parent retains ownership of draining the event queue. Map the captured
-    /// session/block through the same cached view without attaching or querying.
     pub fn bell_for_block(&mut self, host: &str, model: &HostModel, session: &str, block: &str) {
         if let Some(window) = model
             .views

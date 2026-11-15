@@ -695,46 +695,7 @@ impl Backend {
                 }
             }
         }
-        if let Some(actions) = state["keymap"]["actions"].as_array_mut() {
-            for action in actions {
-                match action["id"].as_str() {
-                    Some("client.history.back") => {
-                        action["enabled"] = json!(self.hosts.history.can_back())
-                    }
-                    Some("client.history.forward") => {
-                        action["enabled"] = json!(self.hosts.history.can_forward())
-                    }
-                    Some("client.pair_device") => {
-                        action["enabled"] = json!(self.hosts.active_slot().is_some_and(|s| {
-                            self.server.snapshot(&s.id, &s.model, "")["can_pair"] == true
-                        }));
-                    }
-                    Some("client.server.stop") => {
-                        action["enabled"] =
-                            json!(self.hosts.active_slot().is_some_and(|s| {
-                                let i = self.hosts.index(&s.id).unwrap();
-                                self.server.snapshot(
-                                    &s.id,
-                                    &s.model,
-                                    &self.settings.hosts[i].endpoint,
-                                )["can_stop"]
-                                    == true
-                            }));
-                    }
-                    Some("client.server.setup") => {
-                        action["enabled"] = json!(
-                            self.hosts
-                                .active_slot()
-                                .is_some_and(|s| s.model.ssh_server_missing && !s.model.connected)
-                        );
-                    }
-                    Some("client.host.remove") => {
-                        action["enabled"] = json!(self.hosts.slots.len() > 1)
-                    }
-                    _ => {}
-                }
-            }
-        }
+        let mut server_facts = Value::Null;
         if let Some(slot) = self.hosts.active_slot() {
             let index = self.hosts.index(&slot.id).unwrap();
             let endpoint = &self.settings.hosts[index].endpoint;
@@ -754,7 +715,39 @@ impl Backend {
             {
                 facts["setup_result"] = json!({"request_id":reply.request,"message":reply.message,"endpoint":reply.review_endpoint});
             }
-            state["server"] = facts;
+            server_facts = facts;
+        }
+        if let Some(actions) = state["keymap"]["actions"].as_array_mut() {
+            for action in actions {
+                match action["id"].as_str() {
+                    Some("client.history.back") => {
+                        action["enabled"] = json!(self.hosts.history.can_back())
+                    }
+                    Some("client.history.forward") => {
+                        action["enabled"] = json!(self.hosts.history.can_forward())
+                    }
+                    Some("client.pair_device") => {
+                        action["enabled"] = json!(server_facts["can_pair"] == true);
+                    }
+                    Some("client.server.stop") => {
+                        action["enabled"] = json!(server_facts["can_stop"] == true);
+                    }
+                    Some("client.server.setup") => {
+                        action["enabled"] = json!(
+                            self.hosts
+                                .active_slot()
+                                .is_some_and(|s| s.model.ssh_server_missing && !s.model.connected)
+                        );
+                    }
+                    Some("client.host.remove") => {
+                        action["enabled"] = json!(self.hosts.slots.len() > 1)
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if !server_facts.is_null() {
+            state["server"] = server_facts;
         }
         state["preferences"] = self.preferences.clone();
         state["hosts"] = catalog;
@@ -804,28 +797,46 @@ impl Backend {
                     .cloned(),
             );
         }
+        let mut row_index = HashMap::new();
+        for row in &rows {
+            row_index
+                .entry((
+                    row["host"].clone(),
+                    row["session"].clone(),
+                    row["window"].clone(),
+                ))
+                .or_insert(row);
+        }
+        let mut session_index = HashMap::new();
+        for session in &sessions {
+            session_index
+                .entry((session["host"].clone(), session["session"].clone()))
+                .or_insert(session);
+        }
         let active_host = state["host"].as_str().unwrap_or("").to_owned();
         let active_session = state["session"].as_str().unwrap_or("").to_owned();
         let active_window = state["window"].as_str().unwrap_or("").to_owned();
         if let Some(windows) = state["windows"].as_array_mut() {
             for window in windows {
-                window["activity"] = rows
-                    .iter()
-                    .find(|r| {
-                        r["host"] == active_host
-                            && r["session"] == active_session
-                            && r["window"] == window["id"]
-                    })
+                window["activity"] = row_index
+                    .get(&(
+                        json!(active_host),
+                        json!(active_session),
+                        window["id"].clone(),
+                    ))
+                    .copied()
                     .cloned()
                     .unwrap_or(Value::Null);
             }
         }
         if let Some(panes) = state["panes"].as_array_mut() {
-            let current = rows.iter().find(|r| {
-                r["host"] == active_host
-                    && r["session"] == active_session
-                    && r["window"] == active_window
-            });
+            let current = row_index
+                .get(&(
+                    json!(active_host),
+                    json!(active_session),
+                    json!(active_window),
+                ))
+                .copied();
             for pane in panes {
                 pane["activity"] = current
                     .and_then(|r| r["panes"].as_array())
@@ -840,20 +851,16 @@ impl Backend {
                 if let Some(items) = host["sessions"].as_array_mut() {
                     for session in items {
                         let session_id = session["id"].clone();
-                        session["activity"] = sessions
-                            .iter()
-                            .find(|r| r["host"] == host_id && r["session"] == session_id)
+                        session["activity"] = session_index
+                            .get(&(host_id.clone(), session_id.clone()))
+                            .copied()
                             .cloned()
                             .unwrap_or(Value::Null);
                         if let Some(tabs) = session["tabs"].as_array_mut() {
                             for tab in tabs {
-                                tab["activity"] = rows
-                                    .iter()
-                                    .find(|r| {
-                                        r["host"] == host_id
-                                            && r["session"] == session_id
-                                            && r["window"] == tab["id"]
-                                    })
+                                tab["activity"] = row_index
+                                    .get(&(host_id.clone(), session_id.clone(), tab["id"].clone()))
+                                    .copied()
                                     .cloned()
                                     .unwrap_or(Value::Null);
                             }
@@ -864,9 +871,9 @@ impl Backend {
         }
         if let Some(items) = state["sessions"].as_array_mut() {
             for session in items {
-                session["activity"] = sessions
-                    .iter()
-                    .find(|r| r["host"] == active_host && r["session"] == session["id"])
+                session["activity"] = session_index
+                    .get(&(json!(active_host), session["id"].clone()))
+                    .copied()
                     .cloned()
                     .unwrap_or(Value::Null);
             }

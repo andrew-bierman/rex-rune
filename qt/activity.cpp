@@ -2,7 +2,7 @@
 #include <algorithm>
 #include <QMap>
 
-QVariantList ActivityModel::rows() const {
+QVariantList ActivityModel::projectRows() const {
     QVariantList result;
     for (const auto &value : m_inventory.value("rows").toList()) {
         const auto row = value.toMap();
@@ -19,8 +19,6 @@ QVariantList ActivityModel::rows() const {
         const int rank = row.value("rank").toInt();
         sessionRanks[key] = sessionRanks.contains(key) ? std::min(sessionRanks[key], rank) : rank;
     }
-    // Session groups sort by their most pressing row, preserving host/session input
-    // order among equal priorities. Rows within each session keep priority/tab order.
     QStringList order;
     for (const auto &v : result) { const auto k = sessionKey(v.toMap()); if (!order.contains(k)) order.append(k); }
     std::stable_sort(order.begin(), order.end(), [&](const QString &a, const QString &b) { return sessionRanks[a] < sessionRanks[b]; });
@@ -57,10 +55,10 @@ void ActivityModel::reconcile() {
     for (const auto &v : list) if (v.toMap().value("key").toString() == m_selected) return;
     m_selected = list.isEmpty() ? QString() : list.first().toMap().value("key").toString();
 }
-void ActivityModel::setInventory(const QVariantMap &value) { m_inventory = value; if (value.contains("view")) m_sessionView = value.value("view").toString() == "session"; reconcile(); emit changed(); }
-void ActivityModel::setFilter(const QString &value) { if (m_filter == value) return; m_filter = value; reconcile(); emit changed(); }
-void ActivityModel::setSessionView(bool value) { if (m_sessionView == value) return; m_sessionView = value; reconcile(); emit changed(); }
-void ActivityModel::setSelectedKey(const QString &value) { if (m_selected == value) return; m_selected = value; reconcile(); emit changed(); }
+void ActivityModel::setInventory(const QVariantMap &value) { m_inventory = value; if (value.contains("view")) m_sessionView = value.value("view").toString() == "session"; m_rows = projectRows(); reconcile(); emit changed(); emit selectionChanged(); }
+void ActivityModel::setFilter(const QString &value) { if (m_filter == value) return; m_filter = value; m_rows = projectRows(); reconcile(); emit changed(); emit selectionChanged(); }
+void ActivityModel::setSessionView(bool value) { if (m_sessionView == value) return; m_sessionView = value; m_rows = projectRows(); reconcile(); emit changed(); emit selectionChanged(); }
+void ActivityModel::setSelectedKey(const QString &value) { if (m_selected == value) return; m_selected = value; reconcile(); emit selectionChanged(); }
 void ActivityModel::step(int delta) {
     const auto list = rows();
     if (list.isEmpty()) return;

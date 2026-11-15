@@ -1,3 +1,4 @@
+import "IconPolicy.js" as IconPolicy
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -83,7 +84,7 @@ Dialog {
                                     required property var modelData
                                     required property int index
                                     icon: modelData
-                                    colored: popup.colorMode === "always" || (popup.colorMode === "active_tab" && rowData.inFront) || (popup.colorMode === "active_pane" && rowData.inFront && index === 0)
+                                    colored: IconPolicy.colored(popup.colorMode, rowData.inFront, index)
                                 }
                             }
                             Label { color: popup.palette.windowText; text: modelData.label; textFormat: Text.PlainText; elide: Text.ElideRight; Layout.fillWidth: true }

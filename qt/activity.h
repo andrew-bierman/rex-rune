@@ -8,7 +8,7 @@ class ActivityModel : public QObject {
     Q_PROPERTY(QVariantMap inventory READ inventory WRITE setInventory NOTIFY changed)
     Q_PROPERTY(QString filter READ filter WRITE setFilter NOTIFY changed)
     Q_PROPERTY(bool sessionView READ sessionView WRITE setSessionView NOTIFY changed)
-    Q_PROPERTY(QString selectedKey READ selectedKey WRITE setSelectedKey NOTIFY changed)
+    Q_PROPERTY(QString selectedKey READ selectedKey WRITE setSelectedKey NOTIFY selectionChanged)
     Q_PROPERTY(QVariantList rows READ rows NOTIFY changed)
     Q_PROPERTY(int chipCount READ chipCount NOTIFY changed)
 public:
@@ -17,7 +17,7 @@ public:
     QString filter() const { return m_filter; }
     bool sessionView() const { return m_sessionView; }
     QString selectedKey() const { return m_selected; }
-    QVariantList rows() const;
+    QVariantList rows() const { return m_rows; }
     int chipCount() const;
     void setInventory(const QVariantMap &value);
     void setFilter(const QString &value);
@@ -27,10 +27,13 @@ public:
     Q_INVOKABLE void activateSelected();
 signals:
     void changed();
+    void selectionChanged();
     void activate(const QVariantMap &target);
 private:
     void reconcile();
+    QVariantList projectRows() const;
     QVariantMap m_inventory;
+    QVariantList m_rows;
     QString m_filter, m_selected;
     bool m_sessionView = false;
 };
