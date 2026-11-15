@@ -9,7 +9,7 @@ Rectangle {
     function targetKey() {
         if (!terminal) return ""
         const s = terminal.paneState
-        return [s.epoch, s.session, s.window, s.pane, s.terminal ? s.terminal.generation : ""].join("/")
+        return [s.host, s.epoch, s.session, s.window, s.pane, s.terminal ? s.terminal.generation : ""].join("/")
     }
     Connections {
         target: bar.terminal

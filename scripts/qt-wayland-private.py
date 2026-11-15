@@ -21,6 +21,7 @@ stop. No personal windows are displayed or captured.
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 import shlex
 import shutil
@@ -149,11 +150,16 @@ time.sleep(2)
         ]
         (work / 'events.json').write_text(json.dumps(steps))
         driver = spawn([str(args.driver.resolve()), '--backend', str(args.backend.resolve()),
-                        '--endpoint', endpoint, '--session', created['session_id'],
+                        '--endpoint', endpoint, '--rex-session', created['session_id'],
                         '--script', str(work / 'events.json'), '--report', str(work / 'report.json')], 'driver')
         # Wait for a native surface before creating the private virtual keyboard.
         wait_for(lambda: '.attach(wl_buffer#' in (work / 'driver.log').read_text(), driver, 'mapped Qt Wayland surface')
         key_serial()
+        # A headless seat initially has no keyboard. The first virtual device can
+        # announce its capability before Qt has bound wl_keyboard and lose its key.
+        wait_for(lambda: re.search(r'wl_keyboard#\d+\.enter\(', (work / 'driver.log').read_text()), driver, 'bound focused Qt keyboard')
+        key_serial()
+        wait_for(lambda: re.search(r'wl_keyboard#\d+\.key\([1-9]\d*,', (work / 'driver.log').read_text()), driver, 'real nonzero keyboard serial')
         wait_for(lambda: (work / 'selected.json').exists(), driver, 'exact selected token')
         selected = json.loads((work / 'selected.json').read_text())
         assert selected['supportsSelection'] and selected['selectionText'] == token

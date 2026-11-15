@@ -1,6 +1,8 @@
 # Qt Quick frontend handoff
 
-The alternate frontend is implemented and locally verified on `feat/qt-quick-milestone` (2026-11-15). Its work source is [the implementation plan](plans/2026-11-14-2211-feat-qt-quick-terminal-plan.md). The original Rune frontend remains the default Cargo feature.
+The interactive POC is verified; full Linux source-build feature parity is still in progress on `feat/qt-quick-milestone`. The active work source is [the parity plan](plans/2026-11-15-0824-feat-qt-feature-parity-plan.md). The [first milestone plan](plans/2026-11-14-2211-feat-qt-quick-terminal-plan.md) is historical. Rune remains the default UI; upstream source, vendor trees and lockfile are unchanged.
+
+Current: authoritative multi-pane terminals, history/search/selection/mouse/clipboard, shared actions/shortcuts, workspace lifecycle and saved-host navigation are implemented and privately verified. General settings/typography are next, followed by the remaining activity/files/server/compatibility/rendering surfaces. Later parity commits are local pending final review and shipping; the owned-fork PR below contains the earlier milestone.
 
 ## POC_READY — verified interactive checkpoint
 
@@ -11,6 +13,7 @@ Exact launch command for a fresh, isolated interactive demo (run in Bash from th
 ```sh
 cd /home/andrew-bierman/Code/rex-rune-qt
 (
+  mkdir -p .build-tools
   demo_dir=$(mktemp -d "$PWD/.build-tools/qt-human-demo-XXXXXX")
   demo_endpoint="unix://$demo_dir/rex.sock"
   rex server run --listen "$demo_endpoint" --restore=false --config /dev/null \
@@ -26,21 +29,22 @@ cd /home/andrew-bierman/Code/rex-rune-qt
     '{"label":"Qt POC demo","initial_windows":[{"window_label":"Shell","layout":{"block":{"flavor":"com.superlogical.terminal.shell"}}}]}' | jq -er .session_id) || exit 1
   QT_QPA_PLATFORM=wayland QT_QPA_PLATFORMTHEME=generic \
     ./qt/build/rex-qt --backend "$PWD/target/release/rex-qt-backend" \
-      --endpoint "$demo_endpoint" --session "$demo_session"
+      --config "$demo_dir/qt/workspace.json" \
+      --endpoint "$demo_endpoint" --rex-session "$demo_session"
 )
 ```
 
-Runtime evidence: `.build-tools/qt-acceptance-zyoo1zif/` contains four successful reports (`main-report.json`, `reconnect-report.json`, `wayland-report.json`, `disconnect-report.json`). Shell output/input, full-screen Neovim editing/saving (`editor.txt` contains exactly `qt-editor-save\n`), server-observed resize, and exact clipboard copy/paste all passed. Clipboard evidence uses Qt's isolated offscreen clipboard; desktop clipboard integration is still unverified. Native Wayland rendering and key input passed separately. Ten adapter tests and the 389-test core suite passed; see details below.
+Initial checkpoint evidence: `.build-tools/qt-acceptance-zyoo1zif/` contains four successful reports (`main-report.json`, `reconnect-report.json`, `wayland-report.json`, `disconnect-report.json`). Shell output/input, full-screen Neovim editing/saving (`editor.txt` contains exactly `qt-editor-save\n`), server-observed resize, and exact clipboard copy/paste all passed. At that checkpoint clipboard evidence used Qt's isolated offscreen clipboard; native clipboard proof was added later, below. Native Wayland rendering and key input passed separately. The initial Rust/adapter checks also passed; current counts are recorded in the later checkpoints.
 
 At the initial POC checkpoint, limits included one displayed pane, visible-frame copy, toolbar clipboard actions, no scrollback navigation or terminal mouse reporting, and incomplete settings/keymap parity. IME preedit, physical keyboard layouts and large-grid performance remain unverified. The installed apps and personal server were not replaced or reconfigured.
 
-Delivery: owned-fork [PR #1](https://github.com/andrew-bierman/rex-rune/pull/1) is open and unmerged. Platform CI is blocked: GitHub lists zero Actions workflows/runs and workflow enable returns 404, despite the workflow file being present. The passing task-list check is not platform CI evidence. Resume the CI handoff once Actions registers the existing workflow; further parity work needs its own scoped plan.
+Delivery: owned-fork [PR #1](https://github.com/andrew-bierman/rex-rune/pull/1) is open and unmerged for the first milestone. Platform CI has not run on that fork: GitHub listed zero Actions workflows/runs despite the workflow file, and the task-list check is not platform CI. Registration is optional remote verification, not a blocker to local parity work. Continue the active parity plan before the next review/shipping pass; never push or open PRs against upstream.
 
-## Current evidence
+## Initial milestone evidence
 
 - Core boundary inspected: `HostConnection`, `TerminalSender` and Ghostty `Frame` have no Rune dependency. Rune workspace state and key translation are frontend-specific.
 - Ten adapter tests pass, including stale targets, disconnection, owned resize, failed/superseded navigation, zoom visibility and real Ghostty wide/combining/color serialization. New navigation/zoom regressions failed before the corresponding fixes.
-- Final locked no-default-features suite passes: 389 core tests plus integrations, with the intentionally live-only cases ignored. An initial sandboxed run could not bind private loopback fixtures; its unrestricted rerun passed.
+- The initial locked in-process library run passed 389 tests including adapter cases, plus integrations, with intentionally live-only cases ignored. Later checkpoints separate upstream core and adapter counts. An initial sandboxed run could not bind private loopback fixtures; its unrestricted rerun passed.
 - Plan document review completed with no retained findings. One additive cross-model review failed to write output due quota; the other completed, and local review covered the same concerns.
 - Qt frontend and its separate event driver build successfully. Rendered offline checks fit 1024×700 and 640×480.
 - Complete private acceptance passes: shell keys, exact Unicode/cursor-gap/soft-wrap copying, direct Unicode press/repeat/release events, IME commits, modified-key press/release bytes at the PTY, Neovim edit/save of exact expected bytes, PTY dimensions, minimum layout, navigation and input pause. A recoverable private-server pause proves failed input is not replayed after reconnection and new input still works. Native Wayland startup/rendering/key input passes without desktop clipboard operations.
@@ -86,7 +90,7 @@ The first runtime failure was in the driver: it sent menu keys before the popup 
 
 ## Limits
 
-The current frontend displays the authoritative visible split/layer scene. Divider dragging and captured-target workspace lifecycle controls are implemented. Copy uses core tracked selection and can include scrollback. Scrollback/search, pointer input and safe links are implemented; host/settings parity, graphics, files and activity remain in progress against the active plan. Removable defaults and Commands now use the effective core keymap with separate Qt persistence. Direct Unicode events and IME commits are tested; native CLIPBOARD/PRIMARY ownership and middle paste pass in an isolated Wayland fixture. Physical keyboard-layout fidelity and IME preedit remain unverified. Large-grid performance is not benchmarked. The committed GitHub CI definition covers Rust, but the owned fork has not run it; the Qt runtime harness currently requires the local Qt/Rex/Neovim environment. See [the protocol boundary](qt-backend-protocol.md) and [frontend notes](../qt/README.md).
+The current frontend displays the authoritative visible split/layer scene. Divider dragging and captured-target workspace lifecycle controls are implemented. Copy uses core tracked selection and can include scrollback. Scrollback/search, pointer input and safe links are implemented; general settings, graphics, files and activity remain in progress against the active plan. Removable defaults and Commands now use the effective core keymap with separate Qt persistence. Direct Unicode events and IME commits are tested; native CLIPBOARD/PRIMARY ownership and middle paste pass in an isolated Wayland fixture. Physical keyboard-layout fidelity and IME preedit remain unverified. Large-grid performance is not benchmarked. The committed GitHub CI definition covers Rust, but the owned fork has not run it; the Qt runtime harness currently requires the local Qt/Rex/Neovim environment. See [the protocol boundary](qt-backend-protocol.md) and [frontend notes](../qt/README.md).
 
 ## Constraints and next step
 
@@ -112,7 +116,7 @@ Fresh-root acceptance passed after those fixes; its log is `.build-tools/fresh-w
 
 The user requested opening the app locally and continuing to feature parity on 2026-11-15. A separate production Qt window is running against a newly created private demo server/session; its task-owned launch metadata and logs are in ignored `.build-tools/active-demo.json`. Existing user sessions and installed applications were not touched. Local build/runtime evidence is the development gate. GitHub Actions registration is optional remote verification, not a prerequisite for local use or further implementation; stop treating it as the blocker to parity work.
 
-The next work source is a dedicated parity plan and capability inventory. Completion must be measured against actual upstream source-build capabilities, not just a screenshot or another single-pane demo. Keep the settled thin-downstream boundary throughout. Full parity is not yet achieved.
+The active work source is the parity plan and its source capability inventory. Completion must be measured against actual upstream source-build capabilities, not just a screenshot or another single-pane demo. Keep the settled thin-downstream boundary throughout. Full parity is not yet achieved.
 
 ### Authoritative multi-pane checkpoint
 
@@ -167,3 +171,17 @@ The action/workspace simplification replay exposed a pre-existing fixture deadli
 The required full-team pass reviewed 2,543 substantive production lines, preserving all proof tests and captured-target contracts. It consolidated terminal action presentation, made form branches explicit, avoided unnecessary availability scans for nonmatching chords, hoisted repeated shortcut filtering and removed redundant narration comments. No connection, protocol, capture or public API semantics changed.
 
 Both Qt executables, six C++ action tests, 24 adapter/terminal tests, six keymap tests, eleven workspace tests and strict scoped Clippy pass. Post-pass workspace runtime passed in `.build-tools/qt-workspace-s_lqejw5/`; parent replay of the complete shortcut fixture passed in `.build-tools/qt-keys-r92f_051/` after the separately committed fixture synchronization fix. Parent logs are `.build-tools/parity-phase-actions-{tests,clippy,production,driver,cpp,keymap}.log`. The next unit remains saved-host navigation.
+
+### Saved hosts and navigation checkpoint
+
+One thin coordinator now supervises a public core HostConnection per saved host, with a single authoritative Qt profile and one navigation correlation authority. Native sidebar, searchable host/session/tab switchers, history, server-order cycling, title resolution, catalog editing and explicit client connection controls are implemented. Duplicate host labels gain scoped endpoint detail only when needed. Endpoint replacement and a newly created worker get fresh IDs, preventing old requests from matching a reused core epoch; same-machine history survives explicit reconnect. Workspace preference saves preserve newer session/host selections. No server lifecycle or connection engine was added.
+
+The two-real-server fixture passed in `.build-tools/qt-hosts-qvnj0sr5/` with 55 native events: equal-epoch wrong-host rejection, held/superseded navigation, exact history, persisted catalog/session/host state, client-only reconnect, invalid-form retention/cancel cleanup, live GUI shell input/output, Mouse Back/Forward and readable 640×480 captures. Tailnet error handling uses a private CLI boundary fixture; it does not probe the owner's tailnet. Thirteen adapter-layer host tests include upstream negative-state projection without spawning workers. Real SSH/tailnet-success transport acceptance remains for the setup stage; no new transport was implemented.
+
+Final locked Rust checks pass with pinned 1.96.1: 379 upstream core tests, 778 Rune UI tests, 25 backend tests, 13 host tests, seven keymap tests, twelve workspace tests and existing integrations. Seven C++ action stages, both Qt builds, release backend, formatting and all-target/all-feature strict Clippy pass. Logs: `.build-tools/parity-hosts-{all-features,final-tests,all-clippy,fmt,cpp,production,release}.log`. Four obsolete adapter-navigation tests moved to the coordinator contract; the duplicate pending-navigation implementation was removed.
+
+Integrated shell/editor/resize/clipboard/reconnect acceptance passes in `.build-tools/qt-acceptance-fa1nh1r4/`. Workspace replay passes in `.build-tools/qt-workspace-ro6h78jb/`, including explicit new-tab creation in an externally created empty session. Native Wayland CLIPBOARD/PRIMARY and exact middle-paste PTY bytes pass with host-scoped IPC in `.build-tools/qt-wayland-cuhbqhed/`. The headless fixture now observes a bound keyboard and a real nonzero serial before claiming selection; a local clipboard cache alone is never counted as native proof. The empty-session fixture waits for actual inventory discovery before selecting it.
+
+Private IPC is now version three and requires host identity on targeted requests/events. Window visibility is application housekeeping and does not depend on a server epoch. Qt consumes `--session` before custom parsing; the GUI now uses `--rex-session` and rejects the old spelling before Qt/backend startup. A minimal Qt probe demonstrated the swallowed argument, the private workspace replay proves the correct target, and `.build-tools/parity-hosts-cli.log` records pre-attachment rejection. The Rust child retains `--session`. The demo command above uses a fresh private profile to avoid attaching any previously saved host.
+
+Next: implement general native settings, typography and interface controls from the active plan, then continue the remaining parity units. Upstream `src/`, `vendor/` and `Cargo.lock` remain byte-identical to the tracking baseline. The existing earlier demo window remains on its original loaded binary/session; no unrelated session or installed app was changed.

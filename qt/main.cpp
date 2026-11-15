@@ -13,8 +13,17 @@
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QTimer>
+#include <cstdio>
 
 int main(int argc, char **argv) {
+    // Qt consumes --session before our parser; reject it before any attachment.
+    for (int i = 1; i < argc; ++i) {
+        const QByteArray argument(argv[i]);
+        if (argument == "--session" || argument.startsWith("--session=")) {
+            fprintf(stderr, "Use --rex-session to select a Rex session (--session is reserved by Qt).\n");
+            return 2;
+        }
+    }
     QGuiApplication app(argc, argv);
     QCoreApplication::setApplicationName("rex-qt");
     QCoreApplication::setApplicationVersion("0.1.0");
@@ -25,7 +34,7 @@ int main(int argc, char **argv) {
     parser.addVersionOption();
     parser.addOption({"config", "Separate Qt workspace settings path", "path"});
     parser.addOption({"endpoint", "Existing Rex server endpoint", "endpoint"});
-    parser.addOption({"session", "Initially selected session ID or label", "session"});
+    parser.addOption({"rex-session", "Initially selected Rex session ID or label", "session"});
     parser.addOption({"backend", "Path to rex-qt-backend", "path", QCoreApplication::applicationDirPath() + "/rex-qt-backend"});
 #ifdef REX_QT_TEST_DRIVER
     parser.addOption({"script", "Qt event acceptance script", "path"});
@@ -45,7 +54,7 @@ int main(int argc, char **argv) {
     engine.rootContext()->setContextProperty("workspaceActions", &workspaceActions);
     engine.load(QUrl("qrc:/Main.qml"));
     if (engine.rootObjects().isEmpty()) return 1;
-    backend.start(parser.value("backend"), parser.value("endpoint"), parser.value("session"), parser.value("config"));
+    backend.start(parser.value("backend"), parser.value("endpoint"), parser.value("rex-session"), parser.value("config"));
 #ifdef REX_QT_TEST_DRIVER
     const auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
     TestDriver driver(window, &backend, parser.value("script"), parser.value("report"));

@@ -43,8 +43,9 @@ void Frontend::start(const QString &program, const QString &endpoint, const QStr
 
 bool Frontend::send(QJsonObject message) {
     if (m_process.state() != QProcess::Running) return false;
-    message["version"] = 2;
+    message["version"] = 3;
     if (!message.contains("epoch")) message["epoch"] = m_state["epoch"];
+    if (!message.contains("host")) message["host"] = m_state["host"];
     const auto data = QJsonDocument(message).toJson(QJsonDocument::Compact) + '\n';
     return m_process.write(data) == data.size();
 }
@@ -56,6 +57,7 @@ QJsonObject Frontend::paneSnapshot(const QString &id) const {
             auto result = pane;
             result["connected"] = m_state["connected"];
             result["epoch"] = m_state["epoch"];
+            result["host"] = m_state["host"];
             if (!m_state["connected"].toBool()) {
                 auto terminal = result["terminal"].toObject(); terminal["connected"] = false;
                 result["terminal"] = terminal;
@@ -71,6 +73,7 @@ bool Frontend::sendTarget(const QString &op, QJsonObject fields) {
 }
 
 bool Frontend::sendPane(const QString &id, const QString &op, QJsonObject fields) {
+    if (m_state["hosts"].toObject()["pending"].toBool()) return false;
     const auto pane = paneSnapshot(id);
     const bool local = op == "scroll" || op == "search" || op == "search_step" || op == "prompt_step" || op == "selection" || op == "reconnect";
     if (!m_hello || (op != "reconnect" && (local ? !pane["frame"].isObject() : !pane["terminal"].toObject()["connected"].toBool()))) return false;
@@ -89,6 +92,13 @@ void Frontend::selectPane(const QString &id) {
     send({{"op", "select_pane"}, {"session", m_state["session"]}, {"window", m_state["window"]}, {"pane", id}});
 }
 void Frontend::refresh() { send({{"op", "refresh"}}); }
+void Frontend::hostAction(const QString &action, const QVariantMap &args, const QVariantMap &captured) {
+    auto message = QJsonObject::fromVariantMap(captured);
+    message["op"] = "host";
+    message["action"] = action;
+    message["args"] = QJsonObject::fromVariantMap(args);
+    send(message);
+}
 void Frontend::workspaceAction(const QString &action, const QVariantMap &args, const QVariantMap &captured) {
     auto message = QJsonObject::fromVariantMap(captured);
     message["op"] = "workspace";
@@ -132,7 +142,7 @@ void Frontend::read() {
             return;
         }
         const auto object = doc.object();
-        if (object["version"].toInt() != 2) {
+        if (object["version"].toInt() != 3) {
             fail("Terminal backend version mismatch; input paused.");
             m_process.kill();
             return;
@@ -140,21 +150,27 @@ void Frontend::read() {
         const auto type = object["type"].toString();
         if (type == "hello") { m_hello = true; setVisible(m_visible); }
         else if (type == "state" && m_hello) {
-            const bool newEpoch = m_state["epoch"] != object["epoch"];
+            const bool newEpoch = m_state["epoch"] != object["epoch"] || m_state["host"] != object["host"];
+            const bool newHosts = m_state["hosts"] != object["hosts"];
             m_state = object;
             if (newEpoch) setVisible(m_visible);
             QStringList ids;
             for (const auto &pane : object["panes"].toArray()) ids << pane.toObject()["id"].toString();
             if (ids != m_paneIds) { m_paneIds = ids; emit paneIdsChanged(); }
+            if (newHosts) emit hostsChanged();
             emit stateChanged();
         }
-        else if (type == "clipboard" && m_visible && object["epoch"] == m_state["epoch"]
+        else if (type == "host_saved") emit hostSaved();
+        else if (type == "clipboard" && m_visible && object["host"] == m_state["host"] && object["epoch"] == m_state["epoch"]
                  && object["session"] == m_state["session"] && object["pane"] == m_state["pane"]
                  && m_state["connected"].toBool()) QGuiApplication::clipboard()->setText(object["text"].toString());
-        else if (type == "action" && m_visible && object["epoch"] == m_state["epoch"] &&
+        else if (type == "action" && m_visible && object["host"] == m_state["host"] && object["epoch"] == m_state["epoch"] &&
                  object["generation"] == m_state["keymap"].toObject()["generation"] &&
                  object["session"] == m_state["session"] && object["pane"] == m_state["pane"])
             emit actionRequested(object["action"].toString(), object["args"].toObject().toVariantMap());
+        else if (type == "error" && object["scope"] == "host_form") {
+            m_hostFormProblem = object["message"].toString(); emit hostFormProblemChanged();
+        }
         else if (type == "error") { m_problem = object["message"].toString(); emit problemChanged(); }
     }
 }
@@ -162,3 +178,4 @@ void Frontend::read() {
 void Frontend::setVisible(bool visible) { m_visible = visible; if (m_hello && m_state["epoch"].isDouble()) send({{"op", "visibility"}, {"visible", visible}}); }
 
 void Frontend::reportProblem(const QString &message) { m_problem = message; emit problemChanged(); }
+void Frontend::dismissHostFormProblem() { m_hostFormProblem.clear(); emit hostFormProblemChanged(); }

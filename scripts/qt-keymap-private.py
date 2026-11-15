@@ -124,7 +124,7 @@ rex.bind("ctrl+alt+q","qt_queue")
             (work / 'events.json').write_text(json.dumps(steps))
             with (work / 'client.log').open('w') as client_log:
                 result = subprocess.run([str(args.driver.resolve()), '--backend', str(args.backend.resolve()), '--endpoint', endpoint,
-                                         '--session', sid, '--script', str(work / 'events.json'), '--report', str(work / 'report.json')],
+                                         '--rex-session', sid, '--script', str(work / 'events.json'), '--report', str(work / 'report.json')],
                                         env=env, stdout=client_log, stderr=client_log, timeout=90)
             assert result.returncode == 0, f'Qt keymap fixture failed: {work}'
             reopened_helper = work / 'reopened.py'
@@ -140,7 +140,7 @@ rex.bind("ctrl+alt+q","qt_queue")
             (work / 'reopen-events.json').write_text(json.dumps(reopened_steps))
             with (work / 'reopened.log').open('w') as client_log:
                 reopened = subprocess.run([str(args.driver.resolve()), '--backend', str(args.backend.resolve()), '--endpoint', endpoint,
-                                          '--session', sid, '--script', str(work / 'reopen-events.json'), '--report', str(work / 'reopen-report.json')],
+                                          '--rex-session', sid, '--script', str(work / 'reopen-events.json'), '--report', str(work / 'reopen-report.json')],
                                          env=env, stdout=client_log, stderr=client_log, timeout=40)
             assert reopened.returncode == 0, f'persisted shortcut restart failed: {work}'
             assert (work / 'reopen.bin').read_bytes().removeprefix(b'\x1b[13;1:3u') == b'\x1b[99;6u\x1b[99;6:3u', 'saved bindings changed after restart'

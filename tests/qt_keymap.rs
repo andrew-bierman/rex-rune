@@ -153,3 +153,22 @@ fn declared_server_actions_can_be_recorded_without_reimplementing_resolution() {
             .any(|change| change.action == "fixture_action")
     );
 }
+
+#[test]
+fn navigation_arguments_match_the_source_client_contract() {
+    assert!(qt_keymap::validate("client.tab.goto", &json!({"index":-1})).is_ok());
+    assert!(qt_keymap::validate("client.tab.goto", &json!({"index":0})).is_err());
+    assert!(
+        qt_keymap::validate("session.select", &json!({"session_id":"s","window_id":"w"})).is_ok()
+    );
+    assert!(
+        qt_keymap::validate(
+            "session.select",
+            &json!({"session_id":"s","window_id":null})
+        )
+        .is_err()
+    );
+    assert!(
+        qt_keymap::validate("session.select", &json!({"session_id":"s","host":"other"})).is_err()
+    );
+}

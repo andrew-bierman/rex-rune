@@ -13,6 +13,8 @@ enum Arguments {
     Mode,
     Lines,
     Find,
+    TabIndex,
+    Session,
 }
 #[derive(Clone, Copy)]
 enum Remote {
@@ -30,6 +32,159 @@ struct Spec {
 }
 
 const ACTIONS: &[Spec] = &[
+    Spec {
+        id: "client.sidebar.toggle",
+        title: "Toggle sidebar",
+        category: "Navigate",
+        offline: true,
+        repeats: false,
+        arguments: Arguments::None,
+        remote: Remote::Never,
+    },
+    Spec {
+        id: "client.host.switch",
+        title: "Switch host",
+        category: "Navigate",
+        offline: true,
+        repeats: false,
+        arguments: Arguments::None,
+        remote: Remote::Never,
+    },
+    Spec {
+        id: "client.host.add",
+        title: "Add host…",
+        category: "Navigate",
+        offline: true,
+        repeats: false,
+        arguments: Arguments::None,
+        remote: Remote::Never,
+    },
+    Spec {
+        id: "client.host.edit",
+        title: "Edit host…",
+        category: "Navigate",
+        offline: true,
+        repeats: false,
+        arguments: Arguments::None,
+        remote: Remote::Never,
+    },
+    Spec {
+        id: "client.host.remove",
+        title: "Remove saved host…",
+        category: "Navigate",
+        offline: true,
+        repeats: false,
+        arguments: Arguments::None,
+        remote: Remote::Never,
+    },
+    Spec {
+        id: "client.tab.switch",
+        title: "Switch tab",
+        category: "Navigate",
+        offline: true,
+        repeats: false,
+        arguments: Arguments::None,
+        remote: Remote::Never,
+    },
+    Spec {
+        id: "client.tab.next_global",
+        title: "Next tab across sessions",
+        category: "Navigate",
+        offline: true,
+        repeats: true,
+        arguments: Arguments::None,
+        remote: Remote::Never,
+    },
+    Spec {
+        id: "client.tab.previous_global",
+        title: "Previous tab across sessions",
+        category: "Navigate",
+        offline: true,
+        repeats: true,
+        arguments: Arguments::None,
+        remote: Remote::Never,
+    },
+    Spec {
+        id: "client.tab.next",
+        title: "Next tab",
+        category: "Navigate",
+        offline: false,
+        repeats: true,
+        arguments: Arguments::None,
+        remote: Remote::Never,
+    },
+    Spec {
+        id: "client.tab.previous",
+        title: "Previous tab",
+        category: "Navigate",
+        offline: false,
+        repeats: true,
+        arguments: Arguments::None,
+        remote: Remote::Never,
+    },
+    Spec {
+        id: "client.tab.goto",
+        title: "Go to tab",
+        category: "Navigate",
+        offline: false,
+        repeats: false,
+        arguments: Arguments::TabIndex,
+        remote: Remote::Never,
+    },
+    Spec {
+        id: "client.history.back",
+        title: "Back in history",
+        category: "Navigate",
+        offline: true,
+        repeats: false,
+        arguments: Arguments::None,
+        remote: Remote::Never,
+    },
+    Spec {
+        id: "client.history.forward",
+        title: "Forward in history",
+        category: "Navigate",
+        offline: true,
+        repeats: false,
+        arguments: Arguments::None,
+        remote: Remote::Never,
+    },
+    Spec {
+        id: "session.next",
+        title: "Next session",
+        category: "Navigate",
+        offline: true,
+        repeats: true,
+        arguments: Arguments::None,
+        remote: Remote::Never,
+    },
+    Spec {
+        id: "session.previous",
+        title: "Previous session",
+        category: "Navigate",
+        offline: true,
+        repeats: true,
+        arguments: Arguments::None,
+        remote: Remote::Never,
+    },
+    Spec {
+        id: "session.select",
+        title: "Show session",
+        category: "Navigate",
+        offline: false,
+        repeats: false,
+        arguments: Arguments::Session,
+        remote: Remote::Never,
+    },
+    Spec {
+        id: "pane.actions",
+        title: "Pane actions",
+        category: "Navigate",
+        offline: true,
+        repeats: false,
+        arguments: Arguments::None,
+        remote: Remote::Never,
+    },
     Spec {
         id: "pane.copy_id",
         title: "Copy pane ID",
@@ -214,6 +369,12 @@ const ACTIONS: &[Spec] = &[
 
 fn schema(arguments: Arguments) -> Option<Value> {
     match arguments {
+        Arguments::TabIndex => Some(
+            json!({"type":"object","properties":{"index":{"type":"integer","minimum":-1}},"required":["index"],"additionalProperties":false}),
+        ),
+        Arguments::Session => Some(
+            json!({"type":"object","properties":{"session_id":{"type":"string","minLength":1},"window_id":{"type":"string","minLength":1}},"required":["session_id"],"additionalProperties":false}),
+        ),
         Arguments::None => None,
         Arguments::Find => Some(
             json!({"type":"object","properties":{"when":{"enum":["searching"]}},"additionalProperties":false}),
@@ -236,6 +397,21 @@ pub fn validate(id: &str, args: &Value) -> Result<()> {
         .find(|spec| spec.id == id)
         .ok_or_else(|| anyhow::anyhow!("unknown client action: {id}"))?;
     match spec.arguments {
+        Arguments::TabIndex => ensure!(
+            args.as_object().is_some_and(|o| o.len() == 1)
+                && args["index"].as_i64().is_some_and(|n| n == -1 || n > 0),
+            "tab index must be positive or -1 for the last tab"
+        ),
+        Arguments::Session => ensure!(
+            args.as_object()
+                .is_some_and(|o| o.keys().all(|k| k == "session_id" || k == "window_id"))
+                && args["session_id"].as_str().is_some_and(|s| !s.is_empty())
+                && args
+                    .as_object()
+                    .and_then(|o| o.get("window_id"))
+                    .is_none_or(|id| id.as_str().is_some_and(|s| !s.is_empty())),
+            "invalid session target"
+        ),
         Arguments::None => ensure!(
             args.is_null() || args.as_object().is_some_and(|o| o.is_empty()),
             "action takes no arguments"

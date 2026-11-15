@@ -432,3 +432,25 @@ fn default_close_shortcut_asks_for_a_pane_in_splits_and_a_tab_with_one_pane() {
         "session.close_window"
     );
 }
+
+#[test]
+fn leaving_a_host_discards_its_question_without_reusing_the_confirmation_id() {
+    let model = fixture();
+    let mut workspace = Workspace::default();
+    execute(&mut workspace, &model, &request("pane.close", json!({})));
+    let first = workspace.state(&model)["id"].clone();
+    workspace.clear();
+    assert!(workspace.state(&model).is_null());
+    execute(&mut workspace, &model, &request("pane.close", json!({})));
+    assert_ne!(workspace.state(&model)["id"], first);
+    assert!(
+        workspace
+            .handle(
+                &model,
+                &mut Settings::default(),
+                "unix:///private",
+                &request("confirm.accept", json!({"id":first}))
+            )
+            .is_err()
+    );
+}

@@ -142,7 +142,7 @@ void TerminalItem::updateState() {
     const auto state = m_frontend->paneSnapshot(m_paneId);
     if (state == m_state && !m_foregroundPending) return;
     m_state = state;
-    const auto target = QString::number(state["epoch"].toInteger()) + "/" + state["session"].toString() + '/' + state["window"].toString() + '/' + state["pane"].toString() + "/" + QString::number(state["terminal"].toObject()["generation"].toInteger());
+    const auto target = state["host"].toString() + "/" + QString::number(state["epoch"].toInteger()) + "/" + state["session"].toString() + '/' + state["window"].toString() + '/' + state["pane"].toString() + "/" + QString::number(state["terminal"].toObject()["generation"].toInteger());
     if (target != m_target) {
         m_target = target;
         m_frame = {};

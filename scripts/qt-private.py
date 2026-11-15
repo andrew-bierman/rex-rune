@@ -182,7 +182,7 @@ def main():
             path = work / script
             log = (work / (script + '.log')).open('w')
             return subprocess.Popen([str(args.driver.resolve()), '--backend', str((backend or args.backend).resolve()),
-                                     '--endpoint', endpoint, '--session', sid, '--script', str(path),
+                                     '--endpoint', endpoint, '--rex-session', sid, '--script', str(path),
                                      '--report', str(work / report)], env=client_env or env, stdout=log, stderr=log)
 
         (work / 'main.json').write_text(json.dumps(steps))

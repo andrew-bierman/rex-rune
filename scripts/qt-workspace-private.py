@@ -88,7 +88,7 @@ def main():
                 raise AssertionError(description)
             def send(op, **fields):
                 payload = {key: state.get(key) for key in ('host', 'epoch', 'session', 'window', 'pane')}
-                payload.update(version=2, op=op)
+                payload.update(version=state.get('version', 3), op=op)
                 payload.update(fields)
                 backend.stdin.write(json.dumps(payload) + '\n')
                 backend.stdin.flush()
@@ -187,6 +187,7 @@ def main():
             answer(captured, True)
             wait(lambda s: all(row['id'] != sid for row in s['sessions']), 'session close did not remove owned session')
             empty = api('session.create', label='Qt empty workspace')['session_id']
+            wait(lambda s: any(row['id'] == empty for row in s['sessions']), 'new empty session was not discovered')
             send('select_session', session=empty)
             wait(lambda s: s['session'] == empty and not s['windows'], 'empty session did not attach')
             action('client.tab.new')
@@ -202,13 +203,17 @@ def main():
 
             if args.driver:
                 ui_sid = api('session.create', label='Qt workspace controls', initial_windows=[{'layout': {'block': {'flavor': 'com.superlogical.terminal.shell'}}}])['session_id']
+                legacy = subprocess.run([str(args.driver.resolve()), '--backend', str(args.backend.resolve()),
+                                         '--endpoint', endpoint, '--session', ui_sid],
+                                        env=env, text=True, capture_output=True, timeout=5)
+                assert legacy.returncode == 2 and '--rex-session' in legacy.stderr, 'reserved Qt session flag did not fail before attachment'
                 def command(title):
                     return [{'op': 'key', 'key': 'P', 'mods': 'ctrl+shift'},
                             {'op': 'waitControl', 'control': 'commandsPopup', 'property': 'opened', 'value': True},
                             {'op': 'field', 'control': 'commandSearch', 'text': title}, {'op': 'controlKey', 'key': 'Return'}]
                 steps = [{'op': 'waitState', 'field': 'terminal.connected', 'value': True}]
                 steps += command('New tab')
-                steps += [{'op': 'waitState', 'field': 'windows.1.label', 'value': 'Shell'}]
+                steps += [{'op': 'waitState', 'field': 'windows.1.user_label', 'value': 'Shell'}]
                 steps += command('Rename tab')
                 steps += [{'op': 'waitControl', 'control': 'workspaceForm', 'property': 'opened', 'value': True},
                           {'op': 'field', 'control': 'workspaceName', 'text': 'Qt renamed'}, {'op': 'click', 'control': 'workspaceFormApply'},
@@ -243,7 +248,7 @@ def main():
                 (work / 'events.json').write_text(json.dumps(steps))
                 with (work / 'ui.log').open('w') as ui_log:
                     result = subprocess.run([str(args.driver.resolve()), '--backend', str(args.backend.resolve()), '--endpoint', endpoint,
-                                             '--session', ui_sid, '--script', str(work / 'events.json'), '--report', str(work / 'ui-report.json')],
+                                             '--rex-session', ui_sid, '--script', str(work / 'events.json'), '--report', str(work / 'ui-report.json')],
                                             env=env, stdout=ui_log, stderr=ui_log, timeout=75)
                 assert result.returncode == 0, f'Qt controls failed; inspect {work}'
                 assert len(json.loads((work / 'cancelled.json').read_text())['panes']) == 2, 'default Enter closed a pane'

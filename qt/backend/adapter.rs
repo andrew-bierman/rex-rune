@@ -9,12 +9,9 @@ use rex_rune::{
 use rexrs::api::session;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::{
-    path::PathBuf,
-    time::{Duration, Instant},
-};
+use std::path::PathBuf;
 
-pub const VERSION: u64 = 2;
+pub const VERSION: u64 = 3;
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 struct Target {
@@ -32,10 +29,6 @@ pub struct Adapter {
     pub endpoint: String,
     workspace: crate::workspace::Workspace,
     pane: Option<String>,
-    pending_session: Option<String>,
-    pending_window: Option<String>,
-    pending_navigation: Option<u64>,
-    next_navigation: u64,
 }
 
 fn visible_terminals(window: &session::Window) -> impl Iterator<Item = &session::LayerBlock> {
@@ -53,12 +46,50 @@ fn visible_terminals(window: &session::Window) -> impl Iterator<Item = &session:
         })
 }
 
+fn pane_title(model: &HostModel, block: &session::LayerBlock, generated: bool) -> String {
+    let label = block.label.as_deref().filter(|label| !label.is_empty());
+    let default = block.creator_name.as_deref() == Some("com.superlogical.terminal")
+        && label.is_none_or(|label| {
+            block
+                .flavor
+                .as_deref()
+                .and_then(|flavor| flavor.rsplit('.').next())
+                == Some(label)
+        });
+    let title = default
+        .then(|| {
+            block
+                .block_id
+                .as_deref()
+                .and_then(|id| model.shown_title(id, generated))
+        })
+        .flatten();
+    title.as_deref().or(label).unwrap_or("Terminal").into()
+}
+
 impl Adapter {
-    pub fn configure(&mut self, path: PathBuf) -> Result<()> {
-        self.settings = rex_rune::settings::Settings::load(&path)?;
-        self.settings_path = Some(path);
-        self.keymap_generation = 1;
-        Ok(())
+    pub fn clear_captures(&mut self) {
+        self.workspace.clear();
+        self.pane = None;
+    }
+    pub fn workspace_commands(
+        &mut self,
+        model: &HostModel,
+        request: &Value,
+    ) -> Result<Vec<HostCommand>> {
+        let mut settings = self.settings.clone();
+        let outcome = self
+            .workspace
+            .handle(model, &mut settings, &self.endpoint, request)?;
+        if outcome.settings_changed {
+            settings.save(
+                self.settings_path
+                    .as_ref()
+                    .context("settings path unavailable")?,
+            )?;
+            self.settings = settings;
+        }
+        Ok(outcome.commands)
     }
 
     pub fn take_actions(&self, model: &mut HostModel) -> Vec<Value> {
@@ -92,33 +123,10 @@ impl Adapter {
         Ok(())
     }
 
-    fn reload_shortcuts(&mut self, host: &HostConnection) -> Result<()> {
-        if let Some(path) = &self.settings_path
-            && self.settings.shortcut_file.reload(path)
-        {
-            self.keymap_generation = self.keymap_generation.wrapping_add(1);
-            self.declare_keymap(host)?;
-        }
-        Ok(())
-    }
     fn target(&self, model: &HostModel) -> Option<Target> {
         let session = model.selected.as_ref()?;
-        if self
-            .pending_session
-            .as_ref()
-            .is_some_and(|id| id != session)
-        {
-            return None;
-        }
         let window = model.window()?;
         let window_id = window.window_id.as_ref()?;
-        if self
-            .pending_window
-            .as_ref()
-            .is_some_and(|id| id != window_id)
-        {
-            return None;
-        }
         let pane = self
             .pane
             .as_deref()
@@ -201,7 +209,7 @@ impl Adapter {
                 .with_context(|| format!("missing {name}"))
         };
         let op = request["op"].as_str().context("missing op")?;
-        if !matches!(op, "shutdown" | "refresh") {
+        if op != "shutdown" {
             ensure!(
                 request["epoch"].as_u64() == Some(model.connection_epoch),
                 "connection changed; request discarded"
@@ -210,58 +218,9 @@ impl Adapter {
         match op {
             "shutdown" => return Ok(false),
             "workspace" => {
-                let mut settings = self.settings.clone();
-                let outcome =
-                    self.workspace
-                        .handle(&model, &mut settings, &self.endpoint, request)?;
-                if outcome.settings_changed {
-                    settings.save(
-                        self.settings_path
-                            .as_ref()
-                            .context("settings path unavailable")?,
-                    )?;
-                    self.settings = settings;
-                }
-                for command in outcome.commands {
+                for command in self.workspace_commands(&model, request)? {
                     host.commands.send(command)?;
                 }
-            }
-            "refresh" => {
-                self.reload_shortcuts(host)?;
-                host.commands.send(HostCommand::RefreshSessions)?;
-            }
-            "keymap_reload" => self.reload_shortcuts(host)?,
-            "shortcut" => {
-                let action = field("action")?;
-                let keys: Vec<String> = serde_json::from_value(request["keys"].clone())
-                    .context("invalid shortcut keys")?;
-                let args = (!request["args"].is_null()).then(|| request["args"].clone());
-                let mode = request["mode"]
-                    .as_str()
-                    .filter(|mode| !mode.is_empty())
-                    .map(str::to_owned);
-                let operation = field("operation")?;
-                let mut settings = self.settings.clone();
-                crate::keymap::record(
-                    &mut settings,
-                    &action,
-                    keys,
-                    args,
-                    mode,
-                    &operation,
-                    model
-                        .keymap
-                        .as_ref()
-                        .map_or(&[], |map| map.reply.actions.as_slice()),
-                )?;
-                settings.save(
-                    self.settings_path
-                        .as_ref()
-                        .context("settings path unavailable")?,
-                )?;
-                self.settings = settings;
-                self.keymap_generation = self.keymap_generation.wrapping_add(1);
-                self.declare_keymap(host)?;
             }
             "action" => {
                 ensure!(
@@ -341,42 +300,6 @@ impl Adapter {
                     host.commands.send(HostCommand::Reconnect)?;
                 }
             }
-            "visibility" => {
-                let visible = request["visible"].as_bool().context("invalid visibility")?;
-                if visible {
-                    self.reload_shortcuts(host)?;
-                }
-                host.commands.send(HostCommand::Visibility(visible))?;
-            }
-            "select_session" => {
-                let session = field("session")?;
-                ensure!(
-                    model.sessions.iter().any(|s| s.session_id == session),
-                    "session no longer exists"
-                );
-                self.pending_session = Some(session.clone());
-                self.pending_window = None;
-                self.pane = None;
-                self.navigate(host, session, None)?;
-            }
-            "select_window" => {
-                let session = field("session")?;
-                let window = field("window")?;
-                ensure!(
-                    model.selected.as_ref() == Some(&session),
-                    "session is no longer selected"
-                );
-                ensure!(
-                    model.view().is_some_and(|v| v
-                        .windows
-                        .iter()
-                        .any(|w| w.window_id.as_ref() == Some(&window))),
-                    "tab no longer exists"
-                );
-                self.pending_window = Some(window.clone());
-                self.pane = None;
-                self.navigate(host, session, Some(window))?;
-            }
             "select_pane" => {
                 let target: Target = serde_json::from_value(request.clone())?;
                 let previous = self.pane.replace(target.pane.clone());
@@ -443,44 +366,10 @@ impl Adapter {
         Ok(true)
     }
 
-    fn navigate(
-        &mut self,
-        host: &HostConnection,
-        session: String,
-        window: Option<String>,
-    ) -> Result<()> {
-        self.next_navigation = self.next_navigation.wrapping_add(1);
-        self.pending_navigation = Some(self.next_navigation);
-        host.commands.send(HostCommand::Navigate {
-            id: self.next_navigation,
-            deadline: Instant::now() + Duration::from_secs(5),
-            session,
-            window,
-        })?;
-        Ok(())
-    }
-
     /// Snapshot a bounded copy of host state, without serializing under its lock.
     pub fn state(&mut self, model: &HostModel) -> Value {
         if self.pane.as_deref() == model.focused() {
             self.pane = None;
-        }
-        if let Some((id, _)) = model.navigation_result
-            && self.pending_navigation == Some(id)
-        {
-            self.pending_navigation = None;
-            self.pending_session = None;
-            self.pending_window = None;
-        }
-        if self.pending_session.as_ref() == model.selected.as_ref() {
-            self.pending_session = None;
-        }
-        if self
-            .pending_window
-            .as_ref()
-            .is_some_and(|id| model.window().and_then(|w| w.window_id.as_ref()) == Some(id))
-        {
-            self.pending_window = None;
         }
         if self.pane.is_some() && self.target(model).is_none() {
             self.pane = None;
@@ -491,7 +380,7 @@ impl Adapter {
         });
         let windows = model.view().map_or_else(Vec::new, |v| {
             v.windows.iter().filter_map(|w| {
-            Some(json!({"id":w.window_id.as_ref()?,"label":w.label.as_deref().unwrap_or("Shell"),"user_label":w.label.as_deref().unwrap_or("")}))
+            Some(json!({"id":w.window_id.as_ref()?,"label":crate::hosts::tab_title(model,w,self.settings.generated_titles),"user_label":w.label.as_deref().unwrap_or("")}))
         }).collect()
         });
         let (panes, dividers) = model.window().map_or_else(|| (Vec::new(), Vec::new()), |window| {
@@ -499,7 +388,7 @@ impl Adapter {
             let panes = placements.into_iter().filter_map(|placement| {
                 let block = visible_terminals(window).find(|b| b.block_id.as_ref() == Some(&placement.block))?;
                 let (terminal, frame) = terminal_value(model, &placement.block);
-                Some(json!({"id":placement.block,"label":block.label.as_deref().unwrap_or("Terminal"),
+                Some(json!({"id":placement.block,"label":pane_title(model,block,self.settings.generated_titles),"user_label":block.label,
                     "session":model.selected,"window":window.window_id,"pane":placement.block,
                     "rect":placement.rect,"terminal":terminal,"frame":frame}))
             }).collect();
@@ -610,15 +499,14 @@ mod tests {
     }
 
     #[test]
-    fn pending_navigation_cannot_target_previous_session_or_window() {
-        let mut adapter = Adapter {
-            pending_session: Some("session-b".into()),
-            ..Default::default()
-        };
-        assert!(adapter.target(&fixture()).is_none());
-        adapter.pending_session = None;
-        adapter.pending_window = Some("window-b".into());
-        assert!(adapter.target(&fixture()).is_none());
+    fn chosen_pane_labels_survive_generated_title_projection() {
+        let mut model = split_fixture();
+        model.views.get_mut("session-a").unwrap().windows[0].layers[0].blocks[0].label =
+            Some("Named pane".into());
+        assert_eq!(
+            Adapter::default().state(&model)["panes"][0]["label"],
+            "Named pane"
+        );
     }
 
     #[test]
@@ -649,65 +537,6 @@ mod tests {
             },
             receive,
         )
-    }
-
-    #[test]
-    fn failed_navigation_restores_the_current_pane_without_retargeting_a_new_request() {
-        let (host, requests) = host_fixture(fixture());
-        let mut adapter = Adapter::default();
-        let mut ids = Vec::new();
-        for window in ["window-b", "window-c"] {
-            adapter.handle(&host, &json!({"version":2,"epoch":0,"op":"select_window","session":"session-a","window":window})).unwrap();
-            match requests.recv().unwrap() {
-                HostCommand::Navigate { id, .. } => ids.push(id),
-                _ => panic!("navigation needs a correlated outcome"),
-            }
-        }
-        assert_ne!(ids[0], ids[1]);
-        let mut model = host.model.lock().unwrap();
-        model.navigation_result = Some((ids[0], false));
-        assert!(adapter.state(&model)["pane"].is_null());
-        model.navigation_result = Some((ids[1], false));
-        assert_eq!(adapter.state(&model)["pane"], "pane-a");
-    }
-
-    #[test]
-    fn failed_session_navigation_restores_the_current_session_pane() {
-        let mut model = fixture();
-        model.sessions.push(session::Session {
-            session_id: "session-b".into(),
-            label: "Other".into(),
-        });
-        let (host, requests) = host_fixture(model);
-        let mut adapter = Adapter::default();
-        adapter
-            .handle(
-                &host,
-                &json!({"version":2,"epoch":0,"op":"select_session","session":"session-b"}),
-            )
-            .unwrap();
-        let id = match requests.recv().unwrap() {
-            HostCommand::Navigate { id, .. } => id,
-            _ => panic!("session navigation needs a correlated outcome"),
-        };
-        let mut model = host.model.lock().unwrap();
-        assert!(adapter.state(&model)["pane"].is_null());
-        model.navigation_result = Some((id, false));
-        assert_eq!(adapter.state(&model)["pane"], "pane-a");
-    }
-
-    #[test]
-    fn completed_navigation_follows_server_focus_even_if_it_has_moved_again() {
-        let (host, requests) = host_fixture(fixture());
-        let mut adapter = Adapter::default();
-        adapter.handle(&host, &json!({"version":2,"epoch":0,"op":"select_window","session":"session-a","window":"window-b"})).unwrap();
-        let id = match requests.recv().unwrap() {
-            HostCommand::Navigate { id, .. } => id,
-            _ => panic!("navigation needs a correlated outcome"),
-        };
-        let mut model = host.model.lock().unwrap();
-        model.navigation_result = Some((id, true));
-        assert_eq!(adapter.state(&model)["pane"], "pane-a");
     }
 
     #[test]
@@ -1006,7 +835,7 @@ mod tests {
             adapter
                 .handle(
                     &host,
-                    &json!({"version":2,"epoch":0,"op":"action","generation":17,"action":"fixture"})
+                    &json!({"version":3,"epoch":0,"op":"action","generation":17,"action":"fixture"})
                 )
                 .is_err()
         );
@@ -1030,7 +859,7 @@ mod tests {
         ));
         let (host, requests) = host_fixture(model);
         let mut adapter = Adapter::default();
-        let request = json!({"version":2,"epoch":0,"op":"action","generation":0,"revision":0,
+        let request = json!({"version":3,"epoch":0,"op":"action","generation":0,"revision":0,
             "action":"fixture","session":"session-a","window":"old-window","pane":"pane-a"});
         assert!(adapter.handle(&host, &request).is_err());
         assert!(requests.is_empty());

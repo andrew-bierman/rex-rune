@@ -167,7 +167,7 @@ void TestDriver::step() {
                 complete = object && QJsonValue::fromVariant(object->property(s["property"].toString().toUtf8().constData())) == s["value"];
             }
             else if (op == "waitOpenedUrl") complete = m_openedUrls.contains(s["text"].toString());
-            else if (op == "waitProblem") complete = m_backend->problem().contains(s["text"].toString());
+            else if (op == "waitProblem") complete = (m_backend->problem() + '\n' + m_backend->hostFormProblem()).contains(s["text"].toString());
             else {
                 QJsonValue value(m_backend->snapshot());
                 for (const auto &part : s["field"].toString().split('.')) {
@@ -235,14 +235,17 @@ void TestDriver::step() {
         } else if (op == "pointer") {
             const auto pos = m_terminal->mapToScene(QPointF(m_terminal->cellWidth() * (s["x"].toInt() + .5), m_terminal->cellHeight() * (s["y"].toInt() + .5))).toPoint();
             const auto mods = modifiers(s["mods"].toString());
-            const auto button = s["button"] == "middle" ? Qt::MiddleButton : s["button"] == "right" ? Qt::RightButton : Qt::LeftButton;
-            if (s["phase"] == "double" || s["phase"] == "triple") {
+            const auto button = s["button"] == "middle" ? Qt::MiddleButton : s["button"] == "right" ? Qt::RightButton :
+                s["button"] == "back" ? Qt::BackButton : s["button"] == "forward" ? Qt::ForwardButton : Qt::LeftButton;
+            if (s["phase"] == "click") QTest::mouseClick(m_window, button, mods, pos);
+            else if (s["phase"] == "double" || s["phase"] == "triple") {
                 QTest::mouseDClick(m_window, button, mods, pos);
                 QTest::mouseRelease(m_window, button, mods, pos);
                 if (s["phase"] == "triple") QTest::mouseClick(m_window, button, mods, pos, 20);
             } else if (s["phase"] == "down") QTest::mousePress(m_window, button, mods, pos);
             else if (s["phase"] == "up") QTest::mouseRelease(m_window, button, mods, pos);
-            else QTest::mouseMove(m_window, pos);
+            else if (s["phase"] == "move") QTest::mouseMove(m_window, pos);
+            else throw std::runtime_error("unknown pointer phase");
         } else if (op == "type") {
             m_terminal->forceActiveFocus();
             const auto text = s["text"].toString();

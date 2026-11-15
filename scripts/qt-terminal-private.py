@@ -125,7 +125,7 @@ def main():
             ]
             (work / 'events.json').write_text(json.dumps(steps))
             with (work / 'client.log').open('w') as client_log:
-                result = subprocess.run([str(args.driver.resolve()), '--backend', str(args.backend.resolve()), '--endpoint', endpoint, '--session', sid,
+                result = subprocess.run([str(args.driver.resolve()), '--backend', str(args.backend.resolve()), '--endpoint', endpoint, '--rex-session', sid,
                                          '--script', str(work / 'events.json'), '--report', str(work / 'report.json')], env=env, stdout=client_log, stderr=client_log, timeout=70)
             assert result.returncode == 0, f'Qt terminal events failed ({result.returncode}): {work}'
             before_prompt = json.loads((work / 'prompt-before.json').read_text())['frame']['cells']

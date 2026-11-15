@@ -20,6 +20,7 @@ Item {
     signal finished()
     signal terminalAction(string action, var captured)
 
+    function cancelCaptured() { form.close(); menu.close(); question.close() }
     function capture(pane) {
         const state = frontend.state
         return {host: state.host, epoch: state.epoch, session: state.session, window: state.window,

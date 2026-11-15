@@ -15,14 +15,17 @@ mkdir -p qt/build
 cd qt/build
 qmake6 ../rex-qt.pro
 make -j2
-./rex-qt --backend ../../target/release/rex-qt-backend --endpoint unix:///path/to/rex.sock --session SESSION_ID
+./rex-qt --backend ../../target/release/rex-qt-backend --endpoint unix:///path/to/rex.sock --rex-session SESSION_ID
 ```
 
 Qt 6.7 or newer with Core, Gui, Qml, Quick and QuickControls2 development files,
 qmake6 and a C++17 compiler are required. This milestone was built against Qt
 6.12. The backend path defaults to `rex-qt-backend` beside the Qt executable;
 use an absolute `--backend` path when launching from another directory.
+The GUI uses `--rex-session`: Qt reserves `--session` for desktop session
+restoration, so the old spelling is rejected before a backend starts.
 
+Saved hosts have searchable session/tab navigation, a sidebar and back/forward history.
 The Session, Tab and Pane controls select existing server state. All visible server panes are shown at their authoritative split/layer placements. Closing this app leaves sessions and programs running. No
 Rune preferences are read or written. Ordinary keys reach
 Rex's `client.key`; clipboard paste uses the core paste command. The window
@@ -69,7 +72,7 @@ qmake6 ../../rex-qt.pro CONFIG+=test_driver
 make -j2
 QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME=generic QT_QUICK_BACKEND=software \
   ./rex-qt-test-driver --backend /absolute/path/to/rex-qt-backend \
-  --endpoint unix:///private/test.sock --session PRIVATE_SESSION \
+  --endpoint unix:///private/test.sock --rex-session PRIVATE_SESSION \
   --script /path/to/steps.json --report /path/to/report.json
 ```
 
@@ -107,16 +110,15 @@ session creation and cleanup.
 
 ## Current limits
 
-This is a Linux first milestone, not full Rune parity. It has no split layout,
-scrollback navigation, terminal mouse reporting, uploads, downloads, hyperlinks,
-graphics protocols, settings/keymap editor or remote-control declarations.
-Copying covers the visible frame only. Underline variants other than single
-and double currently use a single line. IME commit text uses the core paste
-path; composition/preedit UI and non-US physical-key fidelity are not verified.
-The renderer paints fixed cells through QPainter and publishes JSON frames;
-large-grid performance has not been benchmarked. Offscreen QtTest verifies the
-real frontend event/render path but does not prove compositor focus, physical
-Wayland keyboard layout or desktop clipboard integration.
+The Linux Qt frontend is progressing toward Rune source-build parity. General
+appearance/font settings, activity/notifications, uploads/downloads, path browsing,
+server setup/pairing and remote-control compatibility are still in progress.
+Terminal history/search/selection, mouse reports, safe links, effective shortcuts,
+workspace lifecycle and saved-host navigation are implemented and privately tested.
+Underline variants other than single/double, composition/preedit UI, static graphics
+and non-US physical-key fidelity remain incomplete. Large-grid performance is not
+benchmarked. Native CLIPBOARD/PRIMARY and middle paste have real isolated Wayland
+proof; offscreen tests alone do not prove physical desktop keyboard layouts.
 
 No Omarchy, Quickshell or Renux implementation/assets are copied or required.
 Qt is dynamically linked and retains its upstream licenses. Project-authored

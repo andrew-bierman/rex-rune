@@ -1,6 +1,7 @@
 #include "actions.h"
 #include <QJsonArray>
 #include <QSignalSpy>
+#include <QMouseEvent>
 #include <QTest>
 
 class ActionTests : public QObject {
@@ -19,6 +20,32 @@ private:
         return {{"action",action},{"chords",chords},{"keys",QJsonArray{"ctrl+b","c"}}};
     }
 private slots:
+    void mouseHistoryIsGlobalAndCannotNavigateBehindAPanel() {
+        Actions actions;
+        auto state = snapshot({});
+        auto map = state["keymap"].toObject();
+        auto commands = map["actions"].toArray();
+        commands.append(QJsonObject{{"id","client.history.back"},{"enabled",true}});
+        commands.append(QJsonObject{{"id","client.history.forward"},{"enabled",true}});
+        map["actions"] = commands; state["keymap"] = map;
+        actions.setSnapshot(state);
+        QSignalSpy requests(&actions, &Actions::requested);
+        QObject receiver;
+        QMouseEvent back(QEvent::MouseButtonPress, QPointF(5,5), QPointF(5,5), Qt::BackButton, Qt::BackButton, Qt::NoModifier);
+        QMouseEvent release(QEvent::MouseButtonRelease, QPointF(5,5), QPointF(5,5), Qt::BackButton, Qt::NoButton, Qt::NoModifier);
+        QVERIFY(QCoreApplication::sendEvent(&receiver, &back));
+        QCOMPARE(requests.count(),1);
+        QCOMPARE(requests.first()[0].toString(),QString("client.history.back"));
+        actions.setModalOpen(true);
+        QVERIFY(QCoreApplication::sendEvent(&receiver, &release));
+        QMouseEvent forward(QEvent::MouseButtonPress, QPointF(5,5), QPointF(5,5), Qt::ForwardButton, Qt::ForwardButton, Qt::NoModifier);
+        QVERIFY(QCoreApplication::sendEvent(&receiver, &forward));
+        QCOMPARE(requests.count(),1);
+        actions.setModalOpen(false);
+        QVERIFY(QCoreApplication::sendEvent(&receiver, &forward));
+        QCOMPARE(requests.count(),2);
+        QCOMPARE(requests.last()[0].toString(),QString("client.history.forward"));
+    }
     void removableEffectiveBindingsConsumeBothEdges() {
         Actions actions;
         actions.setSnapshot(snapshot({binding({chord("c",true,true)},"pane.copy")}));

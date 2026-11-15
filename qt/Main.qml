@@ -11,7 +11,12 @@ ApplicationWindow {
     minimumWidth: 640
     minimumHeight: 480
     visible: true
-    title: "Rex Qt Quick"
+    title: {
+        const host = (backend.hosts.rows || []).find(row => row.id === state.host)
+        const session = (state.sessions || []).find(row => row.id === state.session)
+        const tab = (state.windows || []).find(row => row.id === state.window)
+        return [tab ? tab.label : "", session ? session.label : "", host ? host.label : ""].filter(Boolean).join(" · ") || "Rex Qt Quick"
+    }
     color: "#001528"
     palette.window: "#001528"
     palette.windowText: "#e8eef6"
@@ -25,7 +30,16 @@ ApplicationWindow {
     onActiveChanged: backend.setVisible(active && visible)
     onVisibleChanged: backend.setVisible(active && visible)
     Component.onCompleted: backend.setVisible(active && visible)
+    property string activeHost: state.host || ""
+    onActiveHostChanged: {
+        if (findBar.visible) findBar.close()
+        workspaceUI.cancelCaptured()
+        hostDialogs.cancelCaptured()
+        hostSwitcher.close()
+        Qt.callLater(restoreTerminal)
+    }
     property var state: backend.state
+    property var hostInfo: (backend.hosts.rows || []).find(row => row.id === state.host) || ({})
     property var dividerIds: []
     onStateChanged: {
         const ids = (state.dividers || []).map(split => split.before + "/" + split.after)
@@ -43,7 +57,7 @@ ApplicationWindow {
     function find() { findBar.terminal = selectedTerminal(); findBar.open() }
     FindBar { id: findBar; anchors.top: parent.top; anchors.right: parent.right; z: 100; onClosed: root.restoreTerminal() }
     function restoreTerminal() {
-        if (commandPopup.visible || shortcutPopup.visible || findBar.visible || workspaceUI.modalOpen) return
+        if (commandPopup.visible || shortcutPopup.visible || findBar.visible || workspaceUI.modalOpen || hostDialogs.modalOpen || hostSwitcher.visible || (root.width < 960 && hostDrawer.visible)) return
         const term = selectedTerminal(); if (term) term.forceActiveFocus()
     }
     function terminalAction(term, id) {
@@ -66,7 +80,24 @@ ApplicationWindow {
         case "client.palette.toggle": commandPopup.visible ? commandPopup.close() : commandPopup.open(); break
         case "client.settings": shortcutPopup.open(); break
         case "session.refresh": backend.refresh(); break
-        case "session.switch": sessionPicker.popup.open(); break
+        case "session.switch": hostSwitcher.scope = "sessions"; hostSwitcher.open(); break
+        case "client.host.switch": hostSwitcher.scope = "hosts"; hostSwitcher.open(); break
+        case "client.tab.switch": hostSwitcher.scope = "tabs"; hostSwitcher.open(); break
+        case "client.host.add": hostDialogs.openAdd(); break
+        case "client.host.edit": hostDialogs.openEdit(state.host); break
+        case "client.host.remove": hostDialogs.openRemove(state.host); break
+        case "client.sidebar.toggle": backend.hostAction("sidebar", {open: !backend.hosts.sidebar_open}); break
+        case "client.history.back": backend.hostAction("history", {direction: -1}); break
+        case "client.history.forward": backend.hostAction("history", {direction: 1}); break
+        case "client.tab.next_global": backend.hostAction("cycle_tab", {direction: 1}); break
+        case "client.tab.previous_global": backend.hostAction("cycle_tab", {direction: -1}); break
+        case "session.next": backend.hostAction("cycle_session", {direction: 1}); break
+        case "session.previous": backend.hostAction("cycle_session", {direction: -1}); break
+        case "client.tab.next": backend.hostAction("tab_step", {direction: 1}); break
+        case "client.tab.previous": backend.hostAction("tab_step", {direction: -1}); break
+        case "client.tab.goto": backend.hostAction("tab_goto", {index: args.index}); break
+        case "session.select": backend.hostAction("navigate", {session: args.session_id, window: args.window_id || ""}); break
+        case "pane.actions": workspaceUI.openPaneMenu(root.width / 2, 52, state.pane); break
         case "client.search": find(); break
         case "client.find.next": if (term) term.searchStep(false); break
         case "client.find.previous": if (term) term.searchStep(true); break
@@ -98,8 +129,32 @@ ApplicationWindow {
         }
     }
     Binding { target: workspaceActions; property: "searching"; value: findBar.visible }
-    Binding { target: workspaceActions; property: "modalOpen"; value: commandPopup.visible || shortcutPopup.visible || findBar.visible || workspaceUI.modalOpen }
+    Binding { target: workspaceActions; property: "modalOpen"; value: commandPopup.visible || shortcutPopup.visible || findBar.visible || workspaceUI.modalOpen || hostDialogs.modalOpen || hostSwitcher.visible || (root.width < 960 && hostDrawer.visible) }
     Connections { target: workspaceActions; function onRequested(id, args, origin) { root.action(id, args, origin) } }
+    HostDialogs { id: hostDialogs; frontend: backend; onFinished: Qt.callLater(root.restoreTerminal) }
+    Switcher { id: hostSwitcher; objectName: "hostSwitcher"; parent: Overlay.overlay; frontend: backend; onFinished: Qt.callLater(root.restoreTerminal) }
+    Drawer {
+        id: hostDrawer
+        objectName: "hostDrawer"
+        width: Math.min(280, root.width * .7)
+        height: root.height - y
+        y: 52
+        edge: Qt.LeftEdge
+        modal: root.width < 960
+        dim: false
+        interactive: root.width < 960
+        closePolicy: root.width < 960 ? Popup.CloseOnEscape | Popup.CloseOnPressOutside : Popup.NoAutoClose
+        Binding { target: hostDrawer; property: "visible"; value: Boolean(backend.hosts.sidebar_open) }
+        onClosed: { if (backend.hosts.sidebar_open) backend.hostAction("sidebar", {open: false}); Qt.callLater(root.restoreTerminal) }
+        HostSidebar {
+            anchors.fill: parent
+            frontend: backend
+            onAddHost: hostDialogs.openAdd()
+            onEditHost: id => hostDialogs.openEdit(id)
+            onRemoveHost: id => hostDialogs.openRemove(id)
+            onNavigated: if (root.width < 960) backend.hostAction("sidebar", {open: false})
+        }
+    }
     property string selectedPane: state.pane || ""
     onSelectedPaneChanged: { if (findBar.visible) findBar.close(); Qt.callLater(restoreTerminal) }
 
@@ -113,6 +168,12 @@ ApplicationWindow {
                 anchors.fill: parent
                 anchors.margins: 8
                 spacing: 8
+                ToolButton {
+                    objectName: "sidebarButton"
+                    text: "☰"
+                    Accessible.name: qsTr("Toggle hosts and sessions")
+                    onClicked: workspaceActions.run("client.sidebar.toggle")
+                }
                 ComboBox {
                     id: sessionPicker
                     objectName: "sessions"
@@ -233,7 +294,16 @@ ApplicationWindow {
                     color: "#f0c987"
                     text: backend.problem || (!root.state.connected ? (root.state.status || "Connecting…") : (root.state.pane ? "Terminal input paused" : "Choose a terminal pane"))
                 }
-                ToolButton { text: backend.problem ? "Dismiss" : "Refresh"; onClicked: backend.problem ? backend.dismissProblem() : backend.refresh() }
+                ToolButton {
+                    text: backend.problem ? qsTr("Dismiss") : !root.state.host ? qsTr("Add host") :
+                          !root.state.connected ? (root.hostInfo.enabled ? qsTr("Retry") : qsTr("Connect")) : qsTr("Refresh")
+                    onClicked: {
+                        if (backend.problem) backend.dismissProblem()
+                        else if (!root.state.host) hostDialogs.openAdd()
+                        else if (!root.state.connected) backend.hostAction("connect", {})
+                        else backend.refresh()
+                    }
+                }
             }
         }
         Item {
@@ -242,6 +312,7 @@ ApplicationWindow {
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.margins: 8
+            Layout.leftMargin: root.width >= 960 && backend.hosts.sidebar_open ? hostDrawer.width + 8 : 8
             clip: true
             Label {
                 anchors.centerIn: parent

@@ -2,7 +2,7 @@
 
 `rex-qt-backend` is a frontend-owned child process using the existing Rust
 `HostConnection`, `TerminalSender`, Ghostty snapshot parser and `Renderer`.
-It has no Rune or Qt imports and builds with `--no-default-features`. The
+It has no Rune UI or Qt dependency and builds with `--no-default-features`. The
 adapter does not reuse Rune's `Workspace`: navigation, font measurement,
 painting, key translation, focus and clipboard belong to the Qt frontend.
 
@@ -12,16 +12,16 @@ adapter publishes each visible terminal with normalized placements from the publ
 layout helper. No Rune workspace or layout parser is forked.
 
 Standard input and output carry UTF-8 JSON objects, one per line. Standard error
-is diagnostic output. Every object includes `version: 2`; incompatible versions
+is diagnostic output. Every object includes `version: 3`; incompatible versions
 are refused. This is a private, versioned interface for these two executables,
-not a network listener. Closing stdin or sending `shutdown` drops the host
-connection and leaves server sessions running.
+not a network listener. Closing stdin or sending `shutdown` drops all client
+connections and leaves server sessions running.
 
 ## Responses
 
-The first response is `{ "type": "hello", "version": 2 }`. Subsequent `state`
+The first response is `{ "type": "hello", "version": 3 }`. Subsequent `state`
 objects contain `connected`, `status`, the selected `session`, `window`, `pane`,
-and the current connection `epoch`. `sessions` and `windows` carry `id` and `label`.
+the current `host` identity and connection `epoch`. `sessions` and `windows` carry `id` and `label`.
 `panes` are ordered by the authoritative layout and carry `id`, `label`, complete
 target identity, normalized `rect`, `terminal` and `frame`. `dividers` carry the
 public layout helper's containing rectangle, direction, ratio and adjacent IDs.
@@ -50,9 +50,10 @@ either connection state is false, retaining the last displayed frame.
 
 ## Requests
 
-Each request has `op`, `version` and the last observed `epoch` (except read-only
-refresh and shutdown). Version two coordinates multi-pane targeting and stale-epoch
-rejection; both child and frontend must be upgraded together:
+Each targeted request has `op`, `version`, `host` and the last observed `epoch`.
+Version three adds mandatory host identity because independent core connections
+can have equal epochs. Both child and frontend must be upgraded together. Window
+visibility and shutdown are application-scoped housekeeping:
 
 | Operation | Additional fields |
 | --- | --- |
@@ -67,16 +68,18 @@ rejection; both child and frontend must be upgraded together:
 | `search`, `search_step`, `prompt_step` | visible target plus `text` or `older` |
 | `selection` | visible target, restore `generation`, request `revision`, phase and pixel/cell geometry |
 | `mouse`, `wheel` | focused target plus the core pointer `payload` |
-| `visibility` | current epoch plus window `visible` |
-| `keymap_reload` | none beyond epoch |
+| `visibility` | application window `visible` |
+| `keymap_reload` | current host/epoch |
 | `shortcut` | `action`, `keys`, `args`, `mode`, `operation` (`bind`, `remove`, `restore`) |
 | `action` | server `action`, `args`, `origin`, target, current keymap `generation` and `revision` |
 | `reconnect` | visible target |
 | `clear`, `reset` | focused live target |
 | `workspace` | captured target, typed `action`, `args`, viewport `width` and `height` for best-fit splits |
-| `refresh`, `shutdown` | none |
+| `refresh` | current host/epoch |
+| `host` | closed catalog/navigation `action`, `args`, captured host/epoch |
+| `shutdown` | none |
 
-A complete target names `session`, `window`, `pane` and current connection `epoch`.
+A complete target names `host`, `session`, `window`, `pane` and connection `epoch`.
 Typing/paste require the focused target; resize and foreground claims may name
 any currently visible pane. Navigation in flight invalidates the old target. Correlated
 completion or failure releases that pending selection and follows the current
@@ -90,6 +93,28 @@ Ordinary keys pass through `Command::Key` to `client.key`, retaining Rex Lua
 handling. Paste uses `Command::Paste`. Failed input is never retained for
 reconnection. Startup passes no session creation request and no terminal theme
 declaration, reads no Rune settings, and exposes no server lifecycle operation.
+
+`hosts` state contains the ordered saved catalog, scoped session/tab inventories,
+connection state, exact history availability, navigation-pending flag, sidebar
+preferences and explicit discovery results. It distinguishes background-only views
+from opened sessions. `host` actions add/edit/remove saved entries, connect or
+disconnect client workers, activate or navigate exact IDs, traverse history/order,
+collapse rows and show the sidebar. They never start or stop a Rex server. A new
+worker or endpoint gets a fresh identity; logical history survives an explicit
+reconnect to the same saved endpoint, while stale IPC captures do not.
+
+One coordinator owns the Qt settings profile and navigation correlation. Per-host
+adapters retain only pane presentation/focus and close questions. Shortcuts,
+workspace preferences and catalog mutations share the authoritative profile so
+saving one cannot overwrite a newer session selection. Active host changes discard
+old local questions and key prefixes/modes; queued input is never carried over.
+Clipboard and action events name host and epoch and are accepted only for the
+visible active target. Background activity remains in the public core models.
+
+Add/Edit validation errors have `scope: "host_form"` and remain inline until the
+form closes. Other errors remain application notices. A successful catalog save
+emits `host_saved` after state publication. Tailnet discovery uses public core
+probes only after an explicit request; discovery never saves or attaches a host.
 
 ## Extension limits
 
@@ -105,7 +130,7 @@ origin. Generation/revision and target checks discard stale dispatches; failed
 actions are not replayed. Core-queued client actions are validated and emitted once
 after the matching state publication. Current client actions deny remote access.
 
-This version sends the current multi-pane scene, not a scrollback database. Graphics, saved-host management and other remaining parity surfaces are not yet exposed.
+This version sends the current multi-pane scene, not a scrollback database. Graphics and other remaining parity surfaces are not yet exposed.
 Selection, formatting and scrollback/search stay in the core; Qt never parses
 VT output or builds its own history database. Local viewport requests can be
 issued during pauses; the core worker determines when its stream can process

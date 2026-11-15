@@ -293,6 +293,9 @@ pub fn validate(action: &str, args: &Value) -> Result<()> {
 }
 
 impl Workspace {
+    pub fn clear(&mut self) {
+        self.pending = None;
+    }
     pub fn state(&mut self, model: &HostModel) -> Value {
         if self
             .pending

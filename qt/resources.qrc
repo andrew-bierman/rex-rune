@@ -1,1 +1,1 @@
-<RCC><qresource prefix="/"><file>Main.qml</file><file>FindBar.qml</file><file>Commands.qml</file><file>ShortcutSettings.qml</file><file>WorkspaceActions.qml</file><file>ConfirmDialog.qml</file><file>PaneHeader.qml</file></qresource></RCC>
+<RCC><qresource prefix="/"><file>Main.qml</file><file>FindBar.qml</file><file>Commands.qml</file><file>ShortcutSettings.qml</file><file>WorkspaceActions.qml</file><file>ConfirmDialog.qml</file><file>PaneHeader.qml</file><file>HostSidebar.qml</file><file>HostDialogs.qml</file><file>Switcher.qml</file></qresource></RCC>

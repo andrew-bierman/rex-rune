@@ -1,4 +1,5 @@
 #include "actions.h"
+#include <QMouseEvent>
 #include <QCoreApplication>
 #include <QKeySequence>
 #include <algorithm>
@@ -233,6 +234,19 @@ void Actions::beginRecording() {
 }
 void Actions::stopRecording() { m_recording = false; emit changed(); }
 bool Actions::eventFilter(QObject *, QEvent *event) {
+    if (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonDblClick || event->type() == QEvent::MouseButtonRelease) {
+        const auto button = static_cast<QMouseEvent *>(event)->button();
+        if (button == Qt::BackButton || button == Qt::ForwardButton) {
+            if (event->type() != QEvent::MouseButtonRelease && !m_modal && !m_recording) {
+                const auto id = button == Qt::BackButton ? "client.history.back" : "client.history.forward";
+                for (const auto &value : m_commands) {
+                    const auto command = value.toObject();
+                    if (command["id"] == id && command["enabled"].toBool()) { run(id, {}, "mouse"); break; }
+                }
+            }
+            return true;
+        }
+    }
     if (event->type() == QEvent::KeyPress && !m_recording && !m_modal && (m_depth > 0 || !m_activeModes.isEmpty())) return false;
     if (event->type() == QEvent::KeyPress || event->type() == QEvent::KeyRelease) return handleKey(static_cast<QKeyEvent *>(event), true);
     return false;
