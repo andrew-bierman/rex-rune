@@ -1,5 +1,3 @@
-//! Private version-two JSON-lines adapter for the standalone Qt frontend.
-//!
 //! Transport, terminal parsing and ownership stay in the existing host workers.
 //! Every terminal request names its complete target; local selection is not a
 //! license to deliver an old input event to a newly selected pane.

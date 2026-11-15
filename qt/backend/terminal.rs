@@ -1,4 +1,3 @@
-//! Frontend requests mapped to the public terminal worker interface.
 use anyhow::{Context, Result, bail, ensure};
 use rex_rune::{
     connection::Command,

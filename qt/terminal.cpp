@@ -207,11 +207,16 @@ void TerminalItem::paint(QPainter *p) {
         const auto range = selectionRows[y].toArray();
         return range.size() == 2 && x >= range[0].toInt() && x <= range[1].toInt();
     };
-    const auto current = m_frame["search"].toObject()["selected"].toObject();
+    const auto search = m_frame["search"].toObject();
+    const auto matches = search["matches"].toArray();
+    const auto current = search["selected"].toObject();
+    const auto contains = [](const QJsonArray &start, const QJsonArray &end, int x, int y) {
+        return start.size() == 2 && end.size() == 2 && y >= start[1].toInt() && y <= end[1].toInt()
+            && (y != start[1].toInt() || x >= start[0].toInt()) && (y != end[1].toInt() || x <= end[0].toInt());
+    };
     const auto currentStart = current["start"].toArray(), currentEnd = current["end"].toArray();
     const auto currentAt = [&](int x, int y) {
-        return currentStart.size() == 2 && currentEnd.size() == 2 && y >= currentStart[1].toInt() && y <= currentEnd[1].toInt()
-            && (y != currentStart[1].toInt() || x >= currentStart[0].toInt()) && (y != currentEnd[1].toInt() || x <= currentEnd[0].toInt());
+        return contains(currentStart, currentEnd, x, y);
     };
     const auto cursor = m_frame["cursor"].toArray();
     const int cx = cursor.size() == 2 ? cursor[0].toInt() : -1;
@@ -231,14 +236,13 @@ void TerminalItem::paint(QPainter *p) {
             const QRectF rect(x * m_cellWidth, y * m_cellHeight, m_cellWidth, m_cellHeight);
             p->fillRect(rect, color(cell["bg"]));
 
-            for (const auto &value : m_frame["search"].toObject()["matches"].toArray()) {
+            for (const auto &value : matches) {
                 const auto match = value.toObject();
                 const auto start = match["start"].toArray(), end = match["end"].toArray();
-                if (!selectedAt(x, y) && start.size() == 2 && end.size() == 2 && y >= start[1].toInt() && y <= end[1].toInt()
-                    && (y != start[1].toInt() || x >= start[0].toInt()) && (y != end[1].toInt() || x <= end[0].toInt()))
+                if (!selectedAt(x, y) && contains(start, end, x, y))
                     {
-                    const bool current = match == m_frame["search"].toObject()["selected"].toObject();
-                    p->fillRect(rect, QColor(124, 196, 255, current ? 204 : 45));
+                    const bool isCurrent = match == current;
+                    p->fillRect(rect, QColor(124, 196, 255, isCurrent ? 204 : 45));
                     p->setPen(QColor(124, 196, 255, 180)); p->drawRect(rect.adjusted(.5, .5, -.5, -.5));
                 }
             }
