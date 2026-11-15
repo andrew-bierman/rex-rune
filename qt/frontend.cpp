@@ -165,6 +165,37 @@ void Frontend::fail(const QString &message) {
     m_notifications.clear();
     m_problem = message;
     m_state["connected"] = false;
+    // Captured requests belong to the child that just stopped. Keep the last
+    // terminal frame and facts, but release dialogs and controls waiting on it.
+    m_state["workspace"] = QJsonValue();
+    auto files = m_state["files"].toObject();
+    for (const auto *name : {"directory", "download", "upload"}) files[name] = QJsonValue();
+    m_state["files"] = files;
+    auto hosts = m_state["hosts"].toObject();
+    hosts["pending"] = false;
+    auto rows = hosts["rows"].toArray();
+    for (qsizetype i = 0; i < rows.size(); ++i) {
+        auto row = rows[i].toObject();
+        row["connected"] = false;
+        row["status"] = "Backend unavailable · last reported";
+        rows[i] = row;
+    }
+    hosts["rows"] = rows;
+    m_state["hosts"] = hosts;
+    auto maintenance = m_state["maintenance"].toObject();
+    maintenance["busy"] = false;
+    maintenance["preview"] = QJsonValue();
+    m_state["maintenance"] = maintenance;
+    auto downloads = m_state["downloads"].toArray();
+    for (qsizetype i = 0; i < downloads.size(); ++i) {
+        auto row = downloads[i].toObject();
+        if (!row["running"].toBool()) continue;
+        row["running"] = false;
+        row["confirmation"] = false;
+        row["status"] = "Backend unavailable; transfer outcome unknown";
+        downloads[i] = row;
+    }
+    m_state["downloads"] = downloads;
     auto server = m_state["server"].toObject();
     server["connected"] = false; server["status"] = "Disconnected · last reported";
     server["pair"] = QJsonValue(); server["confirmation"] = QJsonValue();
@@ -175,6 +206,7 @@ void Frontend::fail(const QString &message) {
     terminal["connected"] = false;
     m_state["terminal"] = terminal;
     m_variantState = terminalMetadata(m_state).toVariantMap();
+    emit hostsChanged();
     emit stateChanged();
     emit problemChanged();
 }

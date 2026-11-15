@@ -9,6 +9,8 @@ Item {
     property real canvasHeight: height
     property bool modalOpen: question.visible || form.visible || menu.visible
     property var pending: frontend.state.workspace || null
+    property bool connected: Boolean(frontend.state.connected)
+    onConnectedChanged: if (!connected) cancelCaptured()
     property var menuTarget: ({})
     property var formTarget: ({})
     property string formAction: ""
