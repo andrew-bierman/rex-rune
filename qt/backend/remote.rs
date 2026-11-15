@@ -1,4 +1,3 @@
-//! Local consent and connection-scoped, one-shot directed UI requests.
 use crate::keymap::{self, Remote};
 use rex_rune::connection::{
     HostModel,

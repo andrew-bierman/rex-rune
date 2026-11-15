@@ -1,4 +1,3 @@
-//! One-shot public-core notices projected against the matching immutable catalog.
 use serde_json::Value;
 
 pub fn project(

@@ -5,7 +5,6 @@
 #include <QWaitCondition>
 #include <chrono>
 
-// One severity slot. Playback/discovery never runs on Qt's GUI thread.
 class Sounds : public QThread {
     Q_OBJECT
 public:

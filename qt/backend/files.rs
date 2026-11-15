@@ -208,7 +208,7 @@ impl Files {
                     .as_mut()
                     .context("Download dialog is closed.")?;
                 ensure!(
-                    *host == endpoint && captured.value() == target.value(),
+                    *host == endpoint && captured == &target,
                     "Download target changed."
                 );
                 if op == "download.confirm" {

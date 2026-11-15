@@ -1,4 +1,3 @@
-//! Local maintenance only. No installer or server operation is reachable here.
 use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
 use std::{

@@ -6,7 +6,6 @@
 #include <QDBusConnection>
 #include "sounds.h"
 
-// Linux desktop services. Only coherent backend publications enter this boundary.
 class Notifications : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString service READ service NOTIFY changed)

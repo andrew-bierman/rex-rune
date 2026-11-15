@@ -9,8 +9,6 @@
 #include <QJsonDocument>
 #include <QJsonArray>
 
-// QML uses frame metadata; the C++ terminal keeps the full cells and images
-// in the raw snapshot. Avoid converting that pixel/grid payload for bindings.
 QJsonObject terminalMetadata(QJsonObject state) {
     auto frame = state["frame"].toObject();
     if (!frame.isEmpty()) {
@@ -31,7 +29,6 @@ Frontend::Frontend(QObject *parent) : QObject(parent), m_notifications(this) {
     });
     connect(&m_process, &QProcess::readyReadStandardOutput, this, &Frontend::read);
     connect(&m_process, &QProcess::readyReadStandardError, this, [this] {
-        // Diagnostics never enter the protocol stream or the terminal canvas.
         const auto bytes = m_process.readAllStandardError();
         fprintf(stderr, "%s", bytes.constData());
     });
@@ -165,8 +162,6 @@ void Frontend::fail(const QString &message) {
     m_notifications.clear();
     m_problem = message;
     m_state["connected"] = false;
-    // Captured requests belong to the child that just stopped. Keep the last
-    // terminal frame and facts, but release dialogs and controls waiting on it.
     m_state["workspace"] = QJsonValue();
     auto files = m_state["files"].toObject();
     for (const auto *name : {"directory", "download", "upload"}) files[name] = QJsonValue();
