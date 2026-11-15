@@ -107,3 +107,9 @@ Downstream-isolation verification: all ten adapter tests pass from `qt/backend/m
 The final downstream-focused review confirmed no duplicate backend engine or unnecessary core edits. It found and fixed fresh-worktree acceptance setup (`.build-tools` now created before temporary artifacts), and clarified resize ownership wording. A fresh-root runtime check also exposed a test-fixture race: Kitty may capture the launching Return release before the modified chords. The harness permits only that exact optional leading release; all four modified press/release sequences remain exact-byte assertions.
 
 Fresh-root acceptance passed after those fixes; its log is `.build-tools/fresh-worktree-acceptance.log` and its retained private fixture artifacts are referenced there. This run began without an artifact parent directory and passed shell/editor/resize/clipboard/navigation/reconnect checks.
+
+## Active scope: local app and feature parity
+
+The user requested opening the app locally and continuing to feature parity on 2026-11-15. A separate production Qt window is running against a newly created private demo server/session; its task-owned launch metadata and logs are in ignored `.build-tools/active-demo.json`. Existing user sessions and installed applications were not touched. Local build/runtime evidence is the development gate. GitHub Actions registration is optional remote verification, not a prerequisite for local use or further implementation; stop treating it as the blocker to parity work.
+
+The next work source is a dedicated parity plan and capability inventory. Completion must be measured against actual upstream source-build capabilities, not just a screenshot or another single-pane demo. Keep the settled thin-downstream boundary throughout. Full parity is not yet achieved.
