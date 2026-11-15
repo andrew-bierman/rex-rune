@@ -2,6 +2,40 @@
 
 The alternate frontend is implemented and locally verified on `feat/qt-quick-milestone` (2026-11-15). Its work source is [the implementation plan](plans/2026-11-14-2211-feat-qt-quick-terminal-plan.md). The original Rune frontend remains the default Cargo feature.
 
+## POC_READY — verified interactive checkpoint
+
+Status: **POC_READY** (2026-11-15). This checkpoint is based on runtime evidence, not the earlier adapter-only report. Production artifacts are `qt/build/rex-qt` and `target/release/rex-qt-backend`.
+
+Exact launch command for a fresh, isolated interactive demo (run in Bash from this checkout). It creates only its own private server/session and stops only that server on exit; closing the Qt window ends the demo:
+
+```sh
+cd /home/andrew-bierman/Code/rex-rune-qt
+(
+  demo_dir=$(mktemp -d "$PWD/.build-tools/qt-human-demo-XXXXXX")
+  demo_endpoint="unix://$demo_dir/rex.sock"
+  rex server run --listen "$demo_endpoint" --restore=false --config /dev/null \
+    --state-dir "$demo_dir/server" >"$demo_dir/server.log" 2>&1 &
+  demo_pid=$!
+  trap 'kill "$demo_pid" 2>/dev/null; wait "$demo_pid" 2>/dev/null' EXIT
+  for attempt in {1..100}; do
+    [ -S "$demo_dir/rex.sock" ] && break
+    kill -0 "$demo_pid" 2>/dev/null || exit 1
+    sleep .1
+  done
+  demo_session=$(rex --autostart=false --server "$demo_endpoint" api call session.create \
+    '{"label":"Qt POC demo","initial_windows":[{"window_label":"Shell","layout":{"block":{"flavor":"com.superlogical.terminal.shell"}}}]}' | jq -er .session_id) || exit 1
+  QT_QPA_PLATFORM=wayland QT_QPA_PLATFORMTHEME=generic \
+    ./qt/build/rex-qt --backend "$PWD/target/release/rex-qt-backend" \
+      --endpoint "$demo_endpoint" --session "$demo_session"
+)
+```
+
+Runtime evidence: `.build-tools/qt-acceptance-zyoo1zif/` contains four successful reports (`main-report.json`, `reconnect-report.json`, `wayland-report.json`, `disconnect-report.json`). Shell output/input, full-screen Neovim editing/saving (`editor.txt` contains exactly `qt-editor-save\n`), server-observed resize, and exact clipboard copy/paste all passed. Clipboard evidence uses Qt's isolated offscreen clipboard; desktop clipboard integration is still unverified. Native Wayland rendering and key input passed separately. Ten adapter tests and the 389-test core suite passed; see details below.
+
+Remaining POC limits: one displayed pane, visible-frame copy, toolbar clipboard actions, no scrollback navigation or terminal mouse reporting, and incomplete settings/keymap parity. IME preedit, physical keyboard layouts and large-grid performance remain unverified. The installed apps and personal server were not replaced or reconfigured.
+
+Delivery: owned-fork [PR #1](https://github.com/andrew-bierman/rex-rune/pull/1) is open and unmerged. Platform CI is blocked: GitHub lists zero Actions workflows/runs and workflow enable returns 404, despite the workflow file being present. The passing task-list check is not platform CI evidence. Resume the CI handoff once Actions registers the existing workflow; further parity work needs its own scoped plan.
+
 ## Current evidence
 
 - Core boundary inspected: `HostConnection`, `TerminalSender` and Ghostty `Frame` have no Rune dependency. Rune workspace state and key translation are frontend-specific.
@@ -52,7 +86,7 @@ The first runtime failure was in the driver: it sent menu keys before the popup 
 
 ## Limits
 
-One pane is displayed at a time; this is discovery/selection of visible server splits, not a replacement split layout. Copy covers the visible frame. Scrollback, terminal mouse reporting, graphics, links, uploads/downloads and full workspace/settings/keymap parity remain deferred. Clipboard actions are toolbar-only until removable local bindings exist. Direct Unicode events and IME commits are tested; physical keyboard-layout fidelity, IME preedit and desktop clipboard integration remain unverified. Large-grid performance is not benchmarked. GitHub CI covers Rust; the Qt runtime harness currently requires the local Qt/Rex/Neovim environment. See [the protocol boundary](qt-backend-protocol.md) and [frontend notes](../qt/README.md).
+One pane is displayed at a time; this is discovery/selection of visible server splits, not a replacement split layout. Copy covers the visible frame. Scrollback, terminal mouse reporting, graphics, links, uploads/downloads and full workspace/settings/keymap parity remain deferred. Clipboard actions are toolbar-only until removable local bindings exist. Direct Unicode events and IME commits are tested; physical keyboard-layout fidelity, IME preedit and desktop clipboard integration remain unverified. Large-grid performance is not benchmarked. The committed GitHub CI definition covers Rust, but the owned fork has not run it; the Qt runtime harness currently requires the local Qt/Rex/Neovim environment. See [the protocol boundary](qt-backend-protocol.md) and [frontend notes](../qt/README.md).
 
 ## Constraints and next step
 
