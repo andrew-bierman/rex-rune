@@ -185,6 +185,19 @@ void TestDriver::step() {
                     : value == s["value"];
             }
             if (!complete && m_wait.elapsed() > s["timeout"].toInt(15000)) throw std::runtime_error(("timeout at " + op + ": " + s["text"].toString() + s["field"].toString()).toStdString());
+        } else if (op == "measureEcho") {
+            // Test-driver only: time real Qt key delivery until echoed PTY text
+            // reaches the production terminal item (not physical display scanout).
+            if (!m_waiting) {
+                if (m_terminal->visibleText().contains(s["text"].toString()))
+                    throw std::runtime_error("echo marker already visible");
+                m_terminal->forceActiveFocus();
+                m_wait.start(); m_waiting = true;
+                QTest::keyClick(m_window, key(s["key"].toString()), Qt::NoModifier, 0);
+            }
+            complete = m_terminal->visibleText().contains(s["text"].toString());
+            if (complete) m_evidence.append(QJsonObject{{"op", op}, {"marker", s["text"]}, {"elapsed_ms", m_wait.elapsed()}});
+            else if (m_wait.elapsed() > s["timeout"].toInt(5000)) throw std::runtime_error("echo timeout");
         } else if (op == "dragDivider") {
             auto *canvas = m_window->findChild<QQuickItem *>("terminalCanvas");
             const auto dividers = m_backend->snapshot()["dividers"].toArray();
@@ -358,7 +371,8 @@ void TestDriver::step() {
                     {"text",item->visibleText()}});
             }
             if (s.contains("control")) {
-                const auto object = m_window->findChild<QObject *>(s["control"].toString());
+                auto *object = m_window->findChild<QObject *>(s["control"].toString());
+                if (!object) object = controlItem(m_window->contentItem(), s["control"].toString());
                 if (!object) throw std::runtime_error("snapshot control missing");
                 QJsonObject control;
                 for (const auto *property : {"x","y","width","height","padding","contentWidth","contentHeight"})
@@ -379,6 +393,16 @@ void TestDriver::step() {
                     };
                     inspect(inspect, content);
                     control["horizontalOverflow"] = overflow;
+                }
+                if (auto *item = qobject_cast<QQuickItem *>(object)) {
+                    QJsonArray ancestry;
+                    for (auto *parent = item; parent; parent = parent->parentItem()) {
+                        const auto at = parent->mapToScene(QPointF());
+                        ancestry.append(QJsonObject{{"name",parent->objectName()},{"type",parent->metaObject()->className()},
+                            {"x",at.x()},{"y",at.y()},{"width",parent->width()},{"height",parent->height()},{"clip",parent->clip()},
+                            {"contentHeight",QJsonValue::fromVariant(parent->property("contentHeight"))}});
+                    }
+                    control["ancestry"] = ancestry;
                 }
                 snapshot["control"] = control;
             }

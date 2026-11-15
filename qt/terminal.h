@@ -35,7 +35,7 @@ public:
     void setFrontend(Frontend *frontend);
     QString paneId() const { return m_paneId; }
     void setPaneId(const QString &id);
-    QVariantMap paneState() const { return m_state.toVariantMap(); }
+    QVariantMap paneState() const;
     QString visibleText() const;
     QVariantMap preferences() const { return m_preferences; }
     void setPreferences(const QVariantMap &preferences);

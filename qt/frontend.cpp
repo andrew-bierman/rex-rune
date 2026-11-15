@@ -8,6 +8,21 @@
 #include <QJsonDocument>
 #include <QJsonArray>
 
+// QML uses frame metadata; the C++ terminal keeps the full cells and images
+// in the raw snapshot. Avoid converting that pixel/grid payload for bindings.
+QJsonObject terminalMetadata(QJsonObject state) {
+    auto frame = state["frame"].toObject();
+    if (!frame.isEmpty()) {
+        frame.remove("cells");
+        frame.remove("images");
+        state["frame"] = frame;
+    }
+    auto panes = state["panes"].toArray();
+    for (qsizetype i = 0; i < panes.size(); ++i) panes[i] = terminalMetadata(panes[i].toObject());
+    if (state.contains("panes")) state["panes"] = panes;
+    return state;
+}
+
 Frontend::Frontend(QObject *parent) : QObject(parent), m_notifications(this) {
     connect(&m_notifications, &Notifications::activated, this, [this](const QVariantMap &target, const QString &token) {
         hostAction("navigate", {{"session", target.value("session")}, {"window", target.value("window")}}, target);
@@ -158,6 +173,7 @@ void Frontend::fail(const QString &message) {
     auto terminal = m_state["terminal"].toObject();
     terminal["connected"] = false;
     m_state["terminal"] = terminal;
+    m_variantState = terminalMetadata(m_state).toVariantMap();
     emit stateChanged();
     emit problemChanged();
 }
@@ -189,6 +205,7 @@ void Frontend::read() {
             const bool newPreferences = m_state["preferences"] != object["preferences"];
             const bool newHosts = m_state["hosts"] != object["hosts"];
             m_state = object;
+            m_variantState = terminalMetadata(object).toVariantMap();
             m_notifications.consume(object);
             if (newEpoch) setVisible(m_visible);
             QStringList ids;

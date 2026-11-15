@@ -6,6 +6,8 @@
 #include <QVariantMap>
 #include "notifications.h"
 
+QJsonObject terminalMetadata(QJsonObject state);
+
 class Frontend : public QObject {
     Q_OBJECT
     Q_PROPERTY(Notifications *notifications READ notifications CONSTANT)
@@ -21,7 +23,7 @@ public:
     explicit Frontend(QObject *parent = nullptr);
     ~Frontend() override;
     Notifications *notifications() { return &m_notifications; }
-    QVariantMap state() const { return m_state.toVariantMap(); }
+    QVariantMap state() const { return m_variantState; }
     QVariantMap activityState() const { return m_state["activity"].toObject().toVariantMap(); }
     QVariantMap preferences() const { return m_state["preferences"].toObject().toVariantMap(); }
     QVariantMap hosts() const { return m_state["hosts"].toObject().toVariantMap(); }
@@ -79,6 +81,7 @@ private:
     QProcess m_process;
     QByteArray m_buffer;
     QJsonObject m_state;
+    QVariantMap m_variantState;
     QStringList m_paneIds;
     QString m_problem;
     QString m_preferencesProblem;

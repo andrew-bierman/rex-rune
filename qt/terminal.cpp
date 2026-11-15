@@ -167,6 +167,8 @@ void TerminalItem::setPaneId(const QString &id) {
     updateState();
 }
 
+QVariantMap TerminalItem::paneState() const { return terminalMetadata(m_state).toVariantMap(); }
+
 void TerminalItem::updateState() {
     if (!m_frontend) return;
     const auto state = m_frontend->paneSnapshot(m_paneId);

@@ -120,10 +120,10 @@ session creation and cleanup.
 
 ## Current limits
 
-The Linux Qt frontend is progressing toward Rune source-build parity. Maintenance pages and measured output responsiveness are still being integrated. Server settings, explicit confirmed stop/setup and local pairing QR rendering are implemented; real tailnet/remote SSH operation remains unverified.
+The Linux Qt frontend is progressing toward Rune source-build parity. Maintenance pages and final verification remain in progress. Server settings, explicit confirmed stop/setup and local pairing QR rendering are implemented; real tailnet/remote SSH operation remains unverified.
 Terminal history/search/selection, mouse reports, safe links, effective shortcuts,
 workspace lifecycle and saved-host navigation are implemented and privately tested.
-Underline variants, local composition/preedit, static core-decoded graphics and Linux physical-key fidelity are implemented and privately verified. A real French-layout Wayland seat is covered. Third-party IME candidate UI and X11 runtime remain unverified. Large-grid performance is not benchmarked. Native CLIPBOARD/PRIMARY and middle paste have real isolated Wayland
+Underline variants, local composition/preedit, static core-decoded graphics and Linux physical-key fidelity are implemented and privately verified. A real French-layout Wayland seat is covered. Third-party IME candidate UI and X11 runtime remain unverified. A private one/four-pane output benchmark records measured echo latency and snapshot traffic; see the status handoff for workload and limitations. Native CLIPBOARD/PRIMARY and middle paste have real isolated Wayland
 proof; offscreen tests alone do not prove physical desktop keyboard layouts.
 
 No Omarchy, Quickshell or Renux implementation/assets are copied or required.
