@@ -17,7 +17,7 @@ ColumnLayout {
     }
     PreferenceRow { controller:page.controller; query:page.query; title:qsTr("Chrome palette"); path:"chrome_theme"; value:page.values.chrome_theme; choices:page.choices([["midnight",qsTr("Midnight")],["rose_pine",qsTr("Rosé Pine")],["rose_pine_moon",qsTr("Rosé Pine Moon")],["gruvbox_dark",qsTr("Gruvbox Dark")]]) }
     PreferenceRow { controller:page.controller; query:page.query; title:qsTr("Interface zoom (%)"); path:"ui_scale"; kind:"number"; divisor:100; minimum:70; maximum:150; step:10; value:page.values.ui_scale }
-    Label { text:qsTr("Terminal font size is independent of interface zoom. Zoom is limited by the window's 640 × 480 layout floor."); Layout.fillWidth:true; wrapMode:Text.Wrap; opacity:.7 }
+    Label { visible:!page.query || page.query.toLowerCase().includes("zoom"); text:qsTr("Terminal font size is independent of interface zoom. Zoom is limited by the window's 640 × 480 layout floor."); Layout.fillWidth:true; wrapMode:Text.Wrap; opacity:.7 }
     PreferenceRow { controller:page.controller; query:page.query; title:qsTr("Pane density"); path:"pane_density"; value:page.values.pane_density; choices:page.choices([["comfortable",qsTr("Comfortable")],["compact",qsTr("Compact")]]) }
     PreferenceRow { controller:page.controller; query:page.query; title:qsTr("Pane headers"); path:"pane_header"; value:page.values.pane_header; choices:page.choices([["auto",qsTr("Follow density")],["always",qsTr("Always")],["on_hover",qsTr("On hover")],["hidden",qsTr("Hidden")]]) }
     PreferenceRow { controller:page.controller; query:page.query; title:qsTr("Horizontal pane padding"); path:"pane_padding"; kind:"number"; maximum:32; value:page.values.pane_padding }

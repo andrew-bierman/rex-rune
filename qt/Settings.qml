@@ -55,10 +55,10 @@ Popup {
             contentWidth:availableWidth
             ColumnLayout {
                 width:scroll.availableWidth
-                NotificationSettings { controller:controller;notifications:popup.frontend.notifications;query:search.text;visible:search.text.length>0 || controller.page==="Notifications";Layout.fillWidth:true }
-                RemoteSettings { frontend:popup.frontend;query:search.text;visible:search.text.length>0 ? "remote hosts control navigation consent".includes(search.text.toLowerCase()) : controller.page==="Remote hosts";Layout.fillWidth:true }
-                TerminalSettings { controller:controller;query:search.text;visible:search.text.length>0 || controller.page==="Terminal";Layout.fillWidth:true }
-                InterfaceSettings { controller:controller;query:search.text;visible:search.text.length>0 || controller.page==="Interface";Layout.fillWidth:true }
+                NotificationSettings { controller:controller;notifications:popup.frontend.notifications;query:search.text;visible:search.text.length>0 || controller.page==="Notifications";Layout.fillWidth:true;Layout.preferredHeight:implicitHeight }
+                RemoteSettings { frontend:popup.frontend;query:search.text;visible:search.text.length>0 ? "remote hosts control navigation consent".includes(search.text.toLowerCase()) : controller.page==="Remote hosts";Layout.fillWidth:true;Layout.preferredHeight:implicitHeight }
+                TerminalSettings { controller:controller;query:search.text;visible:search.text.length>0 || controller.page==="Terminal";Layout.fillWidth:true;Layout.preferredHeight:implicitHeight }
+                InterfaceSettings { controller:controller;query:search.text;visible:search.text.length>0 || controller.page==="Interface";Layout.fillWidth:true;Layout.preferredHeight:implicitHeight }
             }
         }
         Label { visible:Boolean(popup.frontend.preferencesProblem);text:popup.frontend.preferencesProblem;textFormat:Text.PlainText;Layout.fillWidth:true;wrapMode:Text.Wrap }
