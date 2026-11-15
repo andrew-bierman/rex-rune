@@ -12,6 +12,7 @@
 #include <QJsonDocument>
 #include <QKeyEvent>
 #include <QQuickItem>
+#include <QPointer>
 #include <QQuickWindow>
 #include <QTest>
 #include <QTextStream>
@@ -19,6 +20,11 @@
 #include <stdexcept>
 
 namespace {
+QQuickItem *controlItem(QQuickItem *root, const QString &name) {
+    if (root->objectName() == name && root->isVisible()) return root;
+    for (auto *child : root->childItems()) if (auto *item = controlItem(child, name)) return item;
+    return nullptr;
+}
 TerminalItem *selectedTerminal(QQuickItem *root, const QString &id) {
     if (auto *terminal = qobject_cast<TerminalItem *>(root); terminal && terminal->paneId() == id) return terminal;
     for (auto *child : root->childItems()) if (auto *terminal = selectedTerminal(child, id)) return terminal;
@@ -109,9 +115,30 @@ void TestDriver::start() {
 }
 
 void TestDriver::clickControl(const QString &name) {
-    const auto item = m_window->findChild<QQuickItem *>(name);
+    QPointer<QQuickItem> item = controlItem(m_window->contentItem(), name);
     if (!item) throw std::runtime_error("control not found");
+    // Scroll clipped list delegates into view using the same wheel path as a person.
+    for (int attempt = 0; attempt < 20; ++attempt) {
+        if (!item) item = controlItem(m_window->contentItem(), name);
+        if (!item) throw std::runtime_error("control disappeared while scrolling");
+        auto *clip = item->parentItem();
+        const auto center = item->mapToScene(QPointF(item->width() / 2, item->height() / 2));
+        while (clip && (!clip->clip() || clip->mapRectToScene(clip->boundingRect()).contains(center))) clip = clip->parentItem();
+        if (!clip) break;
+        const auto rect = clip->mapRectToScene(clip->boundingRect());
+        const auto at = rect.center();
+        QWheelEvent wheel(at, m_window->mapToGlobal(at.toPoint()), {}, QPoint(0, center.y() > rect.bottom() ? -120 : 120),
+                          Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+        QCoreApplication::sendEvent(m_window, &wheel);
+        QTest::qWait(30);
+        QPointer<QQuickItem> moving = clip;
+        QTest::qWaitFor([moving] { return !moving || !moving->property("moving").toBool(); }, 1500);
+    }
+    if (!item) item = controlItem(m_window->contentItem(), name);
+    if (!item) throw std::runtime_error("control disappeared after scrolling");
     const auto pos = item->mapToScene(QPointF(item->width() / 2, item->height() / 2)).toPoint();
+    for (auto *clip = item->parentItem(); clip; clip = clip->parentItem())
+        if (clip->clip() && !clip->mapRectToScene(clip->boundingRect()).contains(pos)) throw std::runtime_error("control is clipped");
     QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier, pos);
 }
 
@@ -127,16 +154,24 @@ void TestDriver::step() {
         bool complete = true;
         if (!m_terminal && op != "waitState" && op != "waitText" && op != "waitProblem" && op != "pause")
             throw std::runtime_error("selected terminal item missing");
-        if (op == "waitText" || op == "waitState" || op == "waitClipboard" || op == "waitPrimary" || op == "waitProblem" || op == "waitOpenedUrl") {
+        if (op == "waitText" || op == "waitState" || op == "waitClipboard" || op == "waitPrimary" || op == "waitProblem" || op == "waitOpenedUrl" || op == "waitControl") {
             if (!m_waiting) { m_wait.start(); m_waiting = true; }
             if (op == "waitText") complete = m_terminal && m_terminal->visibleText().contains(s["text"].toString());
             else if (op == "waitPrimary") complete = s["exact"].toBool() ? QGuiApplication::clipboard()->text(QClipboard::Selection) == s["text"].toString() : QGuiApplication::clipboard()->text(QClipboard::Selection).contains(s["text"].toString());
             else if (op == "waitClipboard") complete = s["exact"].toBool() ? QGuiApplication::clipboard()->text() == s["text"].toString() : QGuiApplication::clipboard()->text().contains(s["text"].toString());
+            else if (op == "waitControl") {
+                auto *object = m_window->findChild<QObject *>(s["control"].toString());
+                if (!object) object = controlItem(m_window->contentItem(), s["control"].toString());
+                complete = object && QJsonValue::fromVariant(object->property(s["property"].toString().toUtf8().constData())) == s["value"];
+            }
             else if (op == "waitOpenedUrl") complete = m_openedUrls.contains(s["text"].toString());
             else if (op == "waitProblem") complete = m_backend->problem().contains(s["text"].toString());
             else {
                 QJsonValue value(m_backend->snapshot());
-                for (const auto &part : s["field"].toString().split('.')) value = value.toObject()[part];
+                for (const auto &part : s["field"].toString().split('.')) {
+                    if (value.isArray()) { bool ok = false; const int index = part.toInt(&ok); const auto values = value.toArray(); value = ok && index >= 0 && index < values.size() ? values[index] : QJsonValue(); }
+                    else value = value.toObject()[part];
+                }
                 complete = value == s["value"];
             }
             if (!complete && m_wait.elapsed() > s["timeout"].toInt(15000)) throw std::runtime_error(("timeout at " + op + ": " + s["text"].toString() + s["field"].toString()).toStdString());
@@ -158,6 +193,19 @@ void TestDriver::step() {
         } else if (op == "searchPrevious" || op == "searchNext") {
             clickControl(op == "searchPrevious" ? "findPrevious" : "findNext");
         } else if (op == "searchKey") {
+            QTest::keyClick(m_window, key(s["key"].toString()), modifiers(s["mods"].toString()));
+        } else if (op == "click") {
+            clickControl(s["control"].toString());
+        } else if (op == "field") {
+            auto *item = controlItem(m_window->contentItem(), s["control"].toString());
+            if (!item) throw std::runtime_error("field not found");
+            item->forceActiveFocus();
+            QTest::keyClick(m_window, Qt::Key_A, Qt::ControlModifier);
+            for (const auto character : s["text"].toString()) {
+                if (character.unicode() > 127) throw std::runtime_error("field accepts ASCII");
+                QTest::keyClick(m_window, character.toLatin1());
+            }
+        } else if (op == "controlKey") {
             QTest::keyClick(m_window, key(s["key"].toString()), modifiers(s["mods"].toString()));
         } else if (op == "wheel") {
             const auto pos = m_terminal->mapToScene(QPointF(m_terminal->cellWidth() * (s["x"].toInt() + .5), m_terminal->cellHeight() * (s["y"].toInt() + .5)));
@@ -242,6 +290,10 @@ void TestDriver::step() {
         } else if (op == "snapshot") {
             auto snapshot = m_backend->snapshot();
             snapshot["clipboard"] = QGuiApplication::clipboard()->text();
+            if (m_terminal->actions()) {
+                snapshot["shortcut_pending"] = m_terminal->actions()->pending();
+                snapshot["shortcut_modes"] = QJsonArray::fromStringList(m_terminal->actions()->activeModes());
+            }
             snapshot["supportsSelection"] = QGuiApplication::clipboard()->supportsSelection();
             snapshot["selectionText"] = QGuiApplication::clipboard()->text(QClipboard::Selection);
             snapshot["problem"] = m_backend->problem();
@@ -253,6 +305,29 @@ void TestDriver::step() {
                 panes.append(QJsonObject{{"pane",id},{"columns",item->columns()},{"rows",item->rows()},
                     {"x",at.x()},{"y",at.y()},{"width",item->width()},{"height",item->height()},
                     {"text",item->visibleText()}});
+            }
+            if (s.contains("control")) {
+                const auto object = m_window->findChild<QObject *>(s["control"].toString());
+                if (!object) throw std::runtime_error("snapshot control missing");
+                QJsonObject control;
+                for (const auto *property : {"x","y","width","height","padding","contentWidth","contentHeight"})
+                    control[property] = QJsonValue::fromVariant(object->property(property));
+                auto *content = qobject_cast<QQuickItem *>(object->property("contentItem").value<QObject *>());
+                if (content) {
+                    control["actualContentWidth"] = content->width();
+                    double overflow = 0;
+                    const auto inspect = [&](const auto &self, QQuickItem *item) -> void {
+                        if (item->clip()) return;
+                        for (auto *child : item->childItems()) {
+                            if (!child->isVisible()) continue;
+                            overflow = std::max(overflow, std::max(-child->x(), child->x() + child->width() - item->width()));
+                            self(self, child);
+                        }
+                    };
+                    inspect(inspect, content);
+                    control["horizontalOverflow"] = overflow;
+                }
+                snapshot["control"] = control;
             }
             snapshot["openedUrls"] = QJsonArray::fromStringList(m_openedUrls);
             snapshot["qt_panes"] = panes;
@@ -293,7 +368,12 @@ void TestDriver::step() {
 void TestDriver::finish(bool success, const QString &message) {
     m_timer.stop();
     QJsonObject report{{"success", success}, {"step", m_index}, {"message", message}, {"evidence", m_evidence}};
-    if (!success && m_terminal) report["visible_text"] = m_terminal->visibleText();
+    if (!success) {
+        if (m_terminal) report["visible_text"] = m_terminal->visibleText();
+        report["state"] = m_backend->snapshot();
+        report["problem"] = m_backend->problem();
+        if (!m_report.isEmpty()) m_window->grabWindow().save(m_report + ".png");
+    }
     try { if (!m_report.isEmpty()) writeJson(m_report, report); } catch (...) {}
     QTextStream(stdout) << QJsonDocument(report).toJson(QJsonDocument::Compact) << Qt::endl;
     QCoreApplication::exit(success ? 0 : 1);

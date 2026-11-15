@@ -303,6 +303,7 @@ bool TerminalItem::sendKey(QKeyEvent *event, const QString &action) {
     return true;
 }
 void TerminalItem::keyPressEvent(QKeyEvent *event) {
+    if (m_actions && (m_actions->handleKey(event) || m_actions->modalOpen())) { event->accept(); return; }
     if (sendKey(event, event->isAutoRepeat() ? "repeat" : "press")) {
         selection("clear", {});
         update();
@@ -310,6 +311,7 @@ void TerminalItem::keyPressEvent(QKeyEvent *event) {
     event->accept();
 }
 void TerminalItem::keyReleaseEvent(QKeyEvent *event) {
+    if (m_actions && m_actions->handleKey(event) && !m_pressed.contains(event->key())) { event->accept(); return; }
     if (!event->isAutoRepeat()) {
         sendKey(event, "release");
         m_pressed.remove(event->key());
@@ -484,3 +486,6 @@ void TerminalItem::hoverMoveEvent(QHoverEvent *event) {
     pointer(&motion, "motion");
     event->accept();
 }
+
+void TerminalItem::scroll(int lines) { if (m_frontend) m_frontend->sendPane(m_paneId, "scroll", {{"lines", lines}}); }
+void TerminalItem::reconnect() { if (m_frontend) m_frontend->sendPane(m_paneId, "reconnect"); }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "frontend.h"
+#include "actions.h"
 #include <QFont>
 #include <QJsonArray>
 #include <QQuickPaintedItem>
@@ -11,6 +12,7 @@ QJsonObject terminalKey(const QKeyEvent &event, const QString &action);
 
 class TerminalItem : public QQuickPaintedItem {
     Q_OBJECT
+    Q_PROPERTY(Actions *actions READ actions WRITE setActions NOTIFY actionsChanged)
     Q_PROPERTY(Frontend *frontend READ frontend WRITE setFrontend NOTIFY frontendChanged)
     Q_PROPERTY(QString paneId READ paneId WRITE setPaneId NOTIFY paneIdChanged)
     Q_PROPERTY(QVariantMap paneState READ paneState NOTIFY textChanged)
@@ -19,6 +21,8 @@ class TerminalItem : public QQuickPaintedItem {
     Q_PROPERTY(QString visibleText READ visibleText NOTIFY textChanged)
 public:
     explicit TerminalItem(QQuickItem *parent = nullptr);
+    Actions *actions() const { return m_actions; }
+    void setActions(Actions *actions) { m_actions = actions; emit actionsChanged(); }
     Frontend *frontend() const { return m_frontend; }
     void setFrontend(Frontend *frontend);
     QString paneId() const { return m_paneId; }
@@ -26,6 +30,8 @@ public:
     QVariantMap paneState() const { return m_state.toVariantMap(); }
     QString visibleText() const;
     void paint(QPainter *painter) override;
+    Q_INVOKABLE void scroll(int lines);
+    Q_INVOKABLE void reconnect();
     Q_INVOKABLE void search(const QString &text);
     Q_INVOKABLE void searchStep(bool older);
     Q_INVOKABLE void promptStep(bool older);
@@ -40,6 +46,7 @@ public:
     bool event(QEvent *event) override;
 signals:
     void frontendChanged();
+    void actionsChanged();
     void paneIdChanged();
     void textChanged();
 protected:
@@ -68,6 +75,7 @@ private:
     quint64 m_copyRevision = 0;
     bool sendKey(QKeyEvent *event, const QString &action);
     Frontend *m_frontend = nullptr;
+    Actions *m_actions = nullptr;
     QJsonObject m_frame;
     QJsonObject m_state;
     QString m_paneId;

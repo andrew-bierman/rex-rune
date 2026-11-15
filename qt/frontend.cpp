@@ -33,10 +33,11 @@ Frontend::~Frontend() {
     }
 }
 
-void Frontend::start(const QString &program, const QString &endpoint, const QString &session) {
+void Frontend::start(const QString &program, const QString &endpoint, const QString &session, const QString &config) {
     QStringList args;
     if (!endpoint.isEmpty()) args << "--endpoint" << endpoint;
     if (!session.isEmpty()) args << "--session" << session;
+    if (!config.isEmpty()) args << "--config" << config;
     m_process.start(program, args);
 }
 
@@ -71,8 +72,8 @@ bool Frontend::sendTarget(const QString &op, QJsonObject fields) {
 
 bool Frontend::sendPane(const QString &id, const QString &op, QJsonObject fields) {
     const auto pane = paneSnapshot(id);
-    const bool local = op == "scroll" || op == "search" || op == "search_step" || op == "prompt_step" || op == "selection";
-    if (!m_hello || (local ? !pane["frame"].isObject() : !pane["terminal"].toObject()["connected"].toBool())) return false;
+    const bool local = op == "scroll" || op == "search" || op == "search_step" || op == "prompt_step" || op == "selection" || op == "reconnect";
+    if (!m_hello || (op != "reconnect" && (local ? !pane["frame"].isObject() : !pane["terminal"].toObject()["connected"].toBool()))) return false;
     for (const auto *name : {"session", "window", "pane"}) {
         const auto value = pane[name].toString();
         if (value.isEmpty()) return false;
@@ -88,6 +89,16 @@ void Frontend::selectPane(const QString &id) {
     send({{"op", "select_pane"}, {"session", m_state["session"]}, {"window", m_state["window"]}, {"pane", id}});
 }
 void Frontend::refresh() { send({{"op", "refresh"}}); }
+void Frontend::reloadShortcuts() { send({{"op","keymap_reload"}}); }
+void Frontend::recordShortcut(const QString &action, const QStringList &keys, const QVariantMap &args, const QString &mode, const QString &operation) {
+    send({{"op","shortcut"},{"action",action},{"keys",QJsonArray::fromStringList(keys)},
+          {"args",QJsonObject::fromVariantMap(args)},{"mode",mode},{"operation",operation}});
+}
+void Frontend::performAction(const QString &action, const QVariantMap &args, const QString &origin) {
+    send({{"op","action"},{"action",action},{"args",QJsonObject::fromVariantMap(args)},{"origin",origin},
+          {"generation",m_state["keymap"].toObject()["generation"]},{"revision",m_state["keymap"].toObject()["revision"]},{"session",m_state["session"]},
+          {"window",m_state["window"]},{"pane",m_state["pane"]}});
+}
 void Frontend::dismissProblem() { m_problem.clear(); emit problemChanged(); }
 
 void Frontend::fail(const QString &message) {
@@ -133,6 +144,10 @@ void Frontend::read() {
         else if (type == "clipboard" && m_visible && object["epoch"] == m_state["epoch"]
                  && object["session"] == m_state["session"] && object["pane"] == m_state["pane"]
                  && m_state["connected"].toBool()) QGuiApplication::clipboard()->setText(object["text"].toString());
+        else if (type == "action" && m_visible && object["epoch"] == m_state["epoch"] &&
+                 object["generation"] == m_state["keymap"].toObject()["generation"] &&
+                 object["session"] == m_state["session"] && object["pane"] == m_state["pane"])
+            emit actionRequested(object["action"].toString(), object["args"].toObject().toVariantMap());
         else if (type == "error") { m_problem = object["message"].toString(); emit problemChanged(); }
     }
 }

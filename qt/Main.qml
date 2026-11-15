@@ -17,6 +17,7 @@ ApplicationWindow {
     palette.windowText: "#e8eef6"
     palette.base: "#0d1524"
     palette.text: "#e8eef6"
+    palette.placeholderText: "#93a3b8"
     palette.button: "#142337"
     palette.buttonText: "#e8eef6"
     palette.highlight: "#7cc4ff"
@@ -36,7 +37,35 @@ ApplicationWindow {
     }
     function find() { findBar.terminal = selectedTerminal(); findBar.open() }
     FindBar { id: findBar; anchors.top: parent.top; anchors.right: parent.right; z: 100; onClosed: root.restoreTerminal() }
-    function restoreTerminal() { const term = selectedTerminal(); if (term) term.forceActiveFocus() }
+    function restoreTerminal() {
+        if (commandPopup.visible || shortcutPopup.visible || findBar.visible) return
+        const term = selectedTerminal(); if (term) term.forceActiveFocus()
+    }
+    function action(id, args, origin) {
+        const term = selectedTerminal()
+        switch (id) {
+        case "client.palette.toggle": commandPopup.visible ? commandPopup.close() : commandPopup.open(); break
+        case "client.settings": shortcutPopup.open(); break
+        case "session.refresh": backend.refresh(); break
+        case "session.switch": sessionPicker.popup.open(); break
+        case "pane.copy": if (term) term.copy(); break
+        case "pane.paste": if (term) term.paste(); break
+        case "pane.select_all": if (term) term.selectAll(); break
+        case "client.search": find(); break
+        case "client.find.next": if (term) term.searchStep(false); break
+        case "client.find.previous": if (term) term.searchStep(true); break
+        case "client.prompt.previous": if (term) term.promptStep(true); break
+        case "client.prompt.next": if (term) term.promptStep(false); break
+        case "client.scroll": if (term) term.scroll(args.lines); break
+        case "pane.reconnect": if (term) term.reconnect(); break
+        default: backend.performAction(id, args, origin)
+        }
+    }
+    Commands { id: commandPopup; objectName: "commandsPopup"; parent: Overlay.overlay; actions: workspaceActions; onFinished: root.restoreTerminal() }
+    ShortcutSettings { id: shortcutPopup; objectName: "shortcutPopup"; parent: Overlay.overlay; actions: workspaceActions; frontend: backend; onFinished: root.restoreTerminal() }
+    Binding { target: workspaceActions; property: "searching"; value: findBar.visible }
+    Binding { target: workspaceActions; property: "modalOpen"; value: commandPopup.visible || shortcutPopup.visible || findBar.visible }
+    Connections { target: workspaceActions; function onRequested(id, args, origin) { root.action(id, args, origin) } }
     property string selectedPane: state.pane || ""
     onSelectedPaneChanged: { if (findBar.visible) findBar.close(); Qt.callLater(restoreTerminal) }
 
@@ -51,6 +80,7 @@ ApplicationWindow {
                 anchors.margins: 8
                 spacing: 8
                 ComboBox {
+                    id: sessionPicker
                     objectName: "sessions"
                     Layout.fillWidth: true
                     Layout.preferredWidth: 180
@@ -95,12 +125,34 @@ ApplicationWindow {
                     objectName: "copyButton"
                     text: "Copy"
                     Accessible.name: "Copy selection"
-                    onClicked: { root.selectedTerminal() && root.selectedTerminal().copy(); root.restoreTerminal() }
+                    ToolTip.text: "Copy" + (workspaceActions.hint("pane.copy") ? " · " + workspaceActions.hint("pane.copy") : "")
+                    ToolTip.visible: hovered
+                    onClicked: { workspaceActions.run("pane.copy"); root.restoreTerminal() }
                 }
                 ToolButton {
                     objectName: "pasteButton"
                     text: "Paste"
-                    onClicked: { const term = root.selectedTerminal(); if (term) term.paste() }
+                    onClicked: workspaceActions.run("pane.paste")
+                }
+                Label {
+                    visible: workspaceActions.pending.length > 0 || workspaceActions.activeModes.length > 0
+                    text: workspaceActions.pending || workspaceActions.activeModes.join(" · ")
+                    Layout.maximumWidth: 150
+                    elide: Text.ElideRight
+                }
+                ToolButton {
+                    objectName: "commandsButton"
+                    text: "⌘"
+                    Accessible.name: "Commands"
+                    ToolTip.text: "Commands" + (workspaceActions.hint("client.palette.toggle") ? " · " + workspaceActions.hint("client.palette.toggle") : "")
+                    ToolTip.visible: hovered
+                    onClicked: workspaceActions.run("client.palette.toggle")
+                }
+                ToolButton {
+                    objectName: "settingsButton"
+                    text: "⚙"
+                    Accessible.name: "Settings"
+                    onClicked: workspaceActions.run("client.settings")
                 }
                 ToolButton {
                     id: more
@@ -115,11 +167,11 @@ ApplicationWindow {
                         MenuItem {
                             objectName: "selectAllButton"
                             text: "Select all terminal text"
-                            onTriggered: { root.selectedTerminal() && root.selectedTerminal().selectAll(); root.restoreTerminal() }
+                            onTriggered: { workspaceActions.run("pane.select_all"); root.restoreTerminal() }
                         }
-                        MenuItem { objectName: "previousPromptButton"; text: "Previous prompt"; onTriggered: { const term = root.selectedTerminal(); if (term) term.promptStep(true); root.restoreTerminal() } }
-                        MenuItem { objectName: "nextPromptButton"; text: "Next prompt"; onTriggered: { const term = root.selectedTerminal(); if (term) term.promptStep(false); root.restoreTerminal() } }
-                        MenuItem { text: "Refresh sessions"; onTriggered: backend.refresh() }
+                        MenuItem { objectName: "previousPromptButton"; text: "Previous prompt"; onTriggered: { workspaceActions.run("client.prompt.previous"); root.restoreTerminal() } }
+                        MenuItem { objectName: "nextPromptButton"; text: "Next prompt"; onTriggered: { workspaceActions.run("client.prompt.next"); root.restoreTerminal() } }
+                        MenuItem { text: "Refresh sessions"; onTriggered: workspaceActions.run("session.refresh") }
                     }
                 }
             }
@@ -193,9 +245,10 @@ ApplicationWindow {
                         width: Math.max(0, parent.width - 8)
                         height: Math.max(0, parent.height - y)
                         frontend: backend
+                        actions: workspaceActions
                         paneId: card.modelData
                         Accessible.name: "Terminal " + (card.pane.label || "")
-                        Component.onCompleted: if (root.selectedPane === card.modelData) forceActiveFocus()
+                        Component.onCompleted: if (root.selectedPane === card.modelData) root.restoreTerminal()
                     }
                 }
             }

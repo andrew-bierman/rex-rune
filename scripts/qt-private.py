@@ -49,6 +49,11 @@ def main():
            and k not in ('DISPLAY', 'WAYLAND_DISPLAY', 'DBUS_SESSION_BUS_ADDRESS')}
     for name in ('home', 'config', 'state', 'cache', 'runtime'):
         (work / name).mkdir(mode=0o700, exist_ok=True)
+    qt_config = work / 'config' / 'rex-qt'
+    qt_config.mkdir()
+    (qt_config / 'workspace.shortcuts.json').write_text(json.dumps([
+        {'keys': 'ctrl+shift+c', 'action': None}, {'keys': 'ctrl+shift+v', 'action': None}
+    ]))
     endpoint = 'unix://' + str(work / 'rex.sock')
     env.update(HOME=str(work / 'home'), XDG_CONFIG_HOME=str(work / 'config'),
                XDG_STATE_HOME=str(work / 'state'), XDG_CACHE_HOME=str(work / 'cache'),

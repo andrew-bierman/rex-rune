@@ -9,7 +9,10 @@ use rex_rune::{
 use rexrs::api::session;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::time::{Duration, Instant};
+use std::{
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 pub const VERSION: u64 = 2;
 
@@ -23,6 +26,9 @@ struct Target {
 /// Selection belongs to this frontend; the server still decides the active tab.
 #[derive(Default)]
 pub struct Adapter {
+    pub settings: rex_rune::settings::Settings,
+    pub settings_path: Option<PathBuf>,
+    pub keymap_generation: u64,
     pane: Option<String>,
     pending_session: Option<String>,
     pending_window: Option<String>,
@@ -46,6 +52,53 @@ fn visible_terminals(window: &session::Window) -> impl Iterator<Item = &session:
 }
 
 impl Adapter {
+    pub fn configure(&mut self, path: PathBuf) -> Result<()> {
+        self.settings = rex_rune::settings::Settings::load(&path)?;
+        self.settings_path = Some(path);
+        self.keymap_generation = 1;
+        Ok(())
+    }
+
+    pub fn take_actions(&self, model: &mut HostModel) -> Vec<Value> {
+        std::mem::take(&mut model.client_actions)
+            .into_iter()
+            .filter(|queued| {
+                queued.generation == self.keymap_generation
+                    && crate::keymap::known(&queued.action.action)
+                    && crate::keymap::validate(
+                        &queued.action.action,
+                        queued.action.args.as_ref().unwrap_or(&Value::Null),
+                    )
+                    .is_ok()
+                    && queued.session == model.selected
+                    && queued.block.as_deref() == model.focused()
+            })
+            .map(|queued| {
+                json!({"type":"action","version":VERSION,"epoch":model.connection_epoch,
+            "generation":queued.generation,"session":queued.session,"pane":queued.block,
+            "action":queued.action.action,"args":queued.action.args})
+            })
+            .collect()
+    }
+
+    pub fn declare_keymap(&self, host: &HostConnection) -> Result<()> {
+        host.commands
+            .send(HostCommand::Keymap(Box::new(crate::keymap::declaration(
+                &self.settings,
+                self.keymap_generation,
+            ))))?;
+        Ok(())
+    }
+
+    fn reload_shortcuts(&mut self, host: &HostConnection) -> Result<()> {
+        if let Some(path) = &self.settings_path
+            && self.settings.shortcut_file.reload(path)
+        {
+            self.keymap_generation = self.keymap_generation.wrapping_add(1);
+            self.declare_keymap(host)?;
+        }
+        Ok(())
+    }
     fn target(&self, model: &HostModel) -> Option<Target> {
         let session = model.selected.as_ref()?;
         if self
@@ -154,10 +207,124 @@ impl Adapter {
         }
         match op {
             "shutdown" => return Ok(false),
-            "refresh" => host.commands.send(HostCommand::RefreshSessions)?,
-            "visibility" => host.commands.send(HostCommand::Visibility(
-                request["visible"].as_bool().context("invalid visibility")?,
-            ))?,
+            "refresh" => {
+                self.reload_shortcuts(host)?;
+                host.commands.send(HostCommand::RefreshSessions)?;
+            }
+            "keymap_reload" => self.reload_shortcuts(host)?,
+            "shortcut" => {
+                let action = field("action")?;
+                let keys: Vec<String> = serde_json::from_value(request["keys"].clone())
+                    .context("invalid shortcut keys")?;
+                let args = (!request["args"].is_null()).then(|| request["args"].clone());
+                let mode = request["mode"]
+                    .as_str()
+                    .filter(|mode| !mode.is_empty())
+                    .map(str::to_owned);
+                let operation = field("operation")?;
+                let mut settings = self.settings.clone();
+                crate::keymap::record(
+                    &mut settings,
+                    &action,
+                    keys,
+                    args,
+                    mode,
+                    &operation,
+                    model
+                        .keymap
+                        .as_ref()
+                        .map_or(&[], |map| map.reply.actions.as_slice()),
+                )?;
+                settings.save(
+                    self.settings_path
+                        .as_ref()
+                        .context("settings path unavailable")?,
+                )?;
+                self.settings = settings;
+                self.keymap_generation = self.keymap_generation.wrapping_add(1);
+                self.declare_keymap(host)?;
+            }
+            "action" => {
+                ensure!(
+                    model.connected,
+                    "server action unavailable while disconnected"
+                );
+                ensure!(
+                    request["generation"].as_u64() == Some(self.keymap_generation),
+                    "shortcut map changed; action discarded"
+                );
+                ensure!(
+                    request["revision"].as_u64() == Some(model.keymap_revision),
+                    "server shortcut map changed; action discarded"
+                );
+                let action = field("action")?;
+                ensure!(
+                    !crate::keymap::known(&action),
+                    "local action has no frontend handler"
+                );
+                let map = model
+                    .keymap
+                    .as_ref()
+                    .filter(|map| map.generation == self.keymap_generation)
+                    .context("server actions not ready")?;
+                ensure!(
+                    map.reply
+                        .actions
+                        .iter()
+                        .any(|a| a.name == action && a.kind.as_deref() != Some("client")),
+                    "unknown server action"
+                );
+                let session = request["session"]
+                    .as_str()
+                    .filter(|v| !v.is_empty())
+                    .map(str::to_owned);
+                let pane = request["pane"]
+                    .as_str()
+                    .filter(|v| !v.is_empty())
+                    .map(str::to_owned);
+                let target = self.target(&model);
+                ensure!(
+                    session == model.selected
+                        && pane.as_deref() == target.as_ref().map(|t| t.pane.as_str()),
+                    "action target changed"
+                );
+                ensure!(
+                    request["args"].is_null() || request["args"].is_object(),
+                    "action arguments must be an object"
+                );
+                let mut command = rexrs::api::client::Action::new(action);
+                command.session_id = session;
+                command.block_id = pane;
+                command.args = request["args"]
+                    .as_object()
+                    .filter(|v| !v.is_empty())
+                    .map(|_| request["args"].clone());
+                let origin = request["origin"].as_str().unwrap_or("api");
+                ensure!(
+                    matches!(origin, "key" | "palette" | "api"),
+                    "invalid action origin"
+                );
+                command.origin = Some(origin.into());
+                host.commands.send(HostCommand::Action {
+                    generation: self.keymap_generation,
+                    request: Box::new(command),
+                })?;
+            }
+            "reconnect" => {
+                let connection = self.connection_scope(&model, request, false, false, true)?;
+                if model.connected {
+                    connection.commands.try_send(Command::Reconnect)?;
+                } else {
+                    host.commands.send(HostCommand::Reconnect)?;
+                }
+            }
+            "visibility" => {
+                let visible = request["visible"].as_bool().context("invalid visibility")?;
+                if visible {
+                    self.reload_shortcuts(host)?;
+                }
+                host.commands.send(HostCommand::Visibility(visible))?;
+            }
             "select_session" => {
                 let session = field("session")?;
                 ensure!(
@@ -321,7 +488,8 @@ impl Adapter {
             "session":model.selected,"window":model.window().and_then(|w| w.window_id.as_ref()),
             "pane":target.as_ref().map(|t| &t.pane),
             "sessions":model.sessions.iter().map(|s| json!({"id":s.session_id,"label":s.label})).collect::<Vec<_>>(),
-            "windows":windows,"panes":panes,"dividers":dividers,"terminal":terminal_state,"frame":frame})
+            "windows":windows,"panes":panes,"dividers":dividers,"terminal":terminal_state,"frame":frame,
+            "keymap":crate::keymap::state(model, &self.settings, self.keymap_generation)})
     }
 }
 
@@ -776,5 +944,47 @@ mod tests {
                 .is_ok()
         );
         assert!(adapter.connection(&model, &request, false).is_err());
+    }
+    #[test]
+    fn queued_client_actions_are_taken_once_and_reject_old_maps_targets_and_arguments() {
+        let mut model = fixture();
+        let adapter = Adapter {
+            keymap_generation: 7,
+            ..Default::default()
+        };
+        let queued = |generation, block: &str, args| rex_rune::connection::actions::Queued {
+            generation,
+            session: Some("session-a".into()),
+            block: Some(block.into()),
+            action: rexrs::api::client::ClientAction {
+                action: "pane.copy".into(),
+                args,
+            },
+        };
+        model.client_actions = vec![
+            queued(6, "pane-a", None),
+            queued(7, "pane-b", None),
+            queued(7, "pane-a", Some(json!({"unknown":true}))),
+            queued(7, "pane-a", None),
+        ];
+        let actions = adapter.take_actions(&mut model);
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0]["action"], "pane.copy");
+        assert!(adapter.take_actions(&mut model).is_empty());
+    }
+
+    #[test]
+    fn superseded_server_action_generation_never_reaches_the_host_worker() {
+        let (host, requests) = host_fixture(fixture());
+        let mut adapter = Adapter::default();
+        assert!(
+            adapter
+                .handle(
+                    &host,
+                    &json!({"version":2,"epoch":0,"op":"action","generation":17,"action":"fixture"})
+                )
+                .is_err()
+        );
+        assert!(requests.is_empty());
     }
 }

@@ -68,6 +68,10 @@ rejection; both child and frontend must be upgraded together:
 | `selection` | visible target, restore `generation`, request `revision`, phase and pixel/cell geometry |
 | `mouse`, `wheel` | focused target plus the core pointer `payload` |
 | `visibility` | current epoch plus window `visible` |
+| `keymap_reload` | none beyond epoch |
+| `shortcut` | `action`, `keys`, `args`, `mode`, `operation` (`bind`, `remove`, `restore`) |
+| `action` | server `action`, `args`, `origin`, target, current keymap `generation` and `revision` |
+| `reconnect` | visible target |
 | `refresh`, `shutdown` | none |
 
 A complete target names `session`, `window`, `pane` and current connection `epoch`.
@@ -87,7 +91,19 @@ declaration, reads no Rune settings, and exposes no server lifecycle operation.
 
 ## Extension limits
 
-This version sends the current multi-pane scene, not a scrollback database. Graphics and the full workspace action/keymap surface are not yet exposed.
+The `keymap` state projects implemented client action metadata, server action metadata,
+core-resolved chord components, effective bindings, modes, diagnostics and recorded
+changes. Qt matches input against those parsed chords; Rune resolves defaults and
+override layers. Commands and shortcut hints share that projection. The optional
+`--config` path defaults to Qt's separate `rex-qt/workspace.json`; its sibling
+`workspace.shortcuts.json` override file is read-only. Recorded edits are saved in
+Qt's settings and never alter Rune's profile. Refresh and foregrounding reload the
+override file. Server actions use the public core action command with their actual
+origin. Generation/revision and target checks discard stale dispatches; failed
+actions are not replayed. Core-queued client actions are validated and emitted once
+after the matching state publication. Current client actions deny remote access.
+
+This version sends the current multi-pane scene, not a scrollback database. Graphics and the full workspace lifecycle surface are not yet exposed.
 Selection, formatting and scrollback/search stay in the core; Qt never parses
 VT output or builds its own history database. Local viewport requests can be
 issued during pauses; the core worker determines when its stream can process

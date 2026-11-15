@@ -31,10 +31,21 @@ core. Navigation and copying do not claim size. Another client's owned size is
 respected until this client claims the pane again.
 
 Drag to select visible cells, then use Copy. Paste uses the Qt clipboard.
-Terminal actions (`⋯`) contains Select visible text. This milestone consumes no
-fixed clipboard chords: ordinary keys, including Ctrl Shift C/V, Tab, Return
-and Escape, go through `client.key`, where Rex's Lua bindings may handle them.
-Removable local workspace bindings remain deferred.
+Terminal actions (`⋯`) contains Select visible text. Workspace shortcuts use Rex Rune's public layered keymap: defaults, host
+configuration, Qt's read-only override file, then recorded changes. Every binding
+is removable or replaceable in Settings → Shortcuts. Commands, hints and key
+dispatch use that same effective map. Unconsumed keys retain `client.key` and
+paired-release behavior. Modes and sequences stay in the Qt interaction layer.
+Qt settings default to `$XDG_CONFIG_HOME/rex-qt/workspace.json` (or
+`~/.config/rex-qt/workspace.json`); `--config PATH` selects a separate profile.
+The core's sibling-file rule names the read-only override `workspace.shortcuts.json`.
+Rune preferences are never imported or written by default.
+
+Find searches the screen and scrollback in the core. The terminal menu offers
+prompt navigation and history-wide selection. Shift overrides program mouse
+reporting for selection. Copy-on-selection and PRIMARY are opt-in policies;
+link opening requires Ctrl press/release on the same validated link.
+
 
 ## Verification driver
 
