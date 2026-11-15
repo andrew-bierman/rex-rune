@@ -68,8 +68,8 @@ rex.bind("ctrl+alt+q","qt_queue")
             raw = work / 'raw.py'
             raw.write_text("import os,select,sys,termios,time,tty\n"
                            "old=termios.tcgetattr(0);data=b''\n"
-                           "try:\n tty.setraw(0)\n os.write(1,b'\\x1b[2J\\x1b[HRAW_READY')\n deadline=time.monotonic()+7\n"
-                           " while time.monotonic()<deadline:\n  if select.select([0],[],[],.1)[0]:data+=os.read(0,1024)\n"
+                           "try:\n tty.setraw(0)\n os.write(1,b'\\x1b[2J\\x1b[HRAW_READY')\n deadline=time.monotonic()+30\n"
+                           " while time.monotonic()<deadline and not data.endswith(b'z'):\n  if select.select([0],[],[],.1)[0]:data+=os.read(0,1024)\n"
                            "finally:termios.tcsetattr(0,termios.TCSANOW,old)\n"
                            f"open({str(work / 'raw.bin')!r},'wb').write(data)\nprint('\\r\\nRAW_DONE',flush=True)\n")
             enhanced = work / 'enhanced.py'
