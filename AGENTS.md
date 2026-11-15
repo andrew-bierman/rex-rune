@@ -2,13 +2,13 @@
 
 ## Keep agent browser work off the primary desktop
 
-Use an isolated agent workspace or CUA desktop for browser research and automation. A new window or a small Hyprland window on Andrew's primary desktop is not isolation.
+Use the full Arch CUA desktop in an agent-owned workspace for browser research and automation. Camofox has also worked well and is a preferred real-browser option. A new window or a small Hyprland window on Andrew's primary desktop is not isolation.
 
 Do not open browser or terminal windows on the primary desktop, switch its workspaces, or steal focus unless Andrew explicitly requests that interaction. Keep routine work in the agent's existing terminal session.
 
-If isolated CUA is unavailable, use a headless browser or a separate virtual display. Never fall back silently to Andrew's native DISPLAY or WAYLAND_DISPLAY. If an isolated alternative cannot complete the task, report the limitation instead of taking over the primary desktop.
+Prefer an interactive real browser, not headless browsing. If CUA is unavailable, investigate the Arch CUA connection and available agent-owned desktop surfaces rather than treating one failed browser-host connection as proof that CUA is unusable. Use Camofox on an isolated desktop/display when appropriate. Do not silently substitute headless browsing or take over the primary desktop; report a remaining limitation.
 
-Check the browser's launch mode before starting it. For Camofox, do not use CAMOFOX_INTERACTIVE=desktop for autonomous research; use its isolated/headless mode. Do not close or move Andrew's unrelated windows when cleaning up agent-owned resources.
+Check the browser's launch mode and target display before starting it. Camofox may run interactively on the agent's own desktop; do not aim it at Andrew's primary DISPLAY or WAYLAND_DISPLAY. Do not close or move Andrew's unrelated windows when cleaning up agent-owned resources.
 
 --- project-doc ---
 
