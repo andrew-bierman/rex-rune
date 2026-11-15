@@ -14,6 +14,10 @@
 
 namespace {
 QColor color(const QJsonValue &value) { return QColor::fromRgb(value.toInt() & 0xffffff); }
+QString cellText(const QJsonObject &cell) {
+    const auto text = cell["text"].toString();
+    return text.isEmpty() ? QStringLiteral(" ") : text;
+}
 QString keyName(int key) {
     if (key >= Qt::Key_A && key <= Qt::Key_Z) return "key_" + QString(QChar('a' + key - Qt::Key_A));
     if (key >= Qt::Key_0 && key <= Qt::Key_9) return "digit_" + QString(QChar('0' + key - Qt::Key_0));
@@ -61,8 +65,12 @@ QString keyName(int key) {
 }
 
 QJsonObject terminalKey(const QKeyEvent &event, const QString &action) {
-    const auto key = keyName(event.key());
-    if (key.isEmpty()) return {};
+    auto key = keyName(event.key());
+    if (key.isEmpty()) {
+        const auto codepoints = event.text().toUcs4();
+        if (action != "release" && !std::any_of(codepoints.begin(), codepoints.end(), [](char32_t c) { return QChar::isPrint(c); })) return {};
+        key = "unidentified";
+    }
     const auto mods = event.modifiers();
     QStringList names;
     if (mods.testFlag(Qt::ShiftModifier)) names << "shift";
@@ -79,7 +87,10 @@ QJsonObject terminalKey(const QKeyEvent &event, const QString &action) {
     uint base = 0;
     if (event.key() >= Qt::Key_A && event.key() <= Qt::Key_Z) base = 'a' + event.key() - Qt::Key_A;
     else if (event.key() >= Qt::Key_0 && event.key() <= Qt::Key_9) base = '0' + event.key() - Qt::Key_0;
-    else if (event.text().size() == 1 && !mods.testFlag(Qt::ShiftModifier)) base = event.text().at(0).unicode();
+    else if (!mods.testFlag(Qt::ShiftModifier)) {
+        const auto codepoints = event.text().toUcs4();
+        if (codepoints.size() == 1 && QChar::isPrint(codepoints[0])) base = codepoints[0];
+    }
     return {{"key", key}, {"mods", names.join('+')}, {"consumed_mods", consumed ? "shift" : ""},
             {"text", text}, {"unshifted_codepoint", int(base)}, {"composing", false}, {"action", action}};
 }
@@ -160,7 +171,7 @@ QString TerminalItem::visibleText() const {
     QStringList lines;
     for (const auto &rowValue : m_frame["cells"].toArray()) {
         QString line;
-        for (const auto &cell : rowValue.toArray()) if (!cell.toObject()["spacer_tail"].toBool()) line += cell.toObject()["text"].toString();
+        for (const auto &cell : rowValue.toArray()) if (!cell.toObject()["spacer_tail"].toBool()) line += cellText(cell.toObject());
         lines << line;
     }
     return lines.join('\n');
@@ -174,6 +185,11 @@ void TerminalItem::paint(QPainter *p) {
     const auto cursor = m_frame["cursor"].toArray();
     const int cx = cursor.size() == 2 ? cursor[0].toInt() : -1;
     const int cy = cursor.size() == 2 ? cursor[1].toInt() : -1;
+    int cursorCells = 1;
+    if (cy >= 0 && cy < cells.size() && cx >= 0) {
+        const auto row = cells[cy].toArray();
+        if (cx + 1 < row.size() && row[cx + 1].toObject()["spacer_tail"].toBool()) cursorCells = 2;
+    }
     const auto shape = m_frame["cursor_shape"].toString();
     const bool solidCursor = hasActiveFocus() && window() && window()->isActive() && shape == "block";
     const int first = std::min(m_anchor, m_extent), last = std::max(m_anchor, m_extent);
@@ -185,7 +201,7 @@ void TerminalItem::paint(QPainter *p) {
             p->fillRect(rect, color(cell["bg"]));
             const int index = y * cols + x;
             if (first >= 0 && index >= first && index <= last) p->fillRect(rect, QColor(124, 196, 255, 95));
-            if (x == cx && y == cy && solidCursor) p->fillRect(rect, color(m_frame["cursor_color"]));
+            if (y == cy && x >= cx && x < cx + cursorCells && solidCursor) p->fillRect(rect, color(m_frame["cursor_color"]));
         }
         for (int x = 0; x < row.size() && x * m_cellWidth < width(); ++x) {
             const auto cell = row[x].toObject();
@@ -212,7 +228,7 @@ void TerminalItem::paint(QPainter *p) {
         }
     }
     if (cx >= 0 && cy >= 0 && !solidCursor) {
-        QRectF cursorRect(cx * m_cellWidth, cy * m_cellHeight, m_cellWidth, m_cellHeight);
+        QRectF cursorRect(cx * m_cellWidth, cy * m_cellHeight, m_cellWidth * cursorCells, m_cellHeight);
         p->setPen(color(m_frame["cursor_color"]));
         if (!hasActiveFocus() || !window() || !window()->isActive() || shape == "hollow") p->drawRect(cursorRect.adjusted(.5, .5, -.5, -.5));
         else if (shape == "bar") p->fillRect(QRectF(cursorRect.topLeft(), QSizeF(2, m_cellHeight)), color(m_frame["cursor_color"]));
@@ -229,23 +245,29 @@ bool TerminalItem::event(QEvent *event) {
 }
 
 bool TerminalItem::sendKey(QKeyEvent *event, const QString &action) {
-    const auto payload = terminalKey(*event, action);
-    return !payload.isEmpty() && m_frontend && m_frontend->sendTarget("key", {{"payload", payload}});
+    auto payload = terminalKey(*event, action);
+    if (action == "release") {
+        const auto press = m_pressed.constFind(event->key());
+        if (press == m_pressed.cend()) return false;
+        payload["key"] = (*press)["key"];
+        payload["unshifted_codepoint"] = (*press)["unshifted_codepoint"];
+    }
+    if (payload.isEmpty() || !m_frontend || !m_frontend->sendTarget("key", {{"payload", payload}})) return false;
+    if (action == "press") m_pressed.insert(event->key(), payload);
+    return true;
 }
 void TerminalItem::keyPressEvent(QKeyEvent *event) {
-    if (event->modifiers() == (Qt::ControlModifier | Qt::ShiftModifier)) {
-        if (event->key() == Qt::Key_C) { copy(); event->accept(); return; }
-        if (event->key() == Qt::Key_V) { paste(); event->accept(); return; }
-    }
     if (sendKey(event, event->isAutoRepeat() ? "repeat" : "press")) {
-        m_pressed.insert(event->key());
         m_anchor = m_extent = -1;
         update();
     }
     event->accept();
 }
 void TerminalItem::keyReleaseEvent(QKeyEvent *event) {
-    if (!event->isAutoRepeat() && m_pressed.remove(event->key())) sendKey(event, "release");
+    if (!event->isAutoRepeat()) {
+        sendKey(event, "release");
+        m_pressed.remove(event->key());
+    }
     event->accept();
 }
 void TerminalItem::focusOutEvent(QFocusEvent *event) {
@@ -280,7 +302,13 @@ void TerminalItem::mousePressEvent(QMouseEvent *event) {
     event->accept();
 }
 void TerminalItem::mouseMoveEvent(QMouseEvent *event) {
-    if (m_dragging) { m_extent = cellAt(event->position()); update(); }
+    if (m_dragging) {
+        const auto extent = cellAt(event->position());
+        if (extent != m_extent) {
+            m_extent = extent;
+            update();
+        }
+    }
     event->accept();
 }
 void TerminalItem::mouseReleaseEvent(QMouseEvent *event) { m_dragging = false; event->accept(); }
@@ -303,10 +331,11 @@ QString TerminalItem::selectedText() const {
         int start = y == first / cols ? first % cols : 0;
         if (start > 0 && start < row.size() && row[start].toObject()["spacer_tail"].toBool()) --start;
         const int end = y == last / cols ? last % cols : cols - 1;
-        for (int x = start; x <= end && x < row.size(); ++x) if (!row[x].toObject()["spacer_tail"].toBool()) line += row[x].toObject()["text"].toString();
-        if (end == cols - 1) while (line.endsWith(' ')) line.chop(1);
+        for (int x = start; x <= end && x < row.size(); ++x) if (!row[x].toObject()["spacer_tail"].toBool()) line += cellText(row[x].toObject());
+        const bool continues = y < wrapped.size() && wrapped[y].toBool();
+        if (end == cols - 1 && !continues) while (line.endsWith(' ')) line.chop(1);
         result += line;
-        if (y != last / cols && (y >= wrapped.size() || !wrapped[y].toBool())) result += '\n';
+        if (y != last / cols && !continues) result += '\n';
     }
     return result;
 }

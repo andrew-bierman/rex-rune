@@ -4,7 +4,7 @@
 #include <QFont>
 #include <QJsonArray>
 #include <QQuickPaintedItem>
-#include <QSet>
+#include <QHash>
 
 QJsonObject terminalKey(const QKeyEvent &event, const QString &action);
 
@@ -54,7 +54,7 @@ private:
     qreal m_cellWidth = 10;
     qreal m_cellHeight = 20;
     qreal m_ascent = 15;
-    QSet<int> m_pressed;
+    QHash<int, QJsonObject> m_pressed;
     int m_anchor = -1;
     int m_extent = -1;
     bool m_dragging = false;

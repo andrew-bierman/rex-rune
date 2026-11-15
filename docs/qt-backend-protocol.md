@@ -6,6 +6,11 @@ It has no Rune or Qt imports and builds with `--no-default-features`. The
 adapter does not reuse Rune's `Workspace`: navigation, font measurement,
 painting, key translation, focus and clipboard belong to the Qt frontend.
 
+The core currently attaches terminal streams for the active server window's
+visible blocks, rather than a frontend-specific single-pane subscription. The
+adapter publishes only the selected frame. That coupling is retained in this
+milestone instead of refactoring the original Rune workspace behavior.
+
 Standard input and output carry UTF-8 JSON objects, one per line. Standard error
 is diagnostic output. Every object includes `version: 1`; incompatible versions
 are refused. This is a private, versioned interface for these two executables,
@@ -30,8 +35,9 @@ and `overline`. Colors are RGB integers. A wide character occupies its leading
 cell and a spacer tail; a combining sequence stays together in `text`. Qt
 places these strings at measured cell coordinates without parsing VT output.
 
-An `error` response carries `message`; it is a rejected operation, never a
-request to retry input. A frontend must disable input when its child exits or
+An `error` response carries `message`; it reports an immediate rejection or a
+later host-worker failure, never a request to retry input. Host notices are
+consumed once and remain visible until dismissed. A frontend must disable input when its child exits or
 either connection state is false, retaining the last displayed frame.
 
 ## Requests
@@ -50,7 +56,9 @@ Each request has `op` and `version`:
 | `refresh`, `shutdown` | none |
 
 A complete target is the exact selected `session`, `window` and `pane` from
-the current state. Navigation in flight invalidates the old target. The
+the current state. Navigation in flight invalidates the old target. Correlated
+completion or failure releases that pending selection and follows the current
+authoritative server focus, without replaying input. The
 adapter checks membership in the active server view and refuses stale,
 removed, hidden or disconnected targets. Resize also requires size ownership;
 selection and copying never imply a claim. Qt declares the latest desired

@@ -5,6 +5,7 @@
 #include <QClipboard>
 #include <QFile>
 #include <QGuiApplication>
+#include <QInputMethodEvent>
 #include <QJsonDocument>
 #include <QKeyEvent>
 #include <QQuickItem>
@@ -59,6 +60,16 @@ void keyContract() {
     check(terminalKey(shift, "release")["text"] == "");
     QKeyEvent arrow(QEvent::KeyPress, Qt::Key_Left, Qt::AltModifier);
     check(terminalKey(arrow, "press")["key"] == "arrow_left");
+    QKeyEvent unicode(QEvent::KeyPress, Qt::Key_Eacute, Qt::NoModifier, QString::fromUtf8("é"));
+    check(terminalKey(unicode, "press")["key"] == "unidentified");
+    check(terminalKey(unicode, "repeat")["text"] == QString::fromUtf8("é"));
+    QKeyEvent unicodeRelease(QEvent::KeyRelease, Qt::Key_Eacute, Qt::NoModifier);
+    check(terminalKey(unicodeRelease, "release")["key"] == "unidentified");
+    check(terminalKey(unicodeRelease, "release")["text"] == "");
+    QKeyEvent emoji(QEvent::KeyPress, Qt::Key_unknown, Qt::NoModifier, QString::fromUtf8("🙂"));
+    check(terminalKey(emoji, "press")["text"] == QString::fromUtf8("🙂"));
+    QKeyEvent modifier(QEvent::KeyPress, Qt::Key_Shift, Qt::ShiftModifier);
+    check(terminalKey(modifier, "press").isEmpty());
 }
 }
 
@@ -97,10 +108,11 @@ void TestDriver::step() {
         const auto s = m_steps[m_index].toObject();
         const auto op = s["op"].toString();
         bool complete = true;
-        if (op == "waitText" || op == "waitState" || op == "waitClipboard") {
+        if (op == "waitText" || op == "waitState" || op == "waitClipboard" || op == "waitProblem") {
             if (!m_waiting) { m_wait.start(); m_waiting = true; }
             if (op == "waitText") complete = m_terminal->visibleText().contains(s["text"].toString());
             else if (op == "waitClipboard") complete = QGuiApplication::clipboard()->text().contains(s["text"].toString());
+            else if (op == "waitProblem") complete = m_backend->problem().contains(s["text"].toString());
             else {
                 QJsonValue value(m_backend->snapshot());
                 for (const auto &part : s["field"].toString().split('.')) value = value.toObject()[part];
@@ -116,11 +128,27 @@ void TestDriver::step() {
             }
         } else if (op == "key") {
             m_terminal->forceActiveFocus();
-            QTest::keyClick(m_window, key(s["key"].toString()), modifiers(s["mods"].toString()), 5);
+            const auto code = key(s["key"].toString());
+            const auto mods = modifiers(s["mods"].toString());
+            if (s.contains("text") || s.contains("action")) {
+                const auto action = s["action"].toString();
+                if (!action.isEmpty() && action != "press" && action != "repeat" && action != "release") throw std::runtime_error("unknown key action");
+                QKeyEvent event(action == "release" ? QEvent::KeyRelease : QEvent::KeyPress,
+                                code, mods, s["text"].toString(), action == "repeat");
+                QCoreApplication::sendEvent(m_window, &event);
+                if (action.isEmpty()) {
+                    QKeyEvent release(QEvent::KeyRelease, code, mods);
+                    QCoreApplication::sendEvent(m_window, &release);
+                }
+            } else QTest::keyClick(m_window, code, mods, 5);
+        } else if (op == "ime") {
+            m_terminal->forceActiveFocus();
+            QInputMethodEvent event;
+            event.setCommitString(s["text"].toString());
+            QCoreApplication::sendEvent(m_terminal, &event);
         } else if (op == "paste") {
             QGuiApplication::clipboard()->setText(s["text"].toString());
-            m_terminal->forceActiveFocus();
-            QTest::keyClick(m_window, Qt::Key_V, Qt::ControlModifier | Qt::ShiftModifier);
+            clickControl("pasteButton");
         } else if (op == "resize") {
             m_window->resize(s["width"].toInt(), s["height"].toInt());
         } else if (op == "select") {
@@ -152,6 +180,7 @@ void TestDriver::step() {
         } else if (op == "snapshot") {
             auto snapshot = m_backend->snapshot();
             snapshot["clipboard"] = QGuiApplication::clipboard()->text();
+            snapshot["problem"] = m_backend->problem();
             snapshot["qt_columns"] = m_terminal->columns();
             snapshot["qt_rows"] = m_terminal->rows();
             snapshot["qt_cell_width"] = m_terminal->cellWidth();
@@ -159,6 +188,21 @@ void TestDriver::step() {
             writeJson(s["path"].toString(), snapshot);
         } else if (op == "screenshot") {
             if (!m_window->grabWindow().save(s["path"].toString())) throw std::runtime_error("cannot save window image");
+        } else if (op == "assertWideCursor") {
+            const auto frame = m_backend->snapshot()["frame"].toObject();
+            const auto cursor = frame["cursor"].toArray();
+            if (cursor.size() != 2 || frame["cursor_shape"] != "block" || !m_window->isActive() || !m_terminal->hasActiveFocus()) throw std::runtime_error("active block cursor fixture missing");
+            const int x = cursor[0].toInt(), y = cursor[1].toInt();
+            const auto row = frame["cells"].toArray()[y].toArray();
+            if (x + 1 >= row.size() || !row[x + 1].toObject()["spacer_tail"].toBool()) throw std::runtime_error("wide cursor fixture missing");
+            const auto image = m_window->grabWindow();
+            const auto origin = m_terminal->mapToScene(QPointF(0, 0));
+            const auto expected = QColor::fromRgb(frame["cursor_color"].toInt());
+            for (int offset = 0; offset < 2; ++offset) {
+                const QPoint sample(qRound((origin.x() + (x + offset + .5) * m_terminal->cellWidth()) * image.devicePixelRatio()),
+                                    qRound((origin.y() + (y + 1) * m_terminal->cellHeight() - 2) * image.devicePixelRatio()));
+                if (!image.rect().contains(sample) || image.pixelColor(sample) != expected) throw std::runtime_error("block cursor does not cover both wide cells");
+            }
         } else if (op == "pause") {
             if (!m_waiting) { m_wait.start(); m_waiting = true; }
             complete = m_wait.elapsed() >= s["ms"].toInt(200);

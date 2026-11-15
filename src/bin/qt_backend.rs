@@ -70,12 +70,19 @@ fn main() -> Result<()> {
             Err(flume::RecvTimeoutError::Disconnected) => break,
             Err(flume::RecvTimeoutError::Timeout) => {}
         }
-        let model = host.model.lock().expect("host model").clone();
         dirty |= host.wake.drain().next().is_some();
-        for connection in model.terminals.values() {
-            dirty |= connection.wake.drain().next().is_some();
+        let notice = {
+            let mut model = host.model.lock().expect("host model");
+            for connection in model.terminals.values() {
+                dirty |= connection.wake.drain().next().is_some();
+            }
+            model.notice.take()
+        };
+        if let Some(message) = notice {
+            publish(&json!({"type":"error","version":VERSION,"message":message}))?;
         }
         if dirty && Instant::now() >= next_frame {
+            let model = host.model.lock().expect("host model").clone();
             let next = adapter.state(&model);
             if next != previous {
                 publish(&next)?;

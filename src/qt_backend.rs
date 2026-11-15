@@ -8,6 +8,7 @@ use crate::{
     terminal::{CursorShape, Frame},
 };
 use anyhow::{Context, Result, bail, ensure};
+use rexrs::api::session;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
@@ -27,6 +28,23 @@ pub struct Adapter {
     pane: Option<String>,
     pending_session: Option<String>,
     pending_window: Option<String>,
+    pending_navigation: Option<u64>,
+    next_navigation: u64,
+}
+
+fn visible_terminals(window: &session::Window) -> impl Iterator<Item = &session::LayerBlock> {
+    window
+        .layers
+        .iter()
+        .filter(|layer| layer.state.as_deref() != Some("minimized"))
+        .flat_map(|layer| &layer.blocks)
+        .filter(|block| block.creator_name.as_deref() == Some("com.superlogical.terminal"))
+        .filter(|block| {
+            window
+                .zoomed_block_id
+                .as_ref()
+                .is_none_or(|id| block.block_id.as_ref() == Some(id))
+        })
 }
 
 impl Adapter {
@@ -51,20 +69,10 @@ impl Adapter {
         let pane = self
             .pane
             .as_deref()
+            .or(window.zoomed_block_id.as_deref())
             .or(window.focused_block_id.as_deref())?;
-        let visible = window
-            .zoomed_block_id
-            .as_deref()
-            .is_none_or(|id| id == pane)
-            && window
-                .layers
-                .iter()
-                .filter(|l| l.state.as_deref() != Some("minimized"))
-                .flat_map(|l| &l.blocks)
-                .any(|b| {
-                    b.block_id.as_deref() == Some(pane)
-                        && b.creator_name.as_deref() == Some("com.superlogical.terminal")
-                });
+        let visible =
+            visible_terminals(window).any(|block| block.block_id.as_deref() == Some(pane));
         visible.then(|| Target {
             session: session.clone(),
             window: window_id.clone(),
@@ -123,7 +131,7 @@ impl Adapter {
                 self.pending_session = Some(session.clone());
                 self.pending_window = None;
                 self.pane = None;
-                host.commands.send(HostCommand::Select(session))?;
+                self.navigate(host, session, None)?;
             }
             "select_window" => {
                 let session = field("session")?;
@@ -141,12 +149,7 @@ impl Adapter {
                 );
                 self.pending_window = Some(window.clone());
                 self.pane = None;
-                host.commands.send(HostCommand::Navigate {
-                    id: 1,
-                    deadline: Instant::now() + Duration::from_secs(5),
-                    session,
-                    window: Some(window),
-                })?;
+                self.navigate(host, session, Some(window))?;
             }
             "select_pane" => {
                 let target: Target = serde_json::from_value(request.clone())?;
@@ -194,8 +197,32 @@ impl Adapter {
         Ok(true)
     }
 
+    fn navigate(
+        &mut self,
+        host: &HostConnection,
+        session: String,
+        window: Option<String>,
+    ) -> Result<()> {
+        self.next_navigation = self.next_navigation.wrapping_add(1);
+        self.pending_navigation = Some(self.next_navigation);
+        host.commands.send(HostCommand::Navigate {
+            id: self.next_navigation,
+            deadline: Instant::now() + Duration::from_secs(5),
+            session,
+            window,
+        })?;
+        Ok(())
+    }
+
     /// Snapshot a bounded copy of host state, without serializing under its lock.
     pub fn state(&mut self, model: &HostModel) -> Value {
+        if let Some((id, _)) = model.navigation_result
+            && self.pending_navigation == Some(id)
+        {
+            self.pending_navigation = None;
+            self.pending_session = None;
+            self.pending_window = None;
+        }
         if self.pending_session.as_ref() == model.selected.as_ref() {
             self.pending_session = None;
         }
@@ -206,8 +233,6 @@ impl Adapter {
         {
             self.pending_window = None;
         }
-        // A removed local selection follows the remaining server focus, but requests
-        // still carry their old target and therefore cannot reach that replacement.
         if self.pane.is_some() && self.target(model).is_none() {
             self.pane = None;
         }
@@ -234,10 +259,7 @@ impl Adapter {
             Some(json!({"id":w.window_id.as_ref()?,"label":w.label.as_deref().unwrap_or("Shell")}))
         }).collect()
         });
-        let panes = model.window().map_or_else(Vec::new, |w| w.layers.iter()
-            .filter(|l| l.state.as_deref() != Some("minimized"))
-            .flat_map(|l| &l.blocks)
-            .filter(|b| b.creator_name.as_deref() == Some("com.superlogical.terminal"))
+        let panes = model.window().map_or_else(Vec::new, |w| visible_terminals(w)
             .filter_map(|b| Some(json!({"id":b.block_id.as_ref()?,"label":b.label.as_deref().unwrap_or("Terminal")}))).collect());
         json!({"type":"state","version":VERSION,"connected":model.connected,"status":model.status,
             "session":model.selected,"window":model.window().and_then(|w| w.window_id.as_ref()),
@@ -322,6 +344,106 @@ mod tests {
             ..Default::default()
         };
         assert!(adapter.target(&fixture()).is_none());
+    }
+
+    fn host_fixture(mut model: HostModel) -> (HostConnection, flume::Receiver<HostCommand>) {
+        use std::sync::{Arc, Mutex};
+        let view = model.views.get_mut("session-a").unwrap();
+        for id in ["window-b", "window-c"] {
+            view.windows.push(session::Window {
+                window_id: Some(id.into()),
+                ..Default::default()
+            });
+        }
+        let (commands, receive) = flume::unbounded();
+        let (_, wake) = flume::bounded(1);
+        (
+            HostConnection {
+                model: Arc::new(Mutex::new(model)),
+                commands,
+                wake,
+            },
+            receive,
+        )
+    }
+
+    #[test]
+    fn failed_navigation_restores_the_current_pane_without_retargeting_a_new_request() {
+        let (host, requests) = host_fixture(fixture());
+        let mut adapter = Adapter::default();
+        let mut ids = Vec::new();
+        for window in ["window-b", "window-c"] {
+            adapter.handle(&host, &json!({"version":1,"op":"select_window","session":"session-a","window":window})).unwrap();
+            match requests.recv().unwrap() {
+                HostCommand::Navigate { id, .. } => ids.push(id),
+                _ => panic!("navigation needs a correlated outcome"),
+            }
+        }
+        assert_ne!(ids[0], ids[1]);
+        let mut model = host.model.lock().unwrap();
+        model.navigation_result = Some((ids[0], false));
+        assert!(adapter.state(&model)["pane"].is_null());
+        model.navigation_result = Some((ids[1], false));
+        assert_eq!(adapter.state(&model)["pane"], "pane-a");
+    }
+
+    #[test]
+    fn failed_session_navigation_restores_the_current_session_pane() {
+        let mut model = fixture();
+        model.sessions.push(session::Session {
+            session_id: "session-b".into(),
+            label: "Other".into(),
+        });
+        let (host, requests) = host_fixture(model);
+        let mut adapter = Adapter::default();
+        adapter
+            .handle(
+                &host,
+                &json!({"version":1,"op":"select_session","session":"session-b"}),
+            )
+            .unwrap();
+        let id = match requests.recv().unwrap() {
+            HostCommand::Navigate { id, .. } => id,
+            _ => panic!("session navigation needs a correlated outcome"),
+        };
+        let mut model = host.model.lock().unwrap();
+        assert!(adapter.state(&model)["pane"].is_null());
+        model.navigation_result = Some((id, false));
+        assert_eq!(adapter.state(&model)["pane"], "pane-a");
+    }
+
+    #[test]
+    fn completed_navigation_follows_server_focus_even_if_it_has_moved_again() {
+        let (host, requests) = host_fixture(fixture());
+        let mut adapter = Adapter::default();
+        adapter.handle(&host, &json!({"version":1,"op":"select_window","session":"session-a","window":"window-b"})).unwrap();
+        let id = match requests.recv().unwrap() {
+            HostCommand::Navigate { id, .. } => id,
+            _ => panic!("navigation needs a correlated outcome"),
+        };
+        let mut model = host.model.lock().unwrap();
+        model.navigation_result = Some((id, true));
+        assert_eq!(adapter.state(&model)["pane"], "pane-a");
+    }
+
+    #[test]
+    fn zoomed_pane_is_the_only_selectable_terminal_even_with_an_old_local_selection() {
+        let mut model = fixture();
+        let window = &mut model.views.get_mut("session-a").unwrap().windows[0];
+        window.layers[0].blocks.push(session::LayerBlock {
+            block_id: Some("pane-b".into()),
+            creator_name: Some("com.superlogical.terminal".into()),
+            ..Default::default()
+        });
+        window.zoomed_block_id = Some("pane-b".into());
+        let mut adapter = Adapter {
+            pane: Some("pane-a".into()),
+            ..Default::default()
+        };
+        let state = adapter.state(&model);
+        assert_eq!(state["panes"].as_array().unwrap().len(), 1);
+        assert_eq!(state["panes"][0]["id"], "pane-b");
+        assert_eq!(state["pane"], "pane-b");
     }
 
     fn attached_fixture() -> HostModel {

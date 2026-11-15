@@ -31,10 +31,11 @@ claims size when it comes forward; typing and pasting also claim through the
 core. Navigation and copying do not claim size. Another client's owned size is
 respected until this client claims the pane again.
 
-Drag to select visible cells, then use Copy or Ctrl Shift C. Paste or Ctrl Shift
-V uses the Qt clipboard. Terminal actions (`⋯`) contains Select visible text.
-These two clipboard chords are reserved by this early frontend. All other
-supported keys, including Tab, Return and Escape, stay in the terminal.
+Drag to select visible cells, then use Copy. Paste uses the Qt clipboard.
+Terminal actions (`⋯`) contains Select visible text. This milestone consumes no
+fixed clipboard chords: ordinary keys, including Ctrl Shift C/V, Tab, Return
+and Escape, go through `client.key`, where Rex's Lua bindings may handle them.
+Removable local workspace bindings remain deferred.
 
 ## Verification driver
 
@@ -58,12 +59,16 @@ Scripts are JSON arrays. Operations are:
 - `waitText`: `text`, optional `timeout` in milliseconds (default 15000).
 - `waitState`: dot-separated `field` and exact JSON `value`.
 - `waitClipboard`: `text` substring and optional `timeout`.
+- `waitProblem`: visible error `text` substring and optional `timeout`.
 - `type`: ASCII `text`, sent as Qt key events.
 - `key`: `key` (Return, Escape, Tab, Backspace, Delete, arrows, Home, End,
   PageUp, PageDown, Space, F1–F35 or a letter/digit), optional `mods`
-  (`ctrl+shift`, `alt`, `super`).
-- `paste`: Unicode `text`, placed in Qt clipboard and pasted with its real
-  keyboard shortcut.
+  (`ctrl+shift`, `alt`, `super`). Optional `text` and `action`
+  (`press`, `repeat`, `release`) inject a direct key event, including Unicode
+  and an empty-text release; without an action, a press/release pair is sent.
+- `ime`: commit Unicode `text` through a Qt input-method event.
+- `paste`: Unicode `text`, placed in Qt clipboard and pasted with the real
+  toolbar button.
 - `resize`: window `width` and `height`.
 - `select`: `control` (`sessions`, `tabs`, `panes`) and zero-based `index`;
   selects through the ComboBox's keyboard interaction.
@@ -71,6 +76,8 @@ Scripts are JSON arrays. Operations are:
   events.
 - `snapshot`: `path` for backend state plus clipboard and Qt measured grid.
 - `screenshot`: `path` for only this Qt window's rendered image.
+- `assertWideCursor`: check that the active block cursor paints both cells of
+  the wide glyph provided by the private fixture.
 - `pause`: `ms`, for observing asynchronous state transitions.
 
 A timeout or failed operation exits nonzero and records the last visible text.
