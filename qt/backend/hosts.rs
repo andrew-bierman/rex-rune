@@ -273,9 +273,9 @@ impl Hosts {
         let old = next.hosts[i].endpoint.clone();
         let replaced = old != endpoint;
         next.hosts[i].label = label.into();
-        next.hosts[i].remote_control = false;
         next.hosts[i].shell = normalize_shell(shell)?;
         if replaced {
+            next.hosts[i].remote_control = false;
             Self::clean(&mut next, &old);
             next.hosts[i].endpoint = endpoint.into();
         }
@@ -847,6 +847,43 @@ mod tests {
             session: session.into(),
             window: None,
         }
+    }
+
+    #[test]
+    fn editing_same_endpoint_preserves_consent_but_replacement_drops_it() {
+        let (mut settings, mut hosts) = configured();
+        settings.hosts[0].remote_control = true;
+        settings.hosts[1].remote_control = true;
+        let id = hosts.ids()[0].clone();
+        let endpoint = settings.hosts[0].endpoint.clone();
+        let dir = scratch();
+        let profile = dir.path().join("workspace.json");
+        let edited = hosts
+            .edit(
+                &mut settings,
+                &profile,
+                &id,
+                "Renamed",
+                &endpoint,
+                Some("fish".into()),
+            )
+            .unwrap();
+        assert_eq!(edited, id);
+        assert!(settings.hosts[0].remote_control);
+        assert_eq!(settings.hosts[0].shell.as_deref(), Some("fish"));
+        let saved: Settings = serde_json::from_slice(&std::fs::read(&profile).unwrap()).unwrap();
+        assert!(saved.hosts[0].remote_control);
+
+        let replacement = format!("unix://{}", dir.path().join("replacement.sock").display());
+        let replaced = hosts
+            .edit(&mut settings, &profile, &id, "Renamed", &replacement, None)
+            .unwrap();
+        assert_ne!(replaced, id);
+        assert!(!settings.hosts[0].remote_control);
+        assert!(settings.hosts[1].remote_control);
+        let saved: Settings = serde_json::from_slice(&std::fs::read(&profile).unwrap()).unwrap();
+        assert!(!saved.hosts[0].remote_control);
+        assert!(saved.hosts[1].remote_control);
     }
 
     #[test]
