@@ -1,3 +1,6 @@
+#include "platform.h"
+#include "terminal_shapes.h"
+#include <QInputMethod>
 #include "terminal.h"
 #include "settings.h"
 
@@ -75,7 +78,20 @@ QString keyName(int key) {
 }
 
 QJsonObject terminalKey(const QKeyEvent &event, const QString &action) {
-    auto key = keyName(event.key());
+    if(event.key()==Qt::Key_Shift || event.key()==Qt::Key_Control || event.key()==Qt::Key_Alt || event.key()==Qt::Key_Meta || event.key()==Qt::Key_AltGr)return {};
+    auto physical=NativePlatform::physicalCode(event);
+    auto key=keyName(event.key());
+    if(!physical.isEmpty()) {
+        QString wire;
+        QChar previous;
+        const bool function=physical.startsWith('F') && physical.size()>1 && physical[1].isDigit();
+        for(const QChar c:physical) {
+            if(!function && ((c.isUpper() && (previous.isLower() || previous.isDigit())) ||
+                (c.isDigit() && previous.isLetter())))wire+='_';
+            wire+=c.toLower();previous=c;
+        }
+        key=wire;
+    }
     if (key.isEmpty()) {
         const auto codepoints = event.text().toUcs4();
         if (action != "release" && !std::any_of(codepoints.begin(), codepoints.end(), [](char32_t c) { return QChar::isPrint(c); })) return {};
@@ -102,7 +118,7 @@ QJsonObject terminalKey(const QKeyEvent &event, const QString &action) {
         if (codepoints.size() == 1 && QChar::isPrint(codepoints[0])) base = codepoints[0];
     }
     return {{"key", key}, {"mods", names.join('+')}, {"consumed_mods", consumed ? "shift" : ""},
-            {"text", text}, {"unshifted_codepoint", int(base)}, {"composing", false}, {"action", action}};
+            {"text", text}, {"unshifted_codepoint", int(base)}, {"composing", event.key()>=Qt::Key_Dead_Grave && event.key()<=Qt::Key_Dead_Longsolidusoverlay}, {"action", action}};
 }
 
 TerminalItem::TerminalItem(QQuickItem *parent) : QQuickPaintedItem(parent) {
@@ -160,6 +176,8 @@ void TerminalItem::updateState() {
     if (target != m_target) {
         m_target = target;
         m_frame = {};
+        m_images.clear();
+        m_preedit.clear();
         m_copyRevision = m_selectionRevision = 0;
         m_dragging = m_primaryCopy = m_reporting = false;
         m_mouseButton.clear();
@@ -170,9 +188,20 @@ void TerminalItem::updateState() {
     }
     if (state["frame"].isObject()) m_frame = state["frame"].toObject();
     else if (state["connected"].toBool()) m_frame = {};
+    QHash<QString,QImage> images;
+    for(const auto &value:m_frame["images"].toArray()) {
+        const auto image=value.toObject();const auto key=image["key"].toString();
+        if(m_images.contains(key)) {images.insert(key,m_images.value(key));continue;}
+        const int width=image["width"].toInt(),height=image["height"].toInt();
+        const auto bytes=QByteArray::fromBase64(image["rgba"].toString().toLatin1());
+        if(width>0 && height>0 && qint64(width)*height*4==bytes.size())
+            images.insert(key,QImage(reinterpret_cast<const uchar *>(bytes.constData()),width,height,QImage::Format_RGBA8888).copy());
+    }
+    m_images=images;
     if (m_foregroundPending && window() && window()->isActive() && m_frontend->sendPane(m_paneId, "claim")) m_foregroundPending = false;
     if (m_copyRevision && m_frame["selection_revision"].toInteger() >= qint64(m_copyRevision)) finishCopy();
     resizeTerminal();
+    if (hasActiveFocus()) QGuiApplication::inputMethod()->update(Qt::ImCursorRectangle);
     emit textChanged();
     update();
 }
@@ -248,12 +277,43 @@ void TerminalItem::paint(QPainter *p) {
     const auto cursorText=m_preferences.value("_appearance").toMap().value("cursor_text");
     const bool solidCursor = hasActiveFocus() && window() && window()->isActive() && shape == "block";
 
+    const auto paintGlyph=[&](const QJsonObject &cell,const QRectF &rect,const QColor &fg) {
+        if(cell["invisible"].toBool() || cell["spacer_tail"].toBool())return;
+        QFont font=m_font;
+        font.setBold(m_font.bold() || (cell["bold"].toBool() && (program=="both" || program=="bold_only")));
+        font.setItalic(m_font.italic() || (cell["italic"].toBool() && (program=="both" || program=="italic_only")));
+        p->save();p->setClipRect(rect);p->setFont(font);p->setPen(fg);
+        if(cell["faint"].toBool())p->setOpacity(.5);
+        if(!paintTerminalShape(*p,rect,cell["text"].toString(),fg))p->drawText(QPointF(rect.x(),rect.y()+m_ascent),cell["text"].toString());
+        const auto decoration=cell["underline_color"].isDouble()?color(cell["underline_color"]):fg;
+        paintTerminalUnderline(*p,rect,cell["underline"].toString(),decoration);
+        p->setPen(decoration);
+        if(cell["strikethrough"].toBool())p->drawLine(QPointF(rect.left(),rect.top()+m_ascent/2),QPointF(rect.right(),rect.top()+m_ascent/2));
+        if(cell["overline"].toBool())p->drawLine(rect.topLeft(),rect.topRight());
+        p->restore();
+    };
+    const auto drawImages=[&](int layer) {
+        const auto pixels=m_frame["cell_pixels"].toArray();
+        const qreal sx=m_cellWidth/std::max(1,(pixels.size()>0?pixels[0].toInt():1)),sy=m_cellHeight/std::max(1,(pixels.size()>1?pixels[1].toInt():1));
+        for(const auto &value:m_frame["images"].toArray()) {
+            const auto image=value.toObject();if(image["layer"].toInt()!=layer)continue;
+            const auto texture=m_images.value(image["key"].toString());if(texture.isNull())continue;
+            const auto cell=image["cell"].toArray(),offset=image["offset"].toArray(),size=image["size"].toArray(),source=image["source"].toArray();
+            if(cell.size()!=2 || offset.size()!=2 || size.size()!=2 || source.size()!=4)continue;
+            const QRectF dest(m_paddingX+cell[0].toInt()*m_cellWidth+offset[0].toInt()*sx,
+                m_paddingY+cell[1].toInt()*m_cellHeight+offset[1].toInt()*sy,size[0].toInt()*sx,size[1].toInt()*sy);
+            p->drawImage(dest,texture,QRectF(source[0].toInt(),source[1].toInt(),source[2].toInt(),source[3].toInt()));
+        }
+    };
+    drawImages(0);
+    for(int pass=0;pass<2;++pass) {
+        if(pass==1)drawImages(1);
     for (int y = 0; y < cells.size() && y * m_cellHeight < height(); ++y) {
         const auto row = cells[y].toArray();
-        for (int x = 0; x < row.size() && x * m_cellWidth < width(); ++x) {
+        if(pass==0) for (int x = 0; x < row.size() && x * m_cellWidth < width(); ++x) {
             const auto cell = row[x].toObject();
             const QRectF rect(m_paddingX + x * m_cellWidth, m_paddingY + y * m_cellHeight, m_cellWidth, m_cellHeight);
-            p->fillRect(rect, color(cell["bg"]));
+            if(cell["bg"]!=m_frame["bg"]) p->fillRect(rect, color(cell["bg"]));
 
             for (const auto &value : matches) {
                 const auto match = value.toObject();
@@ -278,32 +338,26 @@ void TerminalItem::paint(QPainter *p) {
                     p->fillPath(path.simplified(),fill);
                 }
             }
-            if (y == cy && x >= cx && x < cx + cursorCells && solidCursor) p->fillRect(rect, color(m_frame["cursor_color"]));
         }
-        for (int x = 0; x < row.size() && x * m_cellWidth < width(); ++x) {
+        if(pass==1) for (int x = 0; x < row.size() && x * m_cellWidth < width(); ++x) {
             const auto cell = row[x].toObject();
             if (cell["spacer_tail"].toBool() || cell["invisible"].toBool()) continue;
             const bool wide = x + 1 < row.size() && row[x + 1].toObject()["spacer_tail"].toBool();
             const QRectF rect(m_paddingX + x * m_cellWidth, m_paddingY + y * m_cellHeight, m_cellWidth * (wide ? 2 : 1), m_cellHeight);
-            QFont font = m_font;
-            font.setBold(m_font.bold() || (cell["bold"].toBool() && (program=="both" || program=="bold_only")));
-            font.setItalic(m_font.italic() || (cell["italic"].toBool() && (program=="both" || program=="italic_only")));
-            p->save();
-            p->setClipRect(rect);
-            p->setFont(font);
-            if (cell["faint"].toBool()) p->setOpacity(.5);
-            const auto fg = x == cx && y == cy && solidCursor ? (cursorText.isNull() ? color(cell["bg"]) : QColor::fromRgb(cursorText.toUInt()))
-                : selectedAt(x,y) ? selectionColors(m_preferences,color(cell["fg"]),color(cell["bg"])).second
+            const auto fg = selectedAt(x,y) ? selectionColors(m_preferences,color(cell["fg"]),color(cell["bg"])).second
                 : currentAt(x, y) ? QColor("#001528") : color(cell["fg"]);
-            p->setPen(fg);
-            p->drawText(QPointF(rect.x(), rect.y() + m_ascent), cell["text"].toString());
-            const auto underline = cell["underline"].toString();
-            p->setPen(cell["underline_color"].isDouble() ? color(cell["underline_color"]) : fg);
-            if (underline != "none" && !underline.isEmpty()) p->drawLine(QPointF(rect.left(), rect.bottom() - 2), QPointF(rect.right(), rect.bottom() - 2));
-            if (underline == "double") p->drawLine(QPointF(rect.left(), rect.bottom() - 4), QPointF(rect.right(), rect.bottom() - 4));
-            if (cell["strikethrough"].toBool()) p->drawLine(QPointF(rect.left(), rect.top() + m_ascent / 2), QPointF(rect.right(), rect.top() + m_ascent / 2));
-            if (cell["overline"].toBool()) p->drawLine(rect.topLeft(), rect.topRight());
-            p->restore();
+            paintGlyph(cell,rect,fg);
+        }
+    }
+    }
+    drawImages(2);
+    if(cx>=0 && cy>=0 && cy<cells.size() && solidCursor) {
+        const auto row=cells[cy].toArray();
+        const QRectF rect(m_paddingX+cx*m_cellWidth,m_paddingY+cy*m_cellHeight,m_cellWidth*cursorCells,m_cellHeight);
+        p->fillRect(rect,color(m_frame["cursor_color"]));
+        if(cx<row.size()) {
+            const auto cell=row[cx].toObject();
+            paintGlyph(cell,rect,cursorText.isNull()?color(cell["bg"]):QColor::fromRgb(cursorText.toUInt()));
         }
     }
     if (cx >= 0 && cy >= 0 && !solidCursor) {
@@ -311,7 +365,19 @@ void TerminalItem::paint(QPainter *p) {
         p->setPen(color(m_frame["cursor_color"]));
         if (!hasActiveFocus() || !window() || !window()->isActive() || shape == "hollow") p->drawRect(cursorRect.adjusted(.5, .5, -.5, -.5));
         else if (shape == "bar") p->fillRect(QRectF(cursorRect.topLeft(), QSizeF(2, m_cellHeight)), color(m_frame["cursor_color"]));
-        else if (shape == "underline") p->fillRect(QRectF(cursorRect.left(), cursorRect.bottom() - 2, m_cellWidth, 2), color(m_frame["cursor_color"]));
+        else if (shape == "underline") p->fillRect(QRectF(cursorRect.left(), cursorRect.bottom() - 2, cursorRect.width(), 2), color(m_frame["cursor_color"]));
+    }
+    if (!m_preedit.isEmpty() && cx>=0 && cy>=0) {
+        const qreal left=m_paddingX+cx*m_cellWidth,top=m_paddingY+cy*m_cellHeight;
+        const qreal width=std::max(m_cellWidth,QFontMetricsF(m_font).horizontalAdvance(m_preedit));
+        const QRectF rect(left,top,width,m_cellHeight);
+        p->fillRect(rect,color(m_frame["bg"]));p->setFont(m_font);p->setPen(color(m_frame["fg"]));
+        p->drawText(QPointF(left,top+m_ascent),m_preedit);
+        paintTerminalUnderline(*p,rect,"single",color(m_frame["fg"]));
+        if(m_preeditCursorVisible) {
+            const qreal x=left+QFontMetricsF(m_font).horizontalAdvance(m_preedit.left(m_preeditCursor));
+            p->drawLine(QPointF(x,top),QPointF(x,top+m_cellHeight));
+        }
     }
     p->restore();
 }
@@ -341,13 +407,13 @@ bool TerminalItem::event(QEvent *event) {
 bool TerminalItem::sendKey(QKeyEvent *event, const QString &action) {
     auto payload = terminalKey(*event, action);
     if (action == "release") {
-        const auto press = m_pressed.constFind(event->key());
+        const auto press = m_pressed.constFind(NativePlatform::keyIdentity(*event));
         if (press == m_pressed.cend()) return false;
         payload["key"] = (*press)["key"];
         payload["unshifted_codepoint"] = (*press)["unshifted_codepoint"];
     }
     if (payload.isEmpty() || !m_frontend || !m_frontend->sendPane(m_paneId, "key", {{"payload", payload}})) return false;
-    if (action == "press") m_pressed.insert(event->key(), payload);
+    if (action == "press") m_pressed.insert(NativePlatform::keyIdentity(*event), payload);
     return true;
 }
 void TerminalItem::keyPressEvent(QKeyEvent *event) {
@@ -359,10 +425,10 @@ void TerminalItem::keyPressEvent(QKeyEvent *event) {
     event->accept();
 }
 void TerminalItem::keyReleaseEvent(QKeyEvent *event) {
-    if (m_actions && m_actions->handleKey(event) && !m_pressed.contains(event->key())) { event->accept(); return; }
+    if (m_actions && m_actions->handleKey(event) && !m_pressed.contains(NativePlatform::keyIdentity(*event))) { event->accept(); return; }
     if (!event->isAutoRepeat()) {
         sendKey(event, "release");
-        m_pressed.remove(event->key());
+        m_pressed.remove(NativePlatform::keyIdentity(*event));
     }
     event->accept();
 }
@@ -373,6 +439,7 @@ void TerminalItem::focusInEvent(QFocusEvent *event) {
 }
 void TerminalItem::focusOutEvent(QFocusEvent *event) {
     m_linkUri.clear();
+    m_preedit.clear();
     if (m_dragging) selection("up", m_selectionPosition);
     m_dragging = false;
     m_copyRevision = 0;
@@ -381,6 +448,13 @@ void TerminalItem::focusOutEvent(QFocusEvent *event) {
     update();
 }
 void TerminalItem::inputMethodEvent(QInputMethodEvent *event) {
+    if (m_actions && (m_actions->modalOpen() || m_actions->recording())) { m_preedit.clear();event->accept();update();return; }
+    m_preedit=event->preeditString();m_preeditCursor=m_preedit.size();m_preeditCursorVisible=true;
+    for(const auto &attribute:event->attributes()) if(attribute.type==QInputMethodEvent::Cursor) {
+        m_preeditCursor=std::clamp(attribute.start,0,int(m_preedit.size()));m_preeditCursorVisible=attribute.length!=0;
+    }
+    QGuiApplication::inputMethod()->update(Qt::ImCursorRectangle);
+    update();
     if (!event->commitString().isEmpty() && m_frontend) m_frontend->sendPane(m_paneId, "paste", {{"text", event->commitString()}});
     event->accept();
 }
@@ -388,7 +462,7 @@ QVariant TerminalItem::inputMethodQuery(Qt::InputMethodQuery query) const {
     if (query == Qt::ImEnabled) return true;
     if (query == Qt::ImCursorRectangle) {
         const auto cursor = m_frame["cursor"].toArray();
-        return QRectF(cursor.size() == 2 ? m_paddingX + cursor[0].toInt() * m_cellWidth : m_paddingX,
+        return QRectF(m_paddingX + (cursor.size() == 2 ? cursor[0].toInt() * m_cellWidth : 0) + QFontMetricsF(m_font).horizontalAdvance(m_preedit.left(m_preeditCursor)),
                       cursor.size() == 2 ? m_paddingY + cursor[1].toInt() * m_cellHeight : m_paddingY, m_cellWidth, m_cellHeight);
     }
     return {};
@@ -477,7 +551,7 @@ void TerminalItem::mouseReleaseEvent(QMouseEvent *event) {
             for (const auto &value : m_frame["links"].toArray()) {
                 const auto link = value.toObject();
                 if (link["uri"].toString() == uri && link["start"].toInt() == m_linkStart && link["end"].toInt() == m_linkEnd && at >= m_linkStart && at <= m_linkEnd) {
-                    if (!QDesktopServices::openUrl(QUrl(uri)) && m_frontend) m_frontend->reportProblem("Could not open link");
+                    if (!NativePlatform::openLink(QUrl(uri)) && m_frontend) m_frontend->reportProblem("Could not open link");
                     break;
                 }
             }

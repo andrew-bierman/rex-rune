@@ -6,6 +6,7 @@
 #include <QJsonArray>
 #include <QQuickPaintedItem>
 #include <QHash>
+#include <QImage>
 #include <QElapsedTimer>
 
 class QMimeData;
@@ -95,6 +96,7 @@ private:
     Actions *m_actions = nullptr;
     QJsonObject m_frame;
     QJsonObject m_state;
+    QHash<QString,QImage> m_images;
     QString m_paneId;
     QString m_target;
     QString m_linkUri;
@@ -105,11 +107,14 @@ private:
     QVariantMap m_preferences;
     qreal m_paddingX = 8;
     qreal m_paddingY = 8;
+    QString m_preedit;
+    int m_preeditCursor = 0;
+    bool m_preeditCursorVisible = true;
     QFont m_font;
     qreal m_cellWidth = 10;
     qreal m_cellHeight = 20;
     qreal m_ascent = 15;
-    QHash<int, QJsonObject> m_pressed;
+    QHash<quint64, QJsonObject> m_pressed;
     bool m_dragging = false;
     bool m_reporting = false;
     QString m_mouseButton;

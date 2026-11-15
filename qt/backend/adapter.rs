@@ -2,6 +2,7 @@
 //! Every terminal request names its complete target; local selection is not a
 //! license to deliver an old input event to a newly selected pane.
 use anyhow::{Context, Result, bail, ensure};
+use base64::{Engine, engine::general_purpose::STANDARD};
 use rex_rune::{
     connection::{Command, Connection, HostCommand, HostConnection, HostModel, activity::TERMINAL},
     terminal::{CursorShape, Frame},
@@ -475,7 +476,19 @@ fn frame_value(frame: &Frame) -> Value {
             index += 1;
         }
     }
-    json!({"links":links,"cols":frame.cols,"rows":frame.rows,"fg":frame.fg,"bg":frame.bg,
+    let images = frame
+        .images
+        .iter()
+        .map(|image| {
+            let placement = image.placement;
+            let pixels = &image.pixels;
+            json!({"key":format!("{}/{}/{}", pixels.screen, pixels.id, pixels.generation),
+            "layer":placement.layer,"z":placement.z,"cell":placement.cell,
+            "offset":placement.offset,"size":placement.size,"source":placement.source,
+            "width":pixels.width,"height":pixels.height,"rgba":STANDARD.encode(&pixels.rgba)})
+        })
+        .collect::<Vec<_>>();
+    json!({"images":images,"cell_pixels":frame.cell_pixels,"links":links,"cols":frame.cols,"rows":frame.rows,"fg":frame.fg,"bg":frame.bg,
         "cursor":frame.cursor,"cursor_color":frame.cursor_color,
         "cursor_shape":match frame.cursor_shape {
             CursorShape::Block => "block", CursorShape::Bar => "bar",
@@ -520,6 +533,29 @@ mod tests {
             },
         );
         model
+    }
+
+    #[test]
+    fn static_image_pixels_and_placement_reach_the_qt_frame() {
+        let mut terminal = ghostty_vt::Terminal::new(ghostty_vt::TerminalOptions {
+            cols: 20,
+            rows: 10,
+            ..Default::default()
+        })
+        .unwrap();
+        terminal.resize(20, 10, 8, 16).unwrap();
+        rex_rune::terminal::graphics::configure(&mut terminal).unwrap();
+        terminal.vt_write(b"\x1b_Ga=T,f=32,s=1,v=1,c=2,r=1,i=42,q=2;/wAA/w==\x1b\\");
+        let frame = rex_rune::terminal::Renderer::new()
+            .unwrap()
+            .frame(&terminal)
+            .unwrap();
+        assert_eq!(frame.images.len(), 1);
+        let value = frame_value(&frame);
+        assert_eq!(value["images"][0]["rgba"], "/wAA/w==");
+        assert_eq!(value["images"][0]["source"], json!([0, 0, 1, 1]));
+        assert_eq!(value["images"][0]["size"], json!([16, 16]));
+        assert_eq!(value["cell_pixels"], json!([8, 16]));
     }
 
     #[test]

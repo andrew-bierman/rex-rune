@@ -46,7 +46,7 @@ Qt::Key key(const QString &name) {
         {"Delete",Qt::Key_Delete}, {"Up",Qt::Key_Up}, {"Down",Qt::Key_Down},
         {"Left",Qt::Key_Left}, {"Right",Qt::Key_Right}, {"Home",Qt::Key_Home},
         {"End",Qt::Key_End}, {"PageUp",Qt::Key_PageUp}, {"PageDown",Qt::Key_PageDown},
-        {"Space",Qt::Key_Space}};
+        {"Space",Qt::Key_Space}, {"DeadAcute",Qt::Key_Dead_Acute}};
     if (keys.contains(name)) return keys[name];
     if (name.startsWith('F')) {
         bool ok; int n = name.mid(1).toInt(&ok);
@@ -239,7 +239,7 @@ void TestDriver::step() {
                               modifiers(s["mods"].toString()), Qt::NoScrollPhase, false);
             QCoreApplication::sendEvent(m_window, &event);
         } else if (op == "pointer") {
-            const auto pos = m_terminal->mapToScene(QPointF(m_terminal->gridLeft() + m_terminal->cellWidth() * (s["x"].toInt() + .5), m_terminal->gridTop() + m_terminal->cellHeight() * (s["y"].toInt() + .5))).toPoint();
+            const auto pos = m_terminal->mapToScene(QPointF(m_terminal->gridLeft() + m_terminal->cellWidth() * (s["x"].toInt() + s["cellFraction"].toDouble(.5)), m_terminal->gridTop() + m_terminal->cellHeight() * (s["y"].toInt() + .5))).toPoint();
             const auto mods = modifiers(s["mods"].toString());
             const auto button = s["button"] == "middle" ? Qt::MiddleButton : s["button"] == "right" ? Qt::RightButton :
                 s["button"] == "back" ? Qt::BackButton : s["button"] == "forward" ? Qt::ForwardButton : Qt::LeftButton;
@@ -267,7 +267,7 @@ void TestDriver::step() {
                 const auto action = s["action"].toString();
                 if (!action.isEmpty() && action != "press" && action != "repeat" && action != "release") throw std::runtime_error("unknown key action");
                 QKeyEvent event(action == "release" ? QEvent::KeyRelease : QEvent::KeyPress,
-                                code, mods, s["text"].toString(), action == "repeat");
+                                code, mods, s["scan"].toInt(), s["virtual"].toInt(), 0, s["text"].toString(), action == "repeat");
                 QCoreApplication::sendEvent(m_window, &event);
                 if (action.isEmpty()) {
                     QKeyEvent release(QEvent::KeyRelease, code, mods);
@@ -276,7 +276,7 @@ void TestDriver::step() {
             } else QTest::keyClick(m_window, code, mods, 5);
         } else if (op == "ime") {
             m_terminal->forceActiveFocus();
-            QInputMethodEvent event;
+            QInputMethodEvent event(s["preedit"].toString(), {});
             event.setCommitString(s["text"].toString());
             QCoreApplication::sendEvent(m_terminal, &event);
         } else if (op == "setMimeClipboard" || op == "fileDrop") {
@@ -411,9 +411,19 @@ void TestDriver::step() {
             snapshot["qt_grid_top"] = m_terminal ? m_terminal->gridTop() : 0;
             snapshot["qt_cell_width"] = m_terminal ? m_terminal->cellWidth() : 0;
             snapshot["qt_cell_height"] = m_terminal ? m_terminal->cellHeight() : 0;
+            snapshot["qt_window_active"] = m_window->isActive();
+            snapshot["qt_terminal_focus"] = m_terminal && m_terminal->hasActiveFocus();
             writeJson(s["path"].toString(), snapshot);
         } else if (op == "screenshot") {
             if (!m_window->grabWindow().save(s["path"].toString())) throw std::runtime_error("cannot save window image");
+        } else if (op == "assertCellPixel") {
+            const auto image=m_window->grabWindow();
+            const auto origin=m_terminal->mapToScene(QPointF(0,0));
+            const QPoint sample(qFloor((origin.x()+m_terminal->gridLeft()+s["x"].toDouble()*m_terminal->cellWidth())*m_window->devicePixelRatio()),
+                qFloor((origin.y()+m_terminal->gridTop()+s["y"].toDouble()*m_terminal->cellHeight())*m_window->devicePixelRatio()));
+            const auto expected=QColor(s["color"].toString());
+            if(!image.rect().contains(sample) || image.pixelColor(sample)!=expected)
+                throw std::runtime_error(("terminal pixel mismatch: "+image.pixelColor(sample).name()+" expected "+expected.name()).toStdString());
         } else if (op == "assertWideCursor") {
             const auto frame = m_backend->snapshot()["frame"].toObject();
             const auto cursor = frame["cursor"].toArray();
@@ -425,8 +435,8 @@ void TestDriver::step() {
             const auto origin = m_terminal->mapToScene(QPointF(0, 0));
             const auto expected = QColor::fromRgb(frame["cursor_color"].toInt());
             for (int offset = 0; offset < 2; ++offset) {
-                const QPoint sample(qRound((origin.x() + m_terminal->gridLeft() + (x + offset + .5) * m_terminal->cellWidth()) * image.devicePixelRatio()),
-                                    qRound((origin.y() + m_terminal->gridTop() + (y + 1) * m_terminal->cellHeight() - 2) * image.devicePixelRatio()));
+                const QPoint sample(qRound((origin.x() + m_terminal->gridLeft() + (x + offset + .5) * m_terminal->cellWidth()) * m_window->devicePixelRatio()),
+                                    qRound((origin.y() + m_terminal->gridTop() + (y + 1) * m_terminal->cellHeight() - 2) * m_window->devicePixelRatio()));
                 if (!image.rect().contains(sample) || image.pixelColor(sample) != expected) throw std::runtime_error("block cursor does not cover both wide cells");
             }
         } else if (op == "pause") {

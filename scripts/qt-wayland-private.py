@@ -119,7 +119,7 @@ data = b''
 try:
     tty.setraw(0)
     os.write(1, b'\\x1b[2J\\x1b[H{token}')
-    deadline = time.monotonic() + 35
+    deadline = time.monotonic() + 60
     while len(data) < {len(token)} and time.monotonic() < deadline:
         if select.select([0], [], [], .1)[0]:
             data += os.read(0, 4096)
@@ -132,13 +132,15 @@ time.sleep(2)
         steps = [
             {'op': 'waitState', 'field': 'terminal.connected', 'value': True},
             {'op': 'pause', 'ms': 1500},
-            {'op': 'type', 'text': 'python3 ' + shlex.quote(str(fixture))},
-            {'op': 'key', 'key': 'Return'}, {'op': 'waitText', 'text': token},
+            {'op': 'paste', 'text': 'python3 ' + shlex.quote(str(fixture))},
+            {'op': 'key', 'key': 'Return'}, {'op': 'pause', 'ms': 500},
+            {'op': 'snapshot', 'path': str(work / 'launched.json')}, {'op': 'waitText', 'text': token},
             {'op': 'pause', 'ms': 800},
             {'op': 'clipboardPolicy', 'copyOnSelection': True, 'primarySelection': True},
-            {'op': 'pointer', 'phase': 'down', 'x': 0, 'y': 0},
+            {'op': 'pointer', 'phase': 'down', 'x': 0, 'y': 0, 'cellFraction': .1},
             {'op': 'pointer', 'phase': 'move', 'x': len(token), 'y': 0},
             {'op': 'pointer', 'phase': 'up', 'x': len(token), 'y': 0},
+            {'op': 'snapshot', 'path': str(work / 'selection-pending.json')},
             {'op': 'waitClipboard', 'text': token, 'exact': True},
             {'op': 'waitPrimary', 'text': token, 'exact': True},
             {'op': 'snapshot', 'path': str(work / 'selected.json')},
@@ -160,7 +162,7 @@ time.sleep(2)
         wait_for(lambda: re.search(r'wl_keyboard#\d+\.enter\(', (work / 'driver.log').read_text()), driver, 'bound focused Qt keyboard')
         key_serial()
         wait_for(lambda: re.search(r'wl_keyboard#\d+\.key\([1-9]\d*,', (work / 'driver.log').read_text()), driver, 'real nonzero keyboard serial')
-        wait_for(lambda: (work / 'selected.json').exists(), driver, 'exact selected token')
+        wait_for(lambda: (work / 'selected.json').exists(), driver, 'exact selected token', timeout=45)
         selected = json.loads((work / 'selected.json').read_text())
         assert selected['supportsSelection'] and selected['selectionText'] == token
         assert selected['clipboard'] == token

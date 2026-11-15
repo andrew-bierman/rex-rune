@@ -1,3 +1,4 @@
+#include "platform.h"
 #include "actions.h"
 #include <QMouseEvent>
 #include <QCoreApplication>
@@ -5,9 +6,6 @@
 #include <algorithm>
 
 namespace {
-quint64 identity(const QKeyEvent &event) {
-    return event.nativeScanCode() ? quint64(event.nativeScanCode()) | (quint64(1) << 32) : quint64(event.key());
-}
 QString namedKey(int key) {
     if (key >= Qt::Key_F1 && key <= Qt::Key_F35) return "f" + QString::number(key - Qt::Key_F1 + 1);
     switch (key) {
@@ -29,15 +27,6 @@ QString namedKey(int key) {
     default: return {};
     }
 }
-QString physicalKey(int key) {
-    if (key >= Qt::Key_A && key <= Qt::Key_Z) return "Key" + QString(QChar('A' + key - Qt::Key_A));
-    if (key >= Qt::Key_0 && key <= Qt::Key_9) return "Digit" + QString(QChar('0' + key - Qt::Key_0));
-    switch (key) {
-    case Qt::Key_Plus: case Qt::Key_Equal: return "Equal";
-    case Qt::Key_Minus: case Qt::Key_Underscore: return "Minus";
-    default: return {};
-    }
-}
 bool chordMatches(const QJsonObject &chord, const QKeyEvent &event) {
     const auto mods = event.modifiers();
     if (chord["ctrl"].toBool() != mods.testFlag(Qt::ControlModifier) ||
@@ -47,13 +36,13 @@ bool chordMatches(const QJsonObject &chord, const QKeyEvent &event) {
     const auto wanted = chord["key"].toString();
     const auto kind = chord["kind"].toString();
     if (kind == "named") return namedKey(event.key()) == wanted;
-    if (kind == "physical") return physicalKey(event.key()) == wanted;
+    if (kind == "physical") return NativePlatform::physicalCode(event) == wanted;
     if (kind != "character") return false;
     if (event.key() >= Qt::Key_A && event.key() <= Qt::Key_Z)
         return wanted.compare(QString(QChar('a' + event.key() - Qt::Key_A)), Qt::CaseInsensitive) == 0;
     if (event.key() >= Qt::Key_Space && event.key() <= Qt::Key_AsciiTilde && wanted == QString(QChar(event.key())).toLower()) return true;
     if (event.modifiers().testFlag(Qt::ShiftModifier)) {
-        const auto physical = physicalKey(event.key());
+        const auto physical = NativePlatform::physicalCode(event);
         if (physical == "Equal" && wanted == "=") return true;
         if (physical == "Minus" && wanted == "-") return true;
     }
@@ -121,7 +110,7 @@ bool Actions::available(const QJsonObject &binding, bool globalOnly) const {
 }
 
 bool Actions::handleKey(QKeyEvent *event, bool globalOnly) {
-    const auto key = identity(*event);
+    const auto key = NativePlatform::keyIdentity(*event);
     if (event->type() == QEvent::KeyRelease) {
         if (event->isAutoRepeat()) return m_consumed.contains(key);
         return m_consumed.remove(key) > 0;

@@ -196,3 +196,7 @@ backend child. `server_copy` accepts only an exact sanitized address still prese
 in the displayed listener or pairing state. `server_page_open` and
 `server_page_close` control the page-local duration clock. These operations are
 local frontend capabilities and are never offered to remote requesters.
+
+## Native terminal presentation
+
+Frames include public `cell_pixels` and static `images` placements with screen/id/generation cache keys and already decoded RGBA bytes. Qt paints this public core output and releases removed/retargeted image caches; it does not parse graphics protocols. Linux native scan identity drives physical bindings and terminal wire keys while logical text stays layout-owned. Composition preedit stays local; one committed string uses the existing paste command.
