@@ -1,8 +1,10 @@
 //! Child process owned by the Qt frontend. Standard output is JSON lines only.
+mod activity;
 mod adapter;
 mod hosts;
 mod keymap;
 mod preferences;
+mod programs;
 mod terminal;
 mod workspace;
 
@@ -12,7 +14,7 @@ use clap::Parser;
 use hosts::{Discovery, Hosts, Visit};
 use rex_rune::{
     connection::{Command, HostCommand, wait_for_hosts},
-    settings::{Host, Settings, validate_host},
+    settings::{ActivityView, Host, Settings, validate_host},
 };
 use serde_json::{Value, json};
 use std::{
@@ -47,6 +49,8 @@ fn config_path() -> PathBuf {
 
 struct Backend {
     settings: Settings,
+    activity: activity::Activity,
+    visible: bool,
     preferences: Value,
     path: PathBuf,
     hosts: Hosts,
@@ -93,6 +97,8 @@ impl Backend {
         let mut backend = Self {
             preferences: preferences::snapshot(&settings),
             settings,
+            activity: activity::Activity::default(),
+            visible: false,
             path: options.config,
             hosts,
             adapters: HashMap::new(),
@@ -108,6 +114,7 @@ impl Backend {
         self.preferences = preferences::snapshot(&self.settings);
         let ids = self.hosts.ids();
         self.adapters.retain(|id, _| ids.contains(id));
+        self.activity.retain_hosts(&ids);
         for (slot, config) in self.hosts.slots.iter().zip(&self.settings.hosts) {
             let added = !self.adapters.contains_key(&slot.id);
             let adapter = self.adapters.entry(slot.id.clone()).or_default();
@@ -311,6 +318,7 @@ impl Backend {
         }
         if op == "visibility" {
             let visible = request["visible"].as_bool().context("missing visibility")?;
+            self.visible = visible;
             self.hosts.set_visible(visible);
             if visible {
                 self.reload_shortcuts()?;
@@ -321,6 +329,28 @@ impl Backend {
             .as_str()
             .context("missing host identity")?
             .to_owned();
+        if op == "activity" {
+            self.hosts.require_active(&id)?;
+            self.epoch(request)?;
+            match request["action"].as_str() {
+                Some("refresh") => {}
+                Some("view") => {
+                    let view = match request["args"]["view"].as_str() {
+                        Some("priority") => ActivityView::Priority,
+                        Some("session") => ActivityView::Session,
+                        _ => bail!("invalid activity view"),
+                    };
+                    if self.settings.activity_view != view {
+                        let mut next = self.settings.clone();
+                        next.activity_view = view;
+                        next.save(&self.path)?;
+                        self.settings = next;
+                    }
+                }
+                _ => bail!("unknown activity action"),
+            }
+            return Ok(true);
+        }
         if matches!(op, "refresh" | "keymap_reload" | "shortcut" | "preferences") {
             self.hosts.require_active(&id)?;
             self.epoch(request)?;
@@ -447,6 +477,10 @@ impl Backend {
                 .adapters
                 .get(&slot.id)
                 .context("host adapter unavailable")?;
+            for (session, block) in std::mem::take(&mut model.bells) {
+                self.activity
+                    .bell_for_block(&slot.id, &model, &session, &block);
+            }
             declared |= model.theme_declared;
             let shape = self.settings.terminal.cursor_style.shape();
             for (pane, terminal) in &model.terminals {
@@ -527,7 +561,120 @@ impl Backend {
         }
         state["preferences"] = self.preferences.clone();
         state["hosts"] = catalog;
+        self.augment_activity(&mut state);
         state
+    }
+    fn augment_activity(&mut self, state: &mut Value) {
+        let mut rows = Vec::new();
+        let mut sessions = Vec::new();
+        let mut reading = false;
+        let mut incomplete = false;
+        let now = Instant::now();
+        let pending = state["hosts"]["pending"].as_bool() == Some(true);
+        for (slot, config) in self.hosts.slots.iter().zip(&self.settings.hosts) {
+            let visible = (!pending && slot.id == self.hosts.active)
+                .then(|| {
+                    slot.model
+                        .selected
+                        .as_deref()
+                        .zip(slot.model.window()?.window_id.as_deref())
+                })
+                .flatten();
+            let projection = self.activity.snapshot(
+                &slot.id,
+                &config.label,
+                &slot.model,
+                |session, window| {
+                    self.settings.muted_tabs.iter().any(|m| {
+                        m.endpoint == config.endpoint && m.session == session && m.window == window
+                    })
+                },
+                activity::Presentation {
+                    visible,
+                    window_focused: self.visible,
+                    generated_titles: self.settings.generated_titles,
+                },
+                now,
+            );
+            reading |= projection["reading"].as_bool().unwrap_or(false);
+            incomplete |= projection["incomplete"].as_bool().unwrap_or(false);
+            rows.extend(projection["rows"].as_array().into_iter().flatten().cloned());
+            sessions.extend(
+                projection["sessions"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .cloned(),
+            );
+        }
+        let active_host = state["host"].as_str().unwrap_or("").to_owned();
+        let active_session = state["session"].as_str().unwrap_or("").to_owned();
+        let active_window = state["window"].as_str().unwrap_or("").to_owned();
+        if let Some(windows) = state["windows"].as_array_mut() {
+            for window in windows {
+                window["activity"] = rows
+                    .iter()
+                    .find(|r| {
+                        r["host"] == active_host
+                            && r["session"] == active_session
+                            && r["window"] == window["id"]
+                    })
+                    .cloned()
+                    .unwrap_or(Value::Null);
+            }
+        }
+        if let Some(panes) = state["panes"].as_array_mut() {
+            let current = rows.iter().find(|r| {
+                r["host"] == active_host
+                    && r["session"] == active_session
+                    && r["window"] == active_window
+            });
+            for pane in panes {
+                pane["activity"] = current
+                    .and_then(|r| r["panes"].as_array())
+                    .and_then(|p| p.iter().find(|p| p["pane"] == pane["id"]))
+                    .cloned()
+                    .unwrap_or(Value::Null);
+            }
+        }
+        if let Some(hosts) = state["hosts"]["rows"].as_array_mut() {
+            for host in hosts {
+                let host_id = host["id"].clone();
+                if let Some(items) = host["sessions"].as_array_mut() {
+                    for session in items {
+                        let session_id = session["id"].clone();
+                        session["activity"] = sessions
+                            .iter()
+                            .find(|r| r["host"] == host_id && r["session"] == session_id)
+                            .cloned()
+                            .unwrap_or(Value::Null);
+                        if let Some(tabs) = session["tabs"].as_array_mut() {
+                            for tab in tabs {
+                                tab["activity"] = rows
+                                    .iter()
+                                    .find(|r| {
+                                        r["host"] == host_id
+                                            && r["session"] == session_id
+                                            && r["window"] == tab["id"]
+                                    })
+                                    .cloned()
+                                    .unwrap_or(Value::Null);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(items) = state["sessions"].as_array_mut() {
+            for session in items {
+                session["activity"] = sessions
+                    .iter()
+                    .find(|r| r["host"] == active_host && r["session"] == session["id"])
+                    .cloned()
+                    .unwrap_or(Value::Null);
+            }
+        }
+        state["activity"] = json!({"rows":rows,"reading":reading,"incomplete":incomplete,"view":self.settings.activity_view});
     }
     fn after_state(&mut self) -> Vec<Value> {
         let slot = self.hosts.active_slot();

@@ -29,8 +29,8 @@ Popup {
             const hostName = host.label + (collision ? " · " + host.endpoint : "")
             if (scope === "hosts") result.push({host: host.id, epoch: host.epoch, label: host.label, detail: [collision ? host.endpoint : "", host.connected ? "" : host.status].filter(Boolean).join(" · "), active: host.active})
             else for (const session of host.sessions) {
-                if (scope === "sessions") result.push({host: host.id, epoch: host.epoch, session: session.id, label: session.label, detail: hostName, active: host.active && session.selected})
-                else for (const tab of session.tabs) result.push({host: host.id, epoch: host.epoch, session: session.id, window: tab.id, label: tab.label, detail: session.label + " · " + hostName, active: host.active && session.selected && tab.selected})
+                if (scope === "sessions") result.push({host: host.id, epoch: host.epoch, session: session.id, label: session.label, activity: session.activity || {}, detail: hostName, active: host.active && session.selected})
+                else for (const tab of session.tabs) result.push({host: host.id, epoch: host.epoch, session: session.id, window: tab.id, label: tab.label, activity: tab.activity || {}, detail: session.label + " · " + hostName, active: host.active && session.selected && tab.selected})
             }
         }
         rows = result.filter(row => (row.label + " " + row.detail).toLowerCase().includes(needle))
@@ -79,8 +79,8 @@ Popup {
                     border.width: resultRow.highlighted ? 1 : 0
                 }
                 contentItem: ColumnLayout {
-                    Label { Layout.fillWidth: true; color: popup.palette.windowText; text: resultRow.modelData.label; elide: Text.ElideRight }
-                    Label { Layout.fillWidth: true; color: popup.palette.windowText; text: resultRow.modelData.detail; elide: Text.ElideMiddle; opacity: .7 }
+                    Label { Layout.fillWidth: true; color: popup.palette.windowText; text: resultRow.modelData.label + (((resultRow.modelData.activity || {}).word && !(resultRow.modelData.activity || {}).muted) ? " · " + resultRow.modelData.activity.word : ""); textFormat: Text.PlainText; elide: Text.ElideRight }
+                    Label { Layout.fillWidth: true; color: popup.palette.windowText; text: resultRow.modelData.detail; textFormat: Text.PlainText; elide: Text.ElideMiddle; opacity: .7 }
                 }
                 ToolTip.text: modelData.label + (modelData.detail ? " · " + modelData.detail : "")
                 ToolTip.visible: hovered

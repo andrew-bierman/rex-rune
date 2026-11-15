@@ -51,6 +51,11 @@ ApplicationWindow {
         const ids = (state.dividers || []).map(split => split.before + "/" + split.after)
         if (JSON.stringify(ids) !== JSON.stringify(dividerIds)) dividerIds = ids
     }
+    readonly property int iconCount: interfacePrefs.tab_icon_count === undefined ? 1 : interfacePrefs.tab_icon_count
+    function coloredIcon(presentation, index) {
+        const mode = interfacePrefs.tab_icon_color || "never"
+        return mode === "always" || (mode === "active_tab" && presentation.inFront) || (mode === "active_pane" && presentation.inFront && index === 0)
+    }
     function selectedIndex(items, id) {
         for (let i = 0; i < items.length; i++) if (items[i].id === id) return i
         return -1
@@ -62,7 +67,7 @@ ApplicationWindow {
     }
     function find() { findBar.terminal = selectedTerminal(); findBar.open() }
     FindBar { id: findBar; anchors.top: parent.top; anchors.right: parent.right; z: 100; onClosed: root.restoreTerminal() }
-    readonly property bool panelOpen: settingsPopup.visible || commandPopup.visible || shortcutPopup.visible || findBar.visible || workspaceUI.modalOpen || hostDialogs.modalOpen || hostSwitcher.visible || (root.width < 960 && hostDrawer.visible)
+    readonly property bool panelOpen: activityPopup.visible || settingsPopup.visible || commandPopup.visible || shortcutPopup.visible || findBar.visible || workspaceUI.modalOpen || hostDialogs.modalOpen || hostSwitcher.visible || (root.width < 960 && hostDrawer.visible)
     function restoreTerminal() {
         if (root.panelOpen) return
         const term = selectedTerminal(); if (term) term.forceActiveFocus()
@@ -85,6 +90,10 @@ ApplicationWindow {
         if (terminalAction(term, id)) return
         switch (id) {
         case "client.palette.toggle": commandPopup.visible ? commandPopup.close() : commandPopup.open(); break
+        case "client.activity":
+            if (args.view) backend.activityAction("view", {view: args.view})
+            activityPopup.visible ? activityPopup.close() : activityPopup.open()
+            break
         case "client.settings": settingsPopup.open(); break
         case "client.full_screen.toggle": root.visibility === Window.FullScreen ? root.showNormal() : root.showFullScreen(); break
         case "client.font.increase": backend.savePreferences({font_size: Math.min(48, (preferences.font_size || 15) + 1)}); break
@@ -124,6 +133,28 @@ ApplicationWindow {
             else backend.performAction(id, args, origin)
         }
     }
+    ActivityModel {
+        id: activityModel
+        objectName: "activityModel"
+        inventory: backend.activityState
+        onActivate: target => {
+            backend.hostAction("navigate", {session: target.session, window: target.window}, target)
+            activityPopup.close()
+        }
+    }
+    Activity {
+        id: activityPopup
+        objectName: "activityDialog"
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        activity: activityModel
+        iconCount: root.iconCount
+        colorMode: root.interfacePrefs.tab_icon_color || "never"
+        onOpened: backend.activityAction("refresh")
+        onClosed: root.restoreTerminal()
+        onViewRequested: sessionView => backend.activityAction("view", {view: sessionView ? "session" : "priority"})
+    }
+    Timer { interval: 60000; repeat: true; running: activityPopup.visible; onTriggered: backend.activityAction("refresh") }
     Commands { id: commandPopup; objectName: "commandsPopup"; parent: Overlay.overlay; actions: workspaceActions; onFinished: root.restoreTerminal() }
     Settings {
         id: settingsPopup
@@ -209,6 +240,7 @@ ApplicationWindow {
                 }
                 ComboBox {
                     id: sessionPicker
+                    visible: root.width >= 800
                     objectName: "sessions"
                     Layout.fillWidth: true
                     Layout.preferredWidth: 180
@@ -217,12 +249,14 @@ ApplicationWindow {
                     model: root.state.sessions || []
                     textRole: "label"
                     currentIndex: root.selectedIndex(model, root.state.session)
+                    displayText: currentIndex >= 0 && model[currentIndex] ? model[currentIndex].label + ((model[currentIndex].activity || {}).word ? " · " + model[currentIndex].activity.word : "") : ""
                     Accessible.name: "Session"
                     ToolTip.text: "Session"
                     ToolTip.visible: hovered
                     onActivated: { backend.selectSession(model[index].id); root.restoreTerminal() }
                 }
                 ComboBox {
+                    id: tabsPicker
                     objectName: "tabs"
                     visible: !root.preferences.vertical_tabs
                     Layout.fillWidth: Boolean(root.interfacePrefs.tabs_fill_available_space)
@@ -234,6 +268,41 @@ ApplicationWindow {
                     Accessible.name: "Tab"
                     ToolTip.text: "Tab"
                     ToolTip.visible: hovered
+                    property var currentPresentation: currentIndex >= 0 && model[currentIndex] ? model[currentIndex].activity || ({}) : ({})
+                    ProgressBar {
+                        anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 2
+                        height: 3
+                        property var progress: tabsPicker.currentPresentation.progress
+                        visible: !!progress && !tabsPicker.currentPresentation.muted
+                        from: 0; to: 100
+                        value: progress && progress.percent !== null ? progress.percent : 0
+                        indeterminate: !!progress && progress.percent === null
+                        palette.highlight: progress && progress.kind === "error" ? "#ff8a8a" : progress && progress.kind === "paused" ? "#f5d48a" : root.palette.highlight
+                    }
+                    contentItem: RowLayout {
+                        spacing: 4
+                        Repeater {
+                            model: (tabsPicker.currentPresentation.icons || []).slice(0, root.iconCount)
+                            ProgramIcon { required property var modelData; required property int index; icon: modelData; colored: root.coloredIcon(tabsPicker.currentPresentation, index) }
+                        }
+                        Label { Layout.fillWidth: true; text: tabsPicker.displayText; textFormat: Text.PlainText; elide: Text.ElideRight; verticalAlignment: Text.AlignVCenter }
+                        Label { text: tabsPicker.currentPresentation.muted ? "" : tabsPicker.currentPresentation.word || ""; textFormat: Text.PlainText }
+                    }
+                    delegate: ItemDelegate {
+                        required property var modelData
+                        required property int index
+                        property var presentation: modelData.activity || ({})
+                        width: tabsPicker.width
+                        highlighted: tabsPicker.highlightedIndex === index
+                        contentItem: RowLayout {
+                            Repeater {
+                                model: (presentation.icons || []).slice(0, root.iconCount)
+                                ProgramIcon { required property var modelData; required property int index; icon: modelData; colored: root.coloredIcon(presentation, index) }
+                            }
+                            Label { Layout.fillWidth: true; text: modelData.label; textFormat: Text.PlainText; elide: Text.ElideRight }
+                            Label { text: presentation.muted ? "" : presentation.word || ""; textFormat: Text.PlainText }
+                        }
+                    }
                     onActivated: { backend.selectWindow(model[index].id); root.restoreTerminal() }
                 }
                 ComboBox {
@@ -252,6 +321,7 @@ ApplicationWindow {
                     onActivated: { backend.selectPane(model[index].id); root.restoreTerminal() }
                 }
                 ToolButton {
+                    visible: root.width >= 1000
                     objectName: "copyButton"
                     text: "Copy"
                     Accessible.name: "Copy selection"
@@ -260,6 +330,7 @@ ApplicationWindow {
                     onClicked: { workspaceActions.run("pane.copy"); root.restoreTerminal() }
                 }
                 ToolButton {
+                    visible: root.width >= 1000
                     objectName: "pasteButton"
                     text: "Paste"
                     onClicked: workspaceActions.run("pane.paste")
@@ -269,6 +340,14 @@ ApplicationWindow {
                     text: ((root.preferences.terminal || {}).key_sequence_hints !== false ? workspaceActions.pending : "") || workspaceActions.activeModes.join(" · ")
                     Layout.maximumWidth: 150
                     elide: Text.ElideRight
+                }
+                ToolButton {
+                    objectName: "activityButton"
+                    text: activityModel.chipCount ? qsTr("Activity · %1").arg(activityModel.chipCount) : qsTr("Activity")
+                    Accessible.name: qsTr("Activity")
+                    ToolTip.text: qsTr("Activity") + (workspaceActions.hint("client.activity") ? " · " + workspaceActions.hint("client.activity") : "")
+                    ToolTip.visible: hovered
+                    onClicked: workspaceActions.run("client.activity")
                 }
                 ToolButton {
                     objectName: "commandsButton"
@@ -413,6 +492,8 @@ ApplicationWindow {
                         opacity: floating && !paneHover.hovered ? 0 : ((root.interfacePrefs.fade_inactive_pane_headers && !focused) || (root.interfacePrefs.fade_pane_headers_in_inactive_window && !root.active)) ? .55 : 1
                         enabled: opacity > 0
                         visible: height > 0
+                        iconVisible: root.iconCount > 0
+                        iconColored: root.interfacePrefs.tab_icon_color === "always" || root.interfacePrefs.tab_icon_color === "active_tab" || (root.interfacePrefs.tab_icon_color === "active_pane" && root.selectedPane === card.modelData)
                         pane: card.pane
                         workspace: workspaceUI
                         focused: root.selectedPane === card.modelData

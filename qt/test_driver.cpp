@@ -336,6 +336,8 @@ void TestDriver::step() {
                 QJsonObject control;
                 for (const auto *property : {"x","y","width","height","padding","contentWidth","contentHeight"})
                     control[property] = QJsonValue::fromVariant(object->property(property));
+                for (const auto &property : s["properties"].toArray())
+                    control[property.toString()] = QJsonValue::fromVariant(object->property(property.toString().toUtf8().constData()));
                 auto *content = qobject_cast<QQuickItem *>(object->property("contentItem").value<QObject *>());
                 if (content) {
                     control["actualContentWidth"] = content->width();
@@ -355,6 +357,34 @@ void TestDriver::step() {
             }
             snapshot["openedUrls"] = QJsonArray::fromStringList(m_openedUrls);
             snapshot["qt_panes"] = panes;
+            QJsonArray programIcons;
+            const auto inspectIcons = [&](const auto &self, QQuickItem *item) -> void {
+                if (!item->isVisible()) return;
+                const auto icon = item->property("icon");
+                if (icon.canConvert<QVariantMap>() && item->property("colored").isValid() && item->property("ink").isValid()) {
+                    QString surface = "other";
+                    for (auto *ancestor = item->parentItem(); ancestor; ancestor = ancestor->parentItem()) {
+                        if (ancestor->objectName() == "tabs") { surface = "tabs"; break; }
+                        if (ancestor->objectName() == "hostInventory") { surface = "sidebar"; break; }
+                        if (ancestor->objectName() == "activityRows") { surface = "activity"; break; }
+                        if (QByteArray(ancestor->metaObject()->className()).startsWith("PaneHeader")) { surface = "header"; break; }
+                    }
+                    QString ink;
+                    for (auto *child : item->childItems()) {
+                        if (child->property("color").canConvert<QColor>()) {
+                            ink = child->property("color").value<QColor>().name();
+                            break;
+                        }
+                    }
+                    const auto origin = item->mapToScene(QPointF(0, 0));
+                    programIcons.append(QJsonObject{{"surface",surface},{"icon",QJsonObject::fromVariantMap(icon.toMap())},
+                        {"colored",item->property("colored").toBool()},{"color",ink},
+                        {"x",origin.x()},{"y",origin.y()},{"width",item->width()},{"height",item->height()}});
+                }
+                for (auto *child : item->childItems()) self(self, child);
+            };
+            inspectIcons(inspectIcons, m_window->contentItem());
+            snapshot["qt_program_icons"] = programIcons;
             snapshot["qt_columns"] = m_terminal->columns();
             snapshot["qt_rows"] = m_terminal->rows();
             snapshot["qt_grid_left"] = m_terminal->gridLeft();

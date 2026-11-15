@@ -24,6 +24,7 @@ Popup {
         if (selectedAction === "session.select") { const args={session_id:sessionPicker.currentValue || ""};if(windowId.text.trim()) args.window_id=windowId.text.trim();return args }
         if (selectedAction === "pane.move_to_tab") return {window_id:targetTab.currentValue || ""}
         if (["session.new","session.rename","client.tab.rename","pane.rename"].includes(selectedAction)) return {label:labelText.text}
+        if (selectedAction === "client.activity") return activityViewArgument.currentValue ? {view: activityViewArgument.currentValue} : ({})
         if (selectedAction === "client.scroll") return {lines:scrollLines.value}
         if (selectedAction === "client.mode.enter") return {name:modePicker.currentText,once:modeOnce.checked}
         return presetArgs
@@ -38,6 +39,7 @@ Popup {
         if (presetArgs.index) { lastTab.checked=presetArgs.index===-1;tabIndex.value=Math.max(1,presetArgs.index) }
         labelText.text=presetArgs.label || ""
         windowId.text=presetArgs.window_id || ""
+        activityViewArgument.currentIndex=activityViewArgument.model.findIndex(item => item.value===(presetArgs.view || ""))
         if (presetArgs.session_id) sessionPicker.currentIndex=sessionPicker.model.findIndex(item => item.id===presetArgs.session_id)
     }
     property var rows: {
@@ -161,6 +163,18 @@ Popup {
                 }
                 ComboBox { id:targetTab;visible:popup.selectedAction==="pane.move_to_tab";Layout.fillWidth:true;model:frontend.state.windows || [];textRole:"label";valueRole:"id";Accessible.name:qsTr("Destination tab") }
                 TextField { id:labelText;visible:["session.new","session.rename","client.tab.rename","pane.rename"].includes(popup.selectedAction);Layout.fillWidth:true;placeholderText:qsTr("Name (empty uses the default)") }
+                RowLayout {
+                    visible: popup.selectedAction === "client.activity"
+                    Layout.fillWidth: true
+                    Label { textFormat: Text.PlainText; text: qsTr("Activity view") }
+                    ComboBox {
+                        id: activityViewArgument
+                        objectName: "shortcutActivityView"
+                        Layout.fillWidth: true
+                        textRole: "title"; valueRole: "value"
+                        model: [{value:"",title:qsTr("Remembered view")},{value:"priority",title:qsTr("Priority")},{value:"session",title:qsTr("Session")}]
+                    }
+                }
                 RowLayout {
                     visible: popup.selectedAction === "client.scroll"
                     Label { textFormat: Text.PlainText; text: qsTr("Lines (negative scrolls up)") }

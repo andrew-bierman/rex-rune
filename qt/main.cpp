@@ -2,6 +2,7 @@
 #include "actions.h"
 #include "terminal.h"
 #include "settings.h"
+#include "activity.h"
 #ifdef REX_QT_TEST_DRIVER
 #include "test_driver.h"
 #endif
@@ -45,6 +46,7 @@ int main(int argc, char **argv) {
     parser.addOption({"report", "Acceptance JSON report", "path"});
 #endif
     parser.process(app);
+    qmlRegisterType<ActivityModel>("RexQt", 1, 0, "ActivityModel");
     qmlRegisterType<SettingsController>("RexQt", 1, 0, "SettingsController");
     qmlRegisterType<TerminalPreview>("RexQt", 1, 0, "TerminalPreview");
     qmlRegisterType<TerminalItem>("RexQt", 1, 0, "TerminalView");

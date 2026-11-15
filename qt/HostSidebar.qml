@@ -13,6 +13,12 @@ Pane {
     property var inventory: sidebar.frontend.hosts || ({rows: []})
     property var menuTarget: ({})
     property var rows: []
+    readonly property var iconPrefs: (frontend.preferences || {}).interface || ({})
+    readonly property int iconCount: iconPrefs.tab_icon_count === undefined ? 1 : iconPrefs.tab_icon_count
+    function colored(presentation, index) {
+        const mode = iconPrefs.tab_icon_color || "never"
+        return mode === "always" || (mode === "active_tab" && presentation.inFront) || (mode === "active_pane" && presentation.inFront && index === 0)
+    }
     function key(row) { return row ? [row.kind, row.host, row.session || "", row.window || ""].join("/") : "" }
     function rebuild(reset) {
         if (!list) return
@@ -31,10 +37,10 @@ Pane {
                 const tabs = session.tabs.filter(tab => sessionMatch || tab.label.toLowerCase().includes(needle))
                 if (sessionMatch || tabs.length) {
                     children.push({kind: "session", host: host.id, epoch: host.epoch, session: session.id,
-                        label: session.label, subtitle: hostName, selected: host.active && session.selected})
+                        label: session.label, subtitle: hostName, activity: session.activity || {}, selected: host.active && session.selected})
                     if (inventory.vertical_tabs || needle.length) for (const tab of tabs)
                         children.push({kind: "tab", host: host.id, epoch: host.epoch, session: session.id, window: tab.id,
-                            label: tab.label, subtitle: session.label + " · " + hostName, selected: host.active && session.selected && tab.selected})
+                            label: tab.label, subtitle: session.label + " · " + hostName, activity: tab.activity || {}, selected: host.active && session.selected && tab.selected})
                 }
             }
             if (hostMatch || children.length) {
@@ -97,8 +103,25 @@ Pane {
                 }
                 contentItem: ColumnLayout {
                     spacing: 1
-                    Label { Layout.fillWidth: true; color: sidebar.palette.windowText; text: (row.modelData.kind === "host" ? (row.modelData.collapsed ? "▸ " : "▾ ") : "") + row.modelData.label; elide: Text.ElideRight; font.bold: row.modelData.kind === "host" }
-                    Label { Layout.fillWidth: true; color: sidebar.palette.windowText; text: row.modelData.subtitle; visible: text.length > 0; elide: Text.ElideMiddle; font.pixelSize: 11; opacity: .7 }
+                    RowLayout {
+                        property var presentation: row.modelData.activity || ({})
+                        Repeater {
+                            model: row.modelData.kind === "tab" ? (parent.presentation.icons || []).slice(0, sidebar.iconCount) : []
+                            ProgramIcon { required property var modelData; required property int index; icon: modelData; colored: sidebar.colored(row.modelData.activity || {}, index) }
+                        }
+                        ProgramIcon { visible: row.modelData.kind === "session" && sidebar.iconCount > 0 && !!parent.presentation.icon; icon: parent.presentation.icon || null }
+                        Label { Layout.fillWidth: true; color: sidebar.palette.windowText; text: (row.modelData.kind === "host" ? (row.modelData.collapsed ? "▸ " : "▾ ") : "") + row.modelData.label; textFormat: Text.PlainText; elide: Text.ElideRight; font.bold: row.modelData.kind === "host" }
+                        Label { text: parent.presentation.muted ? "" : parent.presentation.word || ""; textFormat: Text.PlainText; color: sidebar.palette.windowText }
+                    }
+                    ProgressBar {
+                        property var progress: (row.modelData.activity || {}).progress
+                        visible: !!progress && !(row.modelData.activity || {}).muted
+                        Layout.fillWidth: true
+                        from: 0; to: 100
+                        value: progress && progress.percent !== null ? progress.percent : 0
+                        indeterminate: !!progress && progress.percent === null
+                    }
+                    Label { Layout.fillWidth: true; color: sidebar.palette.windowText; text: row.modelData.subtitle; textFormat: Text.PlainText; visible: text.length > 0; elide: Text.ElideMiddle; font.pixelSize: 11; opacity: .7 }
                 }
                 onClicked: { list.currentIndex = index; sidebar.choose(modelData) }
                 TapHandler { acceptedButtons: Qt.RightButton; onTapped: { sidebar.menuTarget = Object.assign({}, row.modelData); hostMenu.popup() } }

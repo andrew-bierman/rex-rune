@@ -15,6 +15,7 @@ enum Arguments {
     Find,
     TabIndex,
     Session,
+    Activity,
 }
 #[derive(Clone, Copy)]
 enum Remote {
@@ -240,6 +241,15 @@ const ACTIONS: &[Spec] = &[
         remote: Remote::Never,
     },
     Spec {
+        id: "client.activity",
+        title: "Activity",
+        category: "Navigate",
+        offline: true,
+        repeats: false,
+        arguments: Arguments::Activity,
+        remote: Remote::Never,
+    },
+    Spec {
         id: "client.settings",
         title: "Settings",
         category: "Application",
@@ -432,6 +442,9 @@ const ACTIONS: &[Spec] = &[
 
 fn schema(arguments: Arguments) -> Option<Value> {
     match arguments {
+        Arguments::Activity => Some(
+            json!({"type":"object","properties":{"view":{"enum":["priority","session"]}},"additionalProperties":false}),
+        ),
         Arguments::TabIndex => Some(
             json!({"type":"object","properties":{"index":{"type":"integer","minimum":-1}},"required":["index"],"additionalProperties":false}),
         ),
@@ -460,6 +473,14 @@ pub fn validate(id: &str, args: &Value) -> Result<()> {
         .find(|spec| spec.id == id)
         .ok_or_else(|| anyhow::anyhow!("unknown client action: {id}"))?;
     match spec.arguments {
+        Arguments::Activity => ensure!(
+            args.is_null()
+                || args.as_object().is_some_and(|o| o.is_empty()
+                    || o.len() == 1
+                        && o.get("view")
+                            .is_some_and(|v| v == "priority" || v == "session")),
+            "invalid activity view"
+        ),
         Arguments::TabIndex => ensure!(
             args.as_object().is_some_and(|o| o.len() == 1)
                 && args["index"].as_i64().is_some_and(|n| n == -1 || n > 0),

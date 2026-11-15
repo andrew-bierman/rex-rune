@@ -6,12 +6,15 @@ Item {
     id: heading
     required property var pane
     required property var workspace
+    property bool iconVisible: true
+    property bool iconColored: false
     property bool focused: false
     implicitHeight: 28
     RowLayout {
         anchors.fill: parent
         anchors.leftMargin: 8
         spacing: 0
+        ProgramIcon { visible: heading.iconVisible && !!heading.pane.activity; icon: heading.pane.activity ? heading.pane.activity.icon : null; colored: heading.iconColored }
         Label {
             textFormat: Text.PlainText
             text: heading.pane.label || qsTr("Terminal")

@@ -75,8 +75,8 @@ rex.bind("ctrl+alt+q","qt_queue")
             enhanced = work / 'enhanced.py'
             enhanced.write_text("import os,select,termios,time,tty\n"
                                 "old=termios.tcgetattr(0);data=b''\n"
-                                "try:\n tty.setraw(0)\n os.write(1,b'\\x1b[>11u\\x1b[2J\\x1b[HENHANCED_READY')\n deadline=time.monotonic()+4\n"
-                                " while time.monotonic()<deadline:\n  if select.select([0],[],[],.1)[0]:data+=os.read(0,1024)\n"
+                                "try:\n tty.setraw(0)\n os.write(1,b'\\x1b[>11u\\x1b[2J\\x1b[HENHANCED_READY')\n deadline=time.monotonic()+30\n"
+                                " while time.monotonic()<deadline and data.count(b'\\x1b[99;6:3u')<2:\n  if select.select([0],[],[],.1)[0]:data+=os.read(0,1024)\n"
                                 "finally:\n os.write(1,b'\\x1b[<u')\n termios.tcsetattr(0,termios.TCSANOW,old)\n"
                                 f"open({str(work / 'enhanced.bin')!r},'wb').write(data)\nprint('\\r\\nENHANCED_DONE',flush=True)\n")
             steps = [
@@ -116,6 +116,7 @@ rex.bind("ctrl+alt+q","qt_queue")
                 {'op': 'type', 'text': 'python3 ' + shlex.quote(str(enhanced))}, {'op': 'key', 'key': 'Return'},
                 {'op': 'waitText', 'text': 'ENHANCED_READY'},
                 {'op': 'key', 'key': 'C', 'mods': 'ctrl+shift'}, {'op': 'key', 'key': 'J', 'mods': 'ctrl+alt'},
+                {'op': 'key', 'key': 'C', 'mods': 'ctrl+shift'},
                 {'op': 'waitText', 'text': 'ENHANCED_DONE'},
                 {'op': 'key', 'key': 'Q', 'mods': 'ctrl+alt'},
                 {'op': 'waitState', 'field': 'sessions.0.label', 'value': 'Qt queued'},
@@ -136,6 +137,7 @@ rex.bind("ctrl+alt+q","qt_queue")
                 {'op': 'type', 'text': 'python3 ' + shlex.quote(str(reopened_helper))}, {'op': 'key', 'key': 'Return'},
                 {'op': 'waitText', 'text': 'REOPEN_READY'},
                 {'op': 'key', 'key': 'C', 'mods': 'ctrl+shift'}, {'op': 'key', 'key': 'J', 'mods': 'ctrl+alt'},
+                {'op': 'key', 'key': 'C', 'mods': 'ctrl+shift'},
                 {'op': 'waitText', 'text': 'REOPEN_DONE'}, {'op': 'snapshot', 'path': str(work / 'reopened.json')},
             ]
             (work / 'reopen-events.json').write_text(json.dumps(reopened_steps))
@@ -144,7 +146,7 @@ rex.bind("ctrl+alt+q","qt_queue")
                                           '--rex-session', sid, '--script', str(work / 'reopen-events.json'), '--report', str(work / 'reopen-report.json')],
                                          env=env, stdout=client_log, stderr=client_log, timeout=40)
             assert reopened.returncode == 0, f'persisted shortcut restart failed: {work}'
-            assert (work / 'reopen.bin').read_bytes().removeprefix(b'\x1b[13;1:3u') == b'\x1b[99;6u\x1b[99;6:3u', 'saved bindings changed after restart'
+            assert (work / 'reopen.bin').read_bytes().removeprefix(b'\x1b[13;1:3u') == b'\x1b[99;6u\x1b[99;6:3u' * 2, 'saved bindings changed after restart'
             copy_action = next(a for a in json.loads((work / 'reopened.json').read_text())['keymap']['actions'] if a['id'] == 'pane.copy')
             assert copy_action['hint'] == 'Ctrl Alt J', 'recorded hint did not survive restart'
             layout = json.loads((work / 'shortcut-layout.json').read_text())['control']
@@ -152,7 +154,7 @@ rex.bind("ctrl+alt+q","qt_queue")
             assert layout['horizontalOverflow'] <= 1, 'minimum shortcut form overflows its layout'
             assert (work / 'raw.bin').read_bytes() == b'z', 'consumed prefix/action/mode keys leaked to the PTY'
             enhanced_bytes = (work / 'enhanced.bin').read_bytes().removeprefix(b'\x1b[13;1:3u')
-            assert enhanced_bytes == b'\x1b[99;6u\x1b[99;6:3u', f'removal/new recorded binding broke key edges: {enhanced_bytes!r}'
+            assert enhanced_bytes == b'\x1b[99;6u\x1b[99;6:3u' * 2, f'removal/new recorded binding broke key edges: {enhanced_bytes!r}'
             assert json.loads((work / 'prefix.json').read_text())['shortcut_pending']
             assert not json.loads((work / 'canceled.json').read_text())['shortcut_pending']
             assert not json.loads((work / 'mode-exited.json').read_text())['shortcut_modes'], 'Escape did not leave the active mode'

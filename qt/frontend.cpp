@@ -115,6 +115,7 @@ quint64 Frontend::savePreferences(const QVariantMap &patch) {
     }
     return id;
 }
+void Frontend::activityAction(const QString &action, const QVariantMap &args) { send({{"op","activity"},{"action",action},{"args",QJsonObject::fromVariantMap(args)}}); }
 void Frontend::reloadShortcuts() { send({{"op","keymap_reload"}}); }
 void Frontend::recordShortcut(const QString &action, const QStringList &keys, const QVariantMap &args, const QString &mode, const QString &operation) {
     send({{"op","shortcut"},{"action",action},{"keys",QJsonArray::fromStringList(keys)},
@@ -160,6 +161,7 @@ void Frontend::read() {
         if (type == "hello") { m_hello = true; setVisible(m_visible); }
         else if (type == "state" && m_hello) {
             const bool newEpoch = m_state["epoch"] != object["epoch"] || m_state["host"] != object["host"];
+            const bool newActivity = m_state["activity"] != object["activity"];
             const bool newPreferences = m_state["preferences"] != object["preferences"];
             const bool newHosts = m_state["hosts"] != object["hosts"];
             m_state = object;
@@ -167,6 +169,7 @@ void Frontend::read() {
             QStringList ids;
             for (const auto &pane : object["panes"].toArray()) ids << pane.toObject()["id"].toString();
             if (ids != m_paneIds) { m_paneIds = ids; emit paneIdsChanged(); }
+            if (newActivity) emit activityChanged();
             if (newPreferences) emit preferencesChanged();
             if (newHosts) emit hostsChanged();
             emit stateChanged();

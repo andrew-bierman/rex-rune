@@ -8,6 +8,7 @@
 class Frontend : public QObject {
     Q_OBJECT
     Q_PROPERTY(QVariantMap state READ state NOTIFY stateChanged)
+    Q_PROPERTY(QVariantMap activityState READ activityState NOTIFY activityChanged)
     Q_PROPERTY(QVariantMap preferences READ preferences NOTIFY preferencesChanged)
     Q_PROPERTY(QVariantMap hosts READ hosts NOTIFY hostsChanged)
     Q_PROPERTY(QStringList paneIds READ paneIds NOTIFY paneIdsChanged)
@@ -18,6 +19,7 @@ public:
     explicit Frontend(QObject *parent = nullptr);
     ~Frontend() override;
     QVariantMap state() const { return m_state.toVariantMap(); }
+    QVariantMap activityState() const { return m_state["activity"].toObject().toVariantMap(); }
     QVariantMap preferences() const { return m_state["preferences"].toObject().toVariantMap(); }
     QVariantMap hosts() const { return m_state["hosts"].toObject().toVariantMap(); }
     QStringList paneIds() const { return m_paneIds; }
@@ -38,6 +40,7 @@ public:
     Q_INVOKABLE void recordShortcut(const QString &action, const QStringList &keys, const QVariantMap &args, const QString &mode, const QString &operation);
     Q_INVOKABLE void performAction(const QString &action, const QVariantMap &args, const QString &origin);
     Q_INVOKABLE void workspaceAction(const QString &action, const QVariantMap &args, const QVariantMap &captured);
+    Q_INVOKABLE void activityAction(const QString &action, const QVariantMap &args = {});
     Q_INVOKABLE void hostAction(const QString &action, const QVariantMap &args = {}, const QVariantMap &captured = {});
     Q_INVOKABLE void setVisible(bool visible);
     Q_INVOKABLE void dismissProblem();
@@ -47,6 +50,7 @@ public:
 signals:
     void stateChanged();
     void hostsChanged();
+    void activityChanged();
     void preferencesChanged();
     void paneIdsChanged();
     void problemChanged();

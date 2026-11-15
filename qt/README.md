@@ -111,7 +111,7 @@ session creation and cleanup.
 ## Current limits
 
 The Linux Qt frontend is progressing toward Rune source-build parity. General
-activity/notifications, uploads/downloads, path browsing,
+notifications, uploads/downloads, path browsing,
 server setup/pairing and remote-control compatibility are still in progress.
 Terminal history/search/selection, mouse reports, safe links, effective shortcuts,
 workspace lifecycle and saved-host navigation are implemented and privately tested.
@@ -132,6 +132,8 @@ python3 scripts/qt-wayland-private.py --cage /path/to/cage
 
 It requires Cage with headless/pixman, PRIMARY and virtual-keyboard support, `wtype`, a C++ compiler and Qt6Gui development files. `--library-path` accepts an already extracted dependency bundle; the script installs or downloads nothing. It independently reads both clipboard channels in another Qt process and checks exact middle-paste PTY bytes. It never uses the desktop seat or an existing server.
 
-Native Terminal/Interface settings use an editable draft with search, page history, explicit reset and correlated save results. The existing core profile value types are saved to the separate Qt profile. Font metrics and independent padding apply to rendering, pointer/IME coordinates and owned terminal resize together. Program icon controls belong to the subsequent activity/icon parity unit and do not yet establish icon support.
+Native Terminal/Interface settings use an editable draft with search, page history, explicit reset and correlated save results. The existing core profile value types are saved to the separate Qt profile. Font metrics and independent padding apply to rendering, pointer/IME coordinates and owned terminal resize together. Program icon count and colour controls now drive the shared native tab/header/sidebar/Activity presentation.
 
 The Qt resources reference the existing IBM Plex Mono Regular font from `vendor/rune/crates/rune/assets/` and Symbols Nerd Font from `resources/fonts/`; their existing license files and attribution remain authoritative. The regular bundled face may use Qt synthesis for bold/italic where a matching installed face is absent. No extra font files are copied or downloaded.
+
+Activity reads unopened-session coverage, status, progress and ages from the public core cache. Its native list preserves captured selection across report updates, supports priority/session views and navigation, and shares local seen/mute semantics with tab/session words. Tab/header/sidebar/Activity program cues use the existing licensed Symbols Nerd Font. The MIT name-mapping policy follows Rune, while generic family glyphs intentionally differ from Superlogical's branded artwork; those artwork files and their distinct notices are not bundled by Qt. Icon count and colour policies apply consistently across these surfaces.

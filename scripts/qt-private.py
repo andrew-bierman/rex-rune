@@ -99,21 +99,22 @@ def main():
                                 "try:\n"
                                 " tty.setraw(0)\n"
                                 " os.write(1,b'\\x1b[>11u\\x1b[2J\\x1b[HQT_KEYS_READY')\n"
-                                " deadline=time.monotonic()+8\n"
-                                " last=time.monotonic()\n"
-                                " while time.monotonic()<deadline:\n"
-                                "  if select.select([0],[],[],.1)[0]:\n"
-                                "   data+=os.read(0,1024); last=time.monotonic()\n"
-                                "  elif data and time.monotonic()-last>.5: break\n"
+                                " deadline=time.monotonic()+30\n"
+                                " while time.monotonic()<deadline and not data.endswith(b'\\x1b[118;6:3u'):\n"
+                                "  if select.select([0],[],[],.1)[0]:data+=os.read(0,1024)\n"
                                 "finally:\n"
                                 " os.write(1,b'\\x1b[<u')\n"
                                 " termios.tcsetattr(0,termios.TCSANOW,old)\n"
                                 f"open({str(work / 'chords.bin')!r},'wb').write(data)\n"
                                 "print('\\r\\nQT_KEYS_DONE',flush=True)\n")
         cursor_fixture = work / 'cursor-fixture.py'
-        cursor_fixture.write_text("import sys,time\n"
+        cursor_release = work / 'cursor-release.json'
+        cursor_fixture.write_text("import pathlib,sys,time\n"
                                   "sys.stdout.write('\\x1b[2J\\x1b[H\\x1b[2 q\\x1b[?25h界\\x1b[1G');sys.stdout.flush()\n"
-                                  "time.sleep(2)\n"
+                                  f"release=pathlib.Path({str(cursor_release)!r})\n"
+                                  "deadline=time.monotonic()+30\n"
+                                  "while not release.exists() and time.monotonic()<deadline:time.sleep(.05)\n"
+                                  "assert release.exists(), 'cursor pixel check did not acknowledge fixture'\n"
                                   "print('\\r\\nQT_CURSOR_DONE',flush=True)\n")
         steps = [
             {'op': 'waitState', 'field': 'terminal.connected', 'value': True},
@@ -160,6 +161,7 @@ def main():
             {'op': 'waitState', 'field': 'frame.cursor', 'value': [0, 0]},
             {'op': 'assertWideCursor'},
             {'op': 'screenshot', 'path': str(work / 'wide-cursor.png')},
+            {'op': 'snapshot', 'path': str(cursor_release)},
             {'op': 'waitText', 'text': 'QT_CURSOR_DONE'},
             {'op': 'resize', 'width': 640, 'height': 480},
             {'op': 'pause', 'ms': 400},
