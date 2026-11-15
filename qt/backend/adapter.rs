@@ -285,6 +285,10 @@ impl Adapter {
                 let target = self.target(&model);
                 ensure!(
                     session == model.selected
+                        && request["window"].as_str()
+                            == model
+                                .window()
+                                .and_then(|window| window.window_id.as_deref())
                         && pane.as_deref() == target.as_ref().map(|t| t.pane.as_str()),
                     "action target changed"
                 );
@@ -985,6 +989,37 @@ mod tests {
                 )
                 .is_err()
         );
+        assert!(requests.is_empty());
+    }
+
+    #[test]
+    fn server_action_cannot_follow_a_pane_into_a_different_window() {
+        let mut model = fixture();
+        let reply: rexrs::api::client::KeymapResponse = serde_json::from_value(json!({
+            "config":{"path":"/private/config","exists":false,"generation":1,"hash":"test","instance_id":"test"},
+            "actions":[{"name":"fixture","kind":"server","title":"Fixture"}],
+            "bindings":[]
+        })).unwrap();
+        model.keymap = Some(std::sync::Arc::new(
+            rex_rune::connection::keymap::Snapshot {
+                generation: 0,
+                resolved: rex_rune::keymap::Resolved::from_server(&reply, &Default::default()),
+                reply,
+            },
+        ));
+        let (host, requests) = host_fixture(model);
+        let mut adapter = Adapter::default();
+        let request = json!({"version":2,"epoch":0,"op":"action","generation":0,"revision":0,
+            "action":"fixture","session":"session-a","window":"old-window","pane":"pane-a"});
+        assert!(adapter.handle(&host, &request).is_err());
+        assert!(requests.is_empty());
+        let mut current = request;
+        current["window"] = json!("window-a");
+        adapter.handle(&host, &current).unwrap();
+        assert!(matches!(
+            requests.recv().unwrap(),
+            HostCommand::Action { .. }
+        ));
         assert!(requests.is_empty());
     }
 }
