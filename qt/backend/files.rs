@@ -71,6 +71,8 @@ struct Browser {
 pub struct Files {
     browser: Option<Browser>,
     next: u64,
+    download: Option<(Target, String, Option<u64>)>,
+    cancelled: Vec<u64>,
     upload: Option<(Target, String, String)>,
 }
 #[derive(Default)]
@@ -121,6 +123,9 @@ impl Files {
     pub fn clear(&mut self) {
         self.browser = None;
         self.upload = None;
+        if let Some((_, _, Some(id))) = self.download.take() {
+            self.cancelled.push(id);
+        }
     }
     fn read(&mut self) -> Result<HostCommand> {
         let b = self.browser.as_mut().context("Path browser is closed.")?;
@@ -151,6 +156,33 @@ impl Files {
         request: &Value,
     ) -> Result<Outcome> {
         let op = request["op"].as_str().unwrap_or_default();
+        if op == "download.close" {
+            if let Some((_, _, Some(id))) = self.download.take() {
+                self.cancelled.push(id);
+            }
+            return Ok(Outcome {
+                commands: self
+                    .cancelled
+                    .drain(..)
+                    .map(HostCommand::DownloadCancel)
+                    .collect(),
+                ..Default::default()
+            });
+        }
+        if op == "download.cancel" {
+            let id = request["id"].as_u64().context("Missing transfer.")?;
+            ensure!(
+                model
+                    .downloads
+                    .iter()
+                    .any(|t| t.id == id && !t.state.is_final()),
+                "Transfer is no longer running."
+            );
+            return Ok(Outcome {
+                commands: vec![HostCommand::DownloadCancel(id)],
+                ..Default::default()
+            });
+        }
         if op == "directory.close" {
             self.browser = None;
             return Ok(Outcome::default());
@@ -160,6 +192,75 @@ impl Files {
         target.check(model)?;
         let mut out = Outcome::default();
         match op {
+            "download.open" => {
+                if let Some((_, _, Some(id))) = self.download.take() {
+                    out.commands.push(HostCommand::DownloadCancel(id));
+                }
+                self.download = Some((target, endpoint.into(), None));
+            }
+            "download.start" | "download.confirm" => {
+                ensure!(
+                    model.protocol.api_revision >= rex_rune::download::MIN_API_REVISION,
+                    "Update Rex on this host to download files (API 13 required)."
+                );
+                let (captured, host, id) = self
+                    .download
+                    .as_mut()
+                    .context("Download dialog is closed.")?;
+                ensure!(
+                    *host == endpoint && captured.value() == target.value(),
+                    "Download target changed."
+                );
+                if op == "download.confirm" {
+                    let id = id.context("No pending download.")?;
+                    ensure!(
+                        model.downloads.iter().any(|t| t.id == id
+                            && matches!(
+                                t.state,
+                                rex_rune::download::State::AwaitingConfirmation(_)
+                            )),
+                        "No pending confirmation."
+                    );
+                    out.commands.push(HostCommand::DownloadConfirm(id));
+                } else {
+                    ensure!(id.is_none(), "Download already requested.");
+                    let path = request["path"]
+                        .as_str()
+                        .context("Missing remote path.")?
+                        .trim();
+                    ensure!(
+                        !path.is_empty() && path.len() <= PATH_MAX,
+                        "Enter the path of a file on the host."
+                    );
+                    let directory = request["directory"]
+                        .as_str()
+                        .context("Missing destination folder.")?
+                        .trim();
+                    let folder = if directory.is_empty() {
+                        rex_rune::download::store::default_directory()
+                    } else {
+                        rex_rune::download::store::expand_home(directory)
+                    };
+                    ensure!(
+                        folder.is_absolute() && !directory.chars().any(refused),
+                        "Choose an absolute destination folder."
+                    );
+                    let next = rex_rune::download::next_id();
+                    out.commands.push(HostCommand::Download(Box::new(
+                        rex_rune::connection::downloads::Request::new(
+                            next,
+                            &target.session,
+                            &target.pane,
+                            path,
+                            folder,
+                        ),
+                    )));
+                    *id = Some(next);
+                    settings.downloads.directory =
+                        (!directory.is_empty()).then(|| directory.into());
+                    out.settings_changed = true;
+                }
+            }
             "directory.open" => {
                 let go = request["go"].as_bool().unwrap_or(false);
                 self.browser = Some(Browser {
@@ -253,6 +354,32 @@ impl Files {
         );
         Ok(())
     }
+    pub fn reconcile(&mut self, model: &HostModel, endpoint: &str) -> Vec<HostCommand> {
+        if self
+            .download
+            .as_ref()
+            .is_some_and(|(t, e, _)| e != endpoint || t.check(model).is_err())
+        {
+            self.clear();
+        }
+        if let Some((_, _, Some(id))) = &self.download
+            && model.downloads.iter().any(|t| {
+                t.id == *id
+                    && matches!(
+                        t.state,
+                        rex_rune::download::State::Receiving { .. }
+                            | rex_rune::download::State::Saved { .. }
+                            | rex_rune::download::State::Cancelled
+                    )
+            })
+        {
+            self.download = None;
+        }
+        self.cancelled
+            .drain(..)
+            .map(HostCommand::DownloadCancel)
+            .collect()
+    }
     pub fn state(&mut self, model: &HostModel, settings: &Settings, endpoint: &str) -> Value {
         if self
             .browser
@@ -331,6 +458,26 @@ impl Files {
                 b.pending = None;
             }
         }
-        json!({"directory":self.browser.as_ref().map(|b|json!({"target":b.target.value(),"text":b.text,"go":b.go,"pending":b.pending.is_some(),"rows":b.rows,"truncated":b.truncated,"problem":b.problem})),"upload":self.upload.as_ref().map(|(t,_,message)|json!({"target":t.value(),"message":message}))})
+        let download = self.download.as_ref().map(|(t, _, id)| json!({"target":t.value(),"id":id,"unsupported":model.protocol.api_revision < rex_rune::download::MIN_API_REVISION,"directory":settings.downloads.directory.clone().unwrap_or_else(|| rex_rune::download::store::default_directory().display().to_string())}));
+        json!({"download":download,"directory":self.browser.as_ref().map(|b|json!({"target":b.target.value(),"text":b.text,"go":b.go,"pending":b.pending.is_some(),"rows":b.rows,"truncated":b.truncated,"problem":b.problem})),"upload":self.upload.as_ref().map(|(t,_,message)|json!({"target":t.value(),"message":message}))})
     }
+}
+
+pub fn download_rows(model: &HostModel) -> Vec<Value> {
+    use rex_rune::download::{Reason, State, size_text};
+    model.downloads.iter().rev().map(|t| {
+        let mut row = json!({"id":t.id,"epoch":t.epoch,"name":t.display_name(),"running":!t.state.is_final()});
+        let text = match &t.state {
+            State::Requested => "Waiting for Rex…".into(),
+            State::AwaitingConfirmation(c) => {
+                row["confirmation"] = json!(true);
+                format!("{} file ({}). {} Download anyway?", if c.reason == Reason::Large {"Large"} else {"Low space for this"}, size_text(c.hint), c.free.map(|f|format!("{} free.",size_text(f))).unwrap_or_default())
+            }
+            State::Receiving {received,hint} => { row["progress"]=json!(if *hint == 0 {0.0} else {*received as f64 / *hint as f64}); format!("{} received of {}",size_text(*received),size_text(*hint)) }
+            State::Saved {path,bytes,short_of} => {row["saved"]=json!(path); format!("Saved {}{}",size_text(*bytes),short_of.map(|n|format!("; Rex reported {}",size_text(n))).unwrap_or_default())}
+            State::Cancelled => "Cancelled".into(),
+            State::Failed(e) => e.to_string(),
+        };
+        row["status"]=json!(text); row
+    }).collect()
 }

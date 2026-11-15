@@ -550,8 +550,12 @@ impl Backend {
             })?;
             return Ok(true);
         }
-        let index = self.hosts.require_target(&id, epoch)?;
-        if op.starts_with("directory.") || op == "files.upload" {
+        let index = if op == "download.cancel" {
+            self.epoch(request)?
+        } else {
+            self.hosts.require_target(&id, epoch)?
+        };
+        if op.starts_with("directory.") || op.starts_with("download.") || op == "files.upload" {
             let slot = &self.hosts.slots[index];
             let connection = slot
                 .connection
@@ -629,7 +633,7 @@ impl Backend {
             let mut model = connection.model.lock().expect("host model");
             let adapter = self
                 .adapters
-                .get(&slot.id)
+                .get_mut(&slot.id)
                 .context("host adapter unavailable")?;
             for notice in std::mem::take(&mut model.notices) {
                 if model.connected {
@@ -637,6 +641,9 @@ impl Backend {
                     self.program_notices.push(json!({"event":self.next_notice,"host":slot.id,"epoch":model.connection_epoch,"activityEpoch":model.activity_epoch,
                         "session":notice.session,"block":notice.block,"title":notice.title,"body":notice.body}));
                 }
+            }
+            for command in adapter.reconcile_downloads(&model) {
+                connection.commands.send(command)?;
             }
             for (session, block) in std::mem::take(&mut model.bells) {
                 self.activity
@@ -696,6 +703,30 @@ impl Backend {
         if state["files"]["directory"].is_object() {
             state["files"]["directory"]["target"]["host"] = json!(self.hosts.active);
         }
+        if state["files"]["download"].is_object() {
+            state["files"]["download"]["target"]["host"] = json!(self.hosts.active);
+        }
+        let mut downloads = self
+            .hosts
+            .slots
+            .iter()
+            .zip(&self.settings.hosts)
+            .flat_map(|(slot, config)| {
+                let mut rows = files::download_rows(&slot.model);
+                for row in &mut rows {
+                    row["host"] = json!(slot.id);
+                    row["label"] = json!(config.label);
+                }
+                rows
+            })
+            .collect::<Vec<_>>();
+        downloads.sort_by_key(|row| {
+            (
+                row["running"] != true,
+                std::cmp::Reverse(row["id"].as_u64().unwrap_or_default()),
+            )
+        });
+        state["downloads"] = json!(downloads);
         let mut catalog = self.hosts.state(&self.settings);
         catalog["discovery"] = self.discovery.state();
         if catalog["pending"].as_bool() == Some(true) {
@@ -937,6 +968,9 @@ impl Backend {
 }
 fn main() -> Result<()> {
     let mut backend = Backend::new(Options::parse())?;
+    std::thread::spawn(|| {
+        rex_rune::download::store::Records::default().clean_up_leftovers();
+    });
     let (send, receive) = flume::bounded(64);
     std::thread::spawn(move || {
         for line in io::stdin().lock().lines() {

@@ -219,3 +219,7 @@ sessions are discarded. Connection boundaries clear queued notices and bells,
 so the next connection cannot adopt old effects. Notification actions validate
 the still-retained captured destination and use the existing closed host
 navigation operation; activation of the native window remains best effort.
+
+## Downloads
+
+Person-only `download.open/start/confirm/close` operations capture the complete terminal target and delegate to public core requests. The core owns byte transfer, names, free-space/large-file questions, no-overwrite storage, cancellation and partial cleanup. `download.cancel` names a row's host/epoch/id, including another saved host's active transfer. State aggregates existing per-host transfer records; finished rows expose only Show in folder. No downloaded file is opened or run. A destination edit uses the authoritative Qt preference transaction.

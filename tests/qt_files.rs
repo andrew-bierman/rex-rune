@@ -221,3 +221,101 @@ fn session_change_closes_browser_and_supported_upload_status_is_only_requested()
             .is_err()
     );
 }
+
+#[test]
+fn download_uses_public_request_and_cancels_captured_target_on_navigation() {
+    let destination = tempfile::tempdir().unwrap();
+    let mut files = Files::default();
+    let mut model = fixture();
+    model.protocol.api_revision = 13;
+    let mut settings = Settings::default();
+    files
+        .handle(&model, &mut settings, "private", &req("download.open"))
+        .unwrap();
+    let mut request = req("download.start");
+    request["path"] = json!("~/remote file");
+    request["directory"] = json!(destination.path());
+    let outcome = files
+        .handle(&model, &mut settings, "private", &request)
+        .unwrap();
+    assert!(outcome.paste.is_none());
+    let HostCommand::Download(download) = &outcome.commands[0] else {
+        panic!("public download request")
+    };
+    assert_eq!(download.session, "s");
+    assert_eq!(download.block, "p");
+    assert_eq!(download.path, "~/remote file");
+    let id = download.id;
+    assert!(
+        files
+            .handle(&model, &mut settings, "private", &request)
+            .is_err()
+    );
+    model.selected = Some("other".into());
+    assert!(
+        matches!(files.reconcile(&model, "private").as_slice(), [HostCommand::DownloadCancel(cancelled)] if *cancelled == id)
+    );
+    assert!(files.reconcile(&model, "private").is_empty());
+    assert!(files.state(&model, &settings, "private")["download"].is_null());
+    assert!(
+        files
+            .handle(&model, &mut settings, "private", &request)
+            .is_err()
+    );
+}
+
+#[test]
+fn download_revision_refusal_and_confirmation_are_explicit() {
+    let destination = tempfile::tempdir().unwrap();
+    use rex_rune::download::{Confirmation, Reason, State, Transfer};
+    let mut files = Files::default();
+    let mut model = fixture();
+    model.protocol.api_revision = 12;
+    let mut settings = Settings::default();
+    files
+        .handle(&model, &mut settings, "private", &req("download.open"))
+        .unwrap();
+    let mut request = req("download.start");
+    request["path"] = json!("/remote");
+    request["directory"] = json!(destination.path());
+    assert!(
+        files
+            .handle(&model, &mut settings, "private", &request)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("API 13")
+    );
+    model.protocol.api_revision = 13;
+    let out = files
+        .handle(&model, &mut settings, "private", &request)
+        .unwrap();
+    let HostCommand::Download(download) = &out.commands[0] else {
+        panic!()
+    };
+    let id = download.id;
+    let mut transfer = Transfer::new(
+        id,
+        "s".into(),
+        "p".into(),
+        "/remote".into(),
+        destination.path().to_owned(),
+        7,
+    );
+    transfer.state = State::AwaitingConfirmation(Confirmation {
+        reason: Reason::LowSpace,
+        hint: 100,
+        free: Some(200),
+    });
+    model.downloads.push(transfer);
+    let rows = files::download_rows(&model);
+    assert_eq!(rows[0]["confirmation"], true);
+    assert!(rows[0]["status"].as_str().unwrap().contains("Low space"));
+    assert!(rows[0]["saved"].is_null());
+    assert!(
+        matches!(files.handle(&model, &mut settings, "private", &req("download.confirm")).unwrap().commands.as_slice(), [HostCommand::DownloadConfirm(confirmed)] if *confirmed == id)
+    );
+    assert!(
+        matches!(files.handle(&model, &mut settings, "private", &req("download.close")).unwrap().commands.as_slice(), [HostCommand::DownloadCancel(cancelled)] if *cancelled == id)
+    );
+}

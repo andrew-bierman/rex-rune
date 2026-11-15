@@ -80,3 +80,37 @@ fn invalid_theme_or_non_preferences_leave_memory_and_disk_unchanged() {
     assert_eq!(defaults["terminal"]["primary_selection"], false);
     assert_eq!(defaults["terminal_theme"], "follow_server");
 }
+
+#[test]
+fn download_folder_is_editable_local_preference_with_absolute_path_rules() {
+    let dir = scratch();
+    let path = dir.path().join("workspace.json");
+    let mut settings = Settings::default();
+    assert!(
+        preferences::apply(
+            &mut settings,
+            &path,
+            &json!({"downloads":{"directory":"relative"}})
+        )
+        .is_err()
+    );
+    assert!(!path.exists());
+    let destination = dir.path().join("saved");
+    preferences::apply(
+        &mut settings,
+        &path,
+        &json!({"downloads":{"directory":destination}}),
+    )
+    .unwrap();
+    assert_eq!(
+        Settings::load(&path).unwrap().downloads.directory,
+        Some(destination.display().to_string())
+    );
+    preferences::apply(
+        &mut settings,
+        &path,
+        &json!({"downloads":{"directory":null}}),
+    )
+    .unwrap();
+    assert_eq!(Settings::load(&path).unwrap().downloads.directory, None);
+}

@@ -68,7 +68,7 @@ ApplicationWindow {
     }
     function find() { findBar.terminal = selectedTerminal(); findBar.open() }
     FindBar { id: findBar; anchors.top: parent.top; anchors.right: parent.right; z: 100; onClosed: root.restoreTerminal() }
-    readonly property bool panelOpen: serverPopup.visible || serverConfirm.visible || pairDialog.visible || directoryPopup.visible || activityPopup.visible || settingsPopup.visible || commandPopup.visible || shortcutPopup.visible || findBar.visible || workspaceUI.modalOpen || hostDialogs.modalOpen || hostSwitcher.visible || (root.width < 960 && hostDrawer.visible)
+    readonly property bool panelOpen: downloadDialog.visible || downloadsPopup.visible || serverPopup.visible || serverConfirm.visible || pairDialog.visible || directoryPopup.visible || activityPopup.visible || settingsPopup.visible || commandPopup.visible || shortcutPopup.visible || findBar.visible || workspaceUI.modalOpen || hostDialogs.modalOpen || hostSwitcher.visible || (root.width < 960 && hostDrawer.visible)
     function restoreTerminal() {
         if (root.panelOpen) return
         const term = selectedTerminal(); if (term) term.forceActiveFocus()
@@ -126,6 +126,7 @@ ApplicationWindow {
         case "client.tab.goto": backend.hostAction("tab_goto", {index: args.index}); break
         case "session.select": backend.hostAction("navigate", {session: args.session_id, window: args.window_id || ""}); break
         case "pane.actions": workspaceUI.openPaneMenu(root.width / 2, 52, state.pane); break
+        case "pane.download": backend.fileAction("download.open", {}, {host: state.host, epoch: state.epoch, session: state.session, window: state.window, pane: state.pane}); break;
         case "pane.insert_path":
         case "pane.go_to_directory": backend.fileAction("directory.open", {go: id === "pane.go_to_directory"}, {host: state.host, epoch: state.epoch, session: state.session, window: state.window, pane: state.pane}); break
         case "client.search": find(); break
@@ -166,6 +167,8 @@ ApplicationWindow {
         onViewRequested: sessionView => backend.activityAction("view", {view: sessionView ? "session" : "priority"})
     }
     Timer { interval: 60000; repeat: true; running: activityPopup.visible; onTriggered: backend.activityAction("refresh") }
+    DownloadDialog { id: downloadDialog; parent: Overlay.overlay; frontend: backend; onClosed: Qt.callLater(root.restoreTerminal) }
+    Downloads { id: downloadsPopup; parent: Overlay.overlay; frontend: backend; onClosed: Qt.callLater(root.restoreTerminal) }
     Directory { id: directoryPopup; objectName: "directoryPopup"; parent: Overlay.overlay; frontend: backend; onClosed: Qt.callLater(root.restoreTerminal) }
     Commands { id: commandPopup; objectName: "commandsPopup"; parent: Overlay.overlay; actions: workspaceActions; onFinished: root.restoreTerminal() }
     Settings {
@@ -400,6 +403,7 @@ ApplicationWindow {
                     Layout.maximumWidth: 150
                     elide: Text.ElideRight
                 }
+                ToolButton { objectName: "downloadsButton"; text: (root.state.downloads || []).filter(r => r.running).length ? qsTr("Downloads · %1").arg((root.state.downloads || []).filter(r => r.running).length) : qsTr("Downloads"); onClicked: downloadsPopup.open() }
                 ToolButton {
                     objectName: "activityButton"
                     text: activityModel.chipCount ? qsTr("Activity · %1").arg(activityModel.chipCount) : qsTr("Activity")

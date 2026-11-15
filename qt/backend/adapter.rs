@@ -75,6 +75,9 @@ impl Adapter {
         self.files.clear();
         self.pane = None;
     }
+    pub fn reconcile_downloads(&mut self, model: &HostModel) -> Vec<HostCommand> {
+        self.files.reconcile(model, &self.endpoint)
+    }
     pub fn file_request(
         &mut self,
         host: &HostConnection,
@@ -82,7 +85,10 @@ impl Adapter {
         request: &Value,
     ) -> Result<bool> {
         let model = host.model.lock().expect("host model").clone();
-        let connection = if request["op"] == "directory.close" {
+        let connection = if matches!(
+            request["op"].as_str(),
+            Some("directory.close" | "download.close" | "download.cancel")
+        ) {
             None
         } else {
             Some(self.connection_scope(&model, request, true, false, false)?)

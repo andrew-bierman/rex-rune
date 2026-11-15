@@ -55,6 +55,7 @@ fn recorded_binding_wins_without_rewriting_the_user_layer() {
 #[test]
 fn declarations_only_advertise_real_client_actions_and_a_remote_decision() {
     assert!(qt_keymap::requires_person("pane.insert_path"));
+    assert!(qt_keymap::requires_person("pane.download"));
     assert!(!qt_keymap::requires_person("pane.copy"));
     let request = qt_keymap::declaration(&Settings::default(), 4);
     assert_eq!(request.generation, 4);
@@ -66,6 +67,13 @@ fn declarations_only_advertise_real_client_actions_and_a_remote_decision() {
             .any(|a| a.name == "pane.copy")
     );
     let state = qt_keymap::state(&HostModel::default(), &Settings::default(), 4);
+    assert!(
+        state["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|a| a["id"] == "pane.download" && a["remote"] == "never")
+    );
     for action in state["actions"].as_array().unwrap() {
         assert!(matches!(action["remote"].as_str(), Some("never" | "view")));
     }

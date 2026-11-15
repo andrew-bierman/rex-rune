@@ -9,6 +9,12 @@ ColumnLayout {
     property var interfaceValues:values.interface || ({})
     function choices(names) { return names.map(name => ({value:name[0],title:name[1]})) }
     spacing:10
+    RowLayout {
+        Layout.fillWidth: true
+        visible: !page.query || "downloads download folder destination".includes(page.query.toLowerCase())
+        Label { text:qsTr("Download folder"); Layout.fillWidth:true }
+        TextField { objectName:"downloadFolderSetting"; Layout.preferredWidth:240; text:(page.values.downloads || {}).directory || ""; placeholderText:qsTr("System Downloads folder"); onEditingFinished:page.controller.setValue("downloads.directory", text.trim() || null) }
+    }
     PreferenceRow { controller:page.controller; query:page.query; title:qsTr("Chrome palette"); path:"chrome_theme"; value:page.values.chrome_theme; choices:page.choices([["midnight",qsTr("Midnight")],["rose_pine",qsTr("Rosé Pine")],["rose_pine_moon",qsTr("Rosé Pine Moon")],["gruvbox_dark",qsTr("Gruvbox Dark")]]) }
     PreferenceRow { controller:page.controller; query:page.query; title:qsTr("Interface zoom (%)"); path:"ui_scale"; kind:"number"; divisor:100; minimum:70; maximum:150; step:10; value:page.values.ui_scale }
     Label { text:qsTr("Terminal font size is independent of interface zoom. Zoom is limited by the window's 640 × 480 layout floor."); Layout.fillWidth:true; wrapMode:Text.Wrap; opacity:.7 }

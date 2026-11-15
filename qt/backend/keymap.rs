@@ -34,6 +34,15 @@ struct Spec {
 
 const ACTIONS: &[Spec] = &[
     Spec {
+        id: "pane.download",
+        title: "Download file…",
+        category: "Terminal",
+        offline: false,
+        repeats: false,
+        arguments: Arguments::None,
+        remote: Remote::Never,
+    },
+    Spec {
         id: "client.server.settings",
         title: "Server settings…",
         category: "Server",

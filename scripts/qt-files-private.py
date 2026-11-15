@@ -3,9 +3,13 @@
 
 --baseline checks the immutable backend's actual version-3 unsupported operation.
 --driver exercises native Commands, path field/list clicks and file MIME events.
+--downloads exercises the native safe-download workflow, a fake folder opener,
+private throttled streams and low-space confirmation in an unprivileged mount
+namespace (requires unshare and mount). All destinations belong to the fixture.
 Never connects to an existing Rex or display. Artifacts remain under .build-tools.
 """
 import argparse
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -77,11 +81,48 @@ def revision_proxy(path, upstream):
     return listener
 
 
+class SlowProxy:
+    """Throttle only an owned server's large writes; closing cuts owned streams."""
+    def __init__(self, path, upstream):
+        self.loop = asyncio.new_event_loop()
+        self.ready = threading.Event()
+        self.path, self.upstream = path, upstream
+        self.thread = threading.Thread(target=self.start, daemon=True)
+        self.thread.start()
+        assert self.ready.wait(10)
+    def start(self):
+        asyncio.set_event_loop(self.loop)
+        self.server = self.loop.run_until_complete(asyncio.start_unix_server(self.handle, str(self.path)))
+        self.ready.set()
+        self.loop.run_forever()
+    async def handle(self, reader, writer):
+        upstream, output = await asyncio.open_unix_connection(str(self.upstream))
+        async def pump(source, destination, slow):
+            try:
+                while data := await source.read(32768):
+                    destination.write(data)
+                    await destination.drain()
+                    if slow and len(data) > 4096: await asyncio.sleep(.5)
+            except (ConnectionError, asyncio.CancelledError): pass
+            finally: destination.close()
+        await asyncio.gather(pump(reader, output, False), pump(upstream, writer, True))
+    def close(self):
+        async def finish():
+            self.server.close()
+            tasks=[t for t in asyncio.all_tasks(self.loop) if t is not asyncio.current_task()]
+            for task in tasks: task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            self.loop.stop()
+        asyncio.run_coroutine_threadsafe(finish(), self.loop)
+        self.thread.join(10)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--backend', type=Path, required=True)
     parser.add_argument('--driver', type=Path)
     parser.add_argument('--baseline', action='store_true')
+    parser.add_argument('--downloads', action='store_true')
     args = parser.parse_args()
     assert args.baseline or args.driver, 'native driver required for behavior proof'
     work = Path(tempfile.mkdtemp(prefix='qt-files-', dir=ROOT / '.build-tools'))
@@ -135,6 +176,146 @@ def main():
                         (work / 'baseline.json').write_text(json.dumps(transcript, indent=2))
                     finally:
                         child.terminate(); child.wait(timeout=10)
+            elif args.downloads:
+                destination = work / 'saved'
+                destination.mkdir()
+                source = work / "-$(touch NEVER_EXECUTE) \u202eunsafe ' file.bin"
+                content = bytes(range(256)) * 191
+                source.write_bytes(content)
+                large = work / 'large.bin'
+                with large.open('wb') as sparse: sparse.truncate(1 << 30)
+                def command():
+                    return [{'op':'key','key':'P','mods':'ctrl+shift'},
+                            {'op':'waitControl','control':'commandsPopup','property':'opened','value':True},
+                            {'op':'field','control':'commandSearch','text':'Download file'}, {'op':'controlKey','key':'Return'},
+                            {'op':'waitControl','control':'downloadPath','property':'visible','value':True}]
+                def download(path):
+                    return command() + [{'op':'field','control':'downloadPath','text':str(path)},
+                         {'op':'field','control':'downloadFolder','text':str(destination)},
+                         {'op':'click','control':'downloadStart'}]
+                steps = [{'op':'waitState','field':'terminal.connected','value':True}]
+                for index in range(2):
+                    transfer_steps=download(source)
+                    if index==0: transfer_steps[-1]={'op':'controlKey','key':'Return'}
+                    steps += transfer_steps + [{'op':'waitState','field':'downloads.0.running','value':False},
+                                               {'op':'waitState','field':'files.download','value':None}]
+                steps += [{'op':'click','control':'downloadsButton'},
+                          {'op':'waitControl','control':'downloadRowAction0','property':'visible','value':True},
+                          {'op':'click','control':'downloadRowAction0'},
+                          {'op':'waitOpenedUrl','text':destination.as_uri()},
+                          {'op':'screenshot','path':str(work/'downloads.png')},
+                          {'op':'controlKey','key':'Escape'}]
+                steps += [{'op':'resize','width':640,'height':480}] + download(large) + [{'op':'waitState','field':'downloads.0.confirmation','value':True},
+                          {'op':'waitControl','control':'downloadCancel','property':'activeFocus','value':True},
+                          {'op':'screenshot','path':str(work/'confirmation.png')},
+                          {'op':'controlKey','key':'Return'},
+                          {'op':'waitState','field':'downloads.0.running','value':False},
+                          {'op':'snapshot','path':str(work/'downloads.json')}]
+                alternate=work/'configured-downloads'
+                alternate.mkdir()
+                steps += [{'op':'click','control':'settingsButton'},
+                          {'op':'waitControl','control':'settingsSearch','property':'visible','value':True},
+                          {'op':'field','control':'settingsSearch','text':'download folder'},
+                          {'op':'field','control':'downloadFolderSetting','text':str(alternate)},
+                          {'op':'click','control':'applyPreferences'},
+                          {'op':'waitControl','control':'settingsPopup','property':'visible','value':False},
+                          {'op':'snapshot','path':str(work/'destination-setting.json')}]
+                def run(steps, name, target=endpoint, prefix=None):
+                    (work/(name+'-events.json')).write_text(json.dumps(steps))
+                    with (work/(name+'.log')).open('w') as log:
+                        result = subprocess.run((prefix or []) + [str(args.driver.resolve()),'--backend',str(args.backend.resolve()),
+                            '--endpoint',target,'--rex-session',sid,'--script',str(work/(name+'-events.json')),
+                            '--report',str(work/(name+'-report.json'))],env=env,stdout=log,stderr=log,timeout=90)
+                    assert result.returncode == 0, f'{name} native events failed: {work}'
+                run(steps, 'native-downloads')
+                assert json.loads((work/'config/rex-qt/workspace.json').read_text())['downloads']['directory']==str(alternate)
+                saved=list(destination.iterdir())
+                assert len(saved)==2 and all(p.read_bytes()==content for p in saved), saved
+                assert saved[0].name != saved[1].name
+                assert all('\u202e' not in p.name for p in saved), 'hostile formatting survived name sanitization'
+                assert not (work/'NEVER_EXECUTE').exists()
+                proxy_path=work/'api10.sock'
+                proxy=revision_proxy(proxy_path,work/'rex.sock')
+                try:
+                    run([{'op':'waitState','field':'terminal.connected','value':True}] + command() +
+                        [{'op':'waitState','field':'files.download.unsupported','value':True},
+                         {'op':'waitControl','control':'downloadStart','property':'enabled','value':False}],
+                        'download-api10', 'unix://'+str(proxy_path))
+                finally: proxy.close()
+                assert len(list(destination.iterdir()))==2
+                profile_path=work/'config/rex-qt/workspace.json'
+                profile=json.loads(profile_path.read_text())
+                for host in profile['hosts']: host['remote_control']=True
+                profile_path.write_text(json.dumps(profile))
+                remote_result=[]
+                def remote_attempt():
+                    for _ in range(400):
+                        for client in api('client.list')['clients']:
+                            if client.get('info',{}).get('kind')!='app': continue
+                            cid=client.get('id',client.get('client_id'))
+                            result=subprocess.run(['rex','--autostart=false','--server',endpoint,'api','call','client.perform',
+                                json.dumps({'client_id':cid,'action':'pane.download','args':{},'timeout_ms':1000})],
+                                env=env,text=True,capture_output=True,timeout=10)
+                            remote_result.append({'code':result.returncode,'stdout':result.stdout,'stderr':result.stderr})
+                            return
+                        time.sleep(.05)
+                remote=threading.Thread(target=remote_attempt,daemon=True); remote.start()
+                run([{'op':'waitState','field':'terminal.connected','value':True},{'op':'pause','ms':1500},
+                     {'op':'waitState','field':'files.download','value':None}], 'download-remote-denial')
+                remote.join(10)
+                assert remote_result and remote_result[0]['code']!=0, remote_result
+                (work/'remote-denial.json').write_text(json.dumps(remote_result,indent=2))
+                low=work/'low-space'
+                low.mkdir()
+                lowsteps=[{'op':'waitState','field':'terminal.connected','value':True}] + command() + [
+                    {'op':'field','control':'downloadPath','text':str(source)},
+                    {'op':'field','control':'downloadFolder','text':str(low)},
+                    {'op':'click','control':'downloadStart'},
+                    {'op':'waitState','field':'downloads.0.confirmation','value':True},
+                    {'op':'waitControl','control':'downloadCancel','property':'activeFocus','value':True},
+                    {'op':'snapshot','path':str(work/'low-space.json')},
+                    {'op':'controlKey','key':'Return'},
+                    {'op':'waitState','field':'downloads.0.running','value':False}]
+                run(lowsteps,'download-low-space',prefix=['unshare','-Urnm','--','sh','-c',
+                    'set -e; mount -t tmpfs -o size=64m tmpfs "$1"; shift; exec "$@"','sh',str(low)])
+                lowstate=json.loads((work/'low-space.json').read_text())
+                assert 'Low space' in json.dumps(lowstate)
+                slowfile=work/'slow.bin'
+                with slowfile.open('wb') as sparse: sparse.truncate(64 << 20)
+                for mode in ('cancel', 'confirm', 'exit', 'disconnect'):
+                    proxy_path=work/(mode+'.sock')
+                    proxy=SlowProxy(proxy_path,work/'rex.sock')
+                    marker=work/(mode+'-receiving.json')
+                    sequence=[{'op':'waitState','field':'terminal.connected','value':True}] + download(large if mode=='confirm' else slowfile)
+                    if mode=='confirm': sequence += [
+                        {'op':'waitState','field':'downloads.0.confirmation','value':True},
+                        {'op':'controlKey','key':'Tab'},
+                        {'op':'waitControl','control':'downloadStart','property':'activeFocus','value':True},
+                        {'op':'controlKey','key':'Return'}]
+                    sequence += [
+                        {'op':'waitState','field':'files.download','value':None},
+                        {'op':'click','control':'downloadsButton'},
+                        {'op':'waitControl','control':'downloadRowAction0','property':'visible','value':True},
+                        {'op':'snapshot','path':str(marker)}]
+                    if mode in ('cancel','confirm'): sequence += [{'op':'click','control':'downloadRowAction0'}, {'op':'waitState','field':'downloads.0.running','value':False}]
+                    if mode=='disconnect':
+                        def cut():
+                            for _ in range(600):
+                                if marker.exists(): proxy.close(); return
+                                time.sleep(.05)
+                        cutter=threading.Thread(target=cut,daemon=True); cutter.start()
+                        sequence += [{'op':'waitState','field':'downloads.0.running','value':False}]
+                    try: run(sequence, 'download-'+mode, 'unix://'+str(proxy_path))
+                    finally:
+                        if proxy.thread.is_alive(): proxy.close()
+                    receiving=json.loads(marker.read_text())['downloads'][0]
+                    assert receiving['running'] and 0 < receiving.get('progress',0) < 1, receiving
+                    for _ in range(100):
+                        if len(list(destination.iterdir()))==2: break
+                        time.sleep(.05)
+                    assert len(list(destination.iterdir()))==2, (mode,list(destination.iterdir()))
+                (work/'result.json').write_text(json.dumps({'native_download_exact_bytes':'PASS','no_overwrite':'PASS',
+                    'confirmation_cancel_default':'PASS','fake_folder_opener':'PASS','api13_refusal':'PASS','cancel_disconnect_exit_partial_cleanup':'PASS','low_space_cancel_default':'PASS','remote_perform_denied':'PASS'}))
             else:
                 folder = work / "Alice's $(touch NEVER_EXECUTE)"
                 folder.mkdir()

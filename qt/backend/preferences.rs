@@ -18,6 +18,7 @@ const FIELDS: &[&str] = &[
     "pane_header",
     "pane_padding",
     "interface",
+    "downloads",
     "vertical_tabs",
     "generated_titles",
     "notifications",
@@ -104,6 +105,14 @@ pub fn apply(settings: &mut Settings, path: &Path, patch: &Value) -> Result<()> 
         next.interface.tab_icon_count <= 5,
         "Choose at most five tab icons"
     );
+    if let Some(directory) = &next.downloads.directory {
+        ensure!(
+            directory.trim().is_empty()
+                || (rex_rune::download::store::expand_home(directory).is_absolute()
+                    && !directory.chars().any(char::is_control)),
+            "Choose an absolute download folder or ~/Downloads"
+        );
+    }
     next.terminal.font.line_height = next.terminal.font.line_height();
     next.terminal.font.spacing = next.terminal.font.spacing();
     ensure!(!next.font_family.trim().is_empty(), "Choose a font family");

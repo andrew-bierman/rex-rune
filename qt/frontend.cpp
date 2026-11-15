@@ -1,6 +1,9 @@
 #include "frontend.h"
 #include <QClipboard>
 #include <QGuiApplication>
+#include <QDesktopServices>
+#include <QFileInfo>
+#include <QUrl>
 
 #include <QJsonDocument>
 #include <QJsonArray>
@@ -104,8 +107,8 @@ void Frontend::hostAction(const QString &action, const QVariantMap &args, const 
     send(message);
 }
 void Frontend::fileAction(const QString &op, const QVariantMap &fields, const QVariantMap &captured) {
-    if (op != "directory.open" && op != "directory.edit" && op != "directory.choose" && op != "directory.close") {
-        reportProblem("Unknown directory action.");
+    if (op != "download.open" && op != "download.start" && op != "download.confirm" && op != "download.close" && op != "download.cancel" && op != "directory.open" && op != "directory.edit" && op != "directory.choose" && op != "directory.close") {
+        reportProblem("Unknown file action.");
         return;
     }
     auto message = QJsonObject::fromVariantMap(fields);
@@ -227,4 +230,14 @@ void Frontend::serverAction(const QString &action, quint64 requestId, const QStr
     static const QStringList allowed = {"page_open","page_close","read","prepare_stop","prepare_setup","cancel","confirm","pair","pair_close","copy"};
     if (!allowed.contains(action)) return;
     send({{"op","server_" + action},{"request_id",qint64(requestId)},{"text",text}});
+}
+void Frontend::showDownload(const QString &host, quint64 id) {
+    for (const auto &value : m_state["downloads"].toArray()) {
+        const auto row = value.toObject();
+        if (row["host"].toString() == host && row["id"].toInteger() == qint64(id) && row["saved"].isString()) {
+            if (!QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(row["saved"].toString()).absolutePath()))) reportProblem("Could not show the download folder.");
+            return;
+        }
+    }
+    reportProblem("Saved download is no longer available.");
 }

@@ -2,17 +2,18 @@
 #include "frontend.h"
 #include "terminal.h"
 
+#include <algorithm>
 #include <QClipboard>
 #include <QMimeData>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QDesktopServices>
+#include <QInputMethodEvent>
 #include <QUrl>
 #include <QFile>
 #include <QSaveFile>
 #include <QSet>
 #include <QGuiApplication>
-#include <QInputMethodEvent>
 #include <QJsonDocument>
 #include <QKeyEvent>
 #include <QQuickItem>
@@ -96,7 +97,7 @@ void keyContract() {
 
 TestDriver::TestDriver(QQuickWindow *window, Frontend *backend, const QString &script, const QString &report)
     : m_window(window), m_backend(backend), m_terminal(window->findChild<TerminalItem *>("terminal")), m_script(script), m_report(report) {
-    for (const auto &scheme : {"https", "http", "ftp", "mailto"}) QDesktopServices::setUrlHandler(scheme, this, "openedUrl");
+    for (const auto &scheme : {"https", "http", "ftp", "mailto", "file"}) QDesktopServices::setUrlHandler(scheme, this, "openedUrl");
     m_timer.setInterval(100);
     connect(&m_timer, &QTimer::timeout, this, &TestDriver::step);
 }
@@ -228,10 +229,12 @@ void TestDriver::step() {
             if (!item) throw std::runtime_error("field not found");
             item->forceActiveFocus();
             QTest::keyClick(m_window, Qt::Key_A, Qt::ControlModifier);
-            for (const auto character : s["text"].toString()) {
-                if (character.unicode() > 127) throw std::runtime_error("field accepts ASCII");
-                QTest::keyClick(m_window, character.toLatin1());
-            }
+            const auto text = s["text"].toString();
+            if (std::any_of(text.begin(), text.end(), [](QChar c) { return c.unicode() > 127; })) {
+                QInputMethodEvent input;
+                input.setCommitString(text);
+                QCoreApplication::sendEvent(item, &input);
+            } else for (const auto character : text) QTest::keyClick(m_window, character.toLatin1());
         } else if (op == "controlKey") {
             QTest::keyClick(m_window, key(s["key"].toString()), modifiers(s["mods"].toString()));
         } else if (op == "wheel") {
