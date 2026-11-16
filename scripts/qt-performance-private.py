@@ -52,6 +52,7 @@ def main():
             assert server.poll() is None and time.monotonic() < deadline, 'server startup'
             time.sleep(.05)
         for count in (1, 4):
+            load_start = os.getloadavg()
             case = work / str(count)
             case.mkdir()
             shell = {'block': {'flavor': 'com.superlogical.terminal.shell'}}
@@ -129,7 +130,7 @@ def main():
                 time.sleep(5.3)
                 selected = [r for r in records if start <= r['t'] <= start+5]
                 intervals = [1000*(b['t']-a['t']) for a,b in zip(selected, selected[1:])]
-                results.append({'panes': count, 'backend_only': True, 'snapshot_count': len(selected), 'snapshot_bytes': sum(r['bytes'] for r in selected), 'max_snapshot_interval_ms': max(intervals, default=0), 'median_snapshot_interval_ms': statistics.median(intervals) if intervals else None})
+                results.append({'load_average_start': load_start, 'load_average_end': os.getloadavg(), 'panes': count, 'backend_only': True, 'snapshot_count': len(selected), 'snapshot_bytes': sum(r['bytes'] for r in selected), 'max_snapshot_interval_ms': max(intervals, default=0), 'median_snapshot_interval_ms': statistics.median(intervals) if intervals else None})
                 client.terminate();client.wait(timeout=10);reader.join(timeout=5)
                 continue
             proxy = case / 'proxy.py'
@@ -209,7 +210,7 @@ def main():
             received = [p.read_bytes() for p in case.glob('bytes.*')]
             assert sorted(received) == sorted([b'zabc'] + [b'z'] * (count - 1)), received
             report = json.loads((case / 'report.json').read_text())
-            results.append({'panes': count, 'ready_ms': ready_ms, 'workload_to_done_ms': completion_ms, 'workload_seconds': 5, 'target_updates_per_second_per_pane': 100, 'snapshot_count': len(states), 'snapshot_bytes': sum(r['bytes'] for r in states), 'max_snapshot_interval_ms': max(intervals, default=0), 'median_snapshot_interval_ms': statistics.median(intervals) if intervals else None, 'echo_measurements': [r for r in report['evidence'] if 'elapsed_ms' in r]})
+            results.append({'load_average_start': load_start, 'load_average_end': os.getloadavg(), 'panes': count, 'ready_ms': ready_ms, 'workload_to_done_ms': completion_ms, 'workload_seconds': 5, 'target_updates_per_second_per_pane': 100, 'snapshot_count': len(states), 'snapshot_bytes': sum(r['bytes'] for r in states), 'max_snapshot_interval_ms': max(intervals, default=0), 'median_snapshot_interval_ms': statistics.median(intervals) if intervals else None, 'echo_measurements': [r for r in report['evidence'] if 'elapsed_ms' in r]})
         (work / 'results.json').write_text(json.dumps(results, indent=2))
         print(json.dumps({'artifacts': str(work), 'results': results}))
     finally:

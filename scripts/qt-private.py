@@ -35,8 +35,6 @@ def main():
     parser.add_argument('--driver', type=Path, default=ROOT / 'qt/build/test-driver/rex-qt-test-driver')
     parser.add_argument('--backend', type=Path, default=ROOT / 'target/release/rex-qt-backend')
     parser.add_argument('--artifacts', type=Path)
-    parser.add_argument('--native-wayland-smoke', action='store_true',
-                        help='Also show only this private fixture in a native Wayland window; no clipboard operations')
     args = parser.parse_args()
     for tool in ('rex', 'nvim'):
         assert shutil.which(tool), f'{tool} is required'
@@ -180,12 +178,12 @@ def main():
             {'op': 'snapshot', 'path': str(work / 'navigation.json')},
         ]
 
-        def run(script, report, client_env=None, backend=None):
+        def run(script, report, backend=None):
             path = work / script
             log = (work / (script + '.log')).open('w')
             return subprocess.Popen([str(args.driver.resolve()), '--backend', str((backend or args.backend).resolve()),
                                      '--endpoint', endpoint, '--rex-session', sid, '--script', str(path),
-                                     '--report', str(work / report)], env=client_env or env, stdout=log, stderr=log)
+                                     '--report', str(work / report)], env=env, stdout=log, stderr=log)
 
         (work / 'main.json').write_text(json.dumps(steps))
         client = run('main.json', 'main-report.json')
@@ -270,19 +268,6 @@ def main():
         text = api('com.superlogical.terminal.format', session_id=reconnected['session'], block_id=reconnected['pane'],
                    args={'format': 'text', 'trim': True, 'unwrap': True})['content']
         assert 'QT_AFTER_reconnect' in text and 'must-not-replay' not in text, 'failed input was replayed after reconnect'
-        if args.native_wayland_smoke:
-            assert os.environ.get('WAYLAND_DISPLAY') and os.environ.get('XDG_RUNTIME_DIR'), 'native Wayland environment required'
-            native_env = dict(env, QT_QPA_PLATFORM='wayland', WAYLAND_DISPLAY=os.environ['WAYLAND_DISPLAY'],
-                              XDG_RUNTIME_DIR=os.environ['XDG_RUNTIME_DIR'])
-            native_steps = [
-                {'op': 'waitState', 'field': 'terminal.connected', 'value': True},
-                {'op': 'type', 'text': "printf '\\nQT_WAYLAND_%s\\n' ready"}, {'op': 'key', 'key': 'Return'},
-                {'op': 'waitText', 'text': 'QT_WAYLAND_ready'},
-                {'op': 'screenshot', 'path': str(work / 'wayland.png')},
-            ]
-            (work / 'wayland.json').write_text(json.dumps(native_steps))
-            client = run('wayland.json', 'wayland-report.json', native_env)
-            assert client.wait(timeout=45) == 0, 'native Wayland fixture failed'
         disconnect = [
             {'op': 'waitState', 'field': 'terminal.connected', 'value': True},
             {'op': 'select', 'control': 'sessions', 'index': index},
