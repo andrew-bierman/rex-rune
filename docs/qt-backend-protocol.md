@@ -91,8 +91,7 @@ size after a foreground or input claim has completed.
 
 Ordinary keys pass through `Command::Key` to `client.key`, retaining Rex Lua
 handling. Paste uses `Command::Paste`. Failed input is never retained for
-reconnection. Startup passes no session creation request and no terminal theme
-declaration, reads no Rune settings, and exposes no server lifecycle operation.
+reconnection. Ordinary attachment creates no session, starts/stops no server and reads no Rune settings. An existing saved Qt terminal theme is declared through the public core with its ownership rules. Separate person-confirmed server stop and missing-SSH-server setup operations are described below.
 
 `hosts` state contains the ordered saved catalog, scoped session/tab inventories,
 connection state, exact history availability, navigation-pending flag, sidebar
@@ -128,9 +127,9 @@ Qt's settings and never alter Rune's profile. Refresh and foregrounding reload t
 override file. Server actions use the public core action command with their actual
 origin. Generation/revision and target checks discard stale dispatches; failed
 actions are not replayed. Core-queued client actions are validated and emitted once
-after the matching state publication. Current client actions deny remote access.
+after the matching state publication. Remote access defaults off per saved host and permits only the eight declared view actions under the Directed view actions policy below; every other remote action is denied.
 
-This version sends the current multi-pane scene, not a scrollback database. Graphics and other remaining parity surfaces are not yet exposed.
+This version sends the current multi-pane scene and core-decoded static graphics, not a separate scrollback database.
 Selection, formatting and scrollback/search stay in the core; Qt never parses
 VT output or builds its own history database. Local viewport requests can be
 issued during pauses; the core worker determines when its stream can process
@@ -145,8 +144,7 @@ The `workspace` state is a pending confirmation or null; acceptance consumes its
 ID once and rechecks epoch, endpoint and captured view/target. Close-others IDs
 are frozen at question creation. A vanished or changed target clears the question
 permanently. The frontend preserves explicitly supplied capture epochs instead of
-restamping them. Tab muting changes only Qt settings. JSON serialization cost and QPainter performance
-on large, fast-updating grids have not been benchmarked.
+restamping them. Tab muting changes only Qt settings. The private output benchmark records one/four-pane echo timings and full-snapshot traffic; it is not a maximum-throughput or physical-scanout guarantee.
 
 ## Downstream ownership
 
@@ -226,7 +224,7 @@ Person-only `download.open/start/confirm/close` operations capture the complete 
 
 ## Directed view actions
 
-The registry advertises exactly eight remote view actions. Saved-host consent defaults off; all other actions are denied. Eligible core perform requests first ask the native event loop for current modal/field/sequence/focus context. One-shot authorization repeats captured identity, consent and deadline checks before the shared local view dispatcher acts. Navigation replies wait for matching core acknowledgement; disconnected/replaced epochs receive no late effect or reply. Toolbar and host menus count as active panels.
+The registry advertises exactly eight remote view actions. Saved-host consent defaults off; all other actions are denied. Eligible core perform requests first ask the native event loop for current modal/field/sequence/focus context. One-shot authorization repeats captured identity, consent and deadline checks before the shared local view dispatcher acts. Navigation replies wait for matching core acknowledgement; disconnected/replaced epochs receive no late effect or reply. Toolbar and host menus count as active panels. A consented connected host may select one of its own sessions even when another host is visible; no request may target a different host. Other inactive-host actions remain refused. Authorization independently captures the visible host/epoch/session/window/pane and rechecks both that UI context and the requester target before dispatch.
 
 The adapter retains completed opaque call IDs for each live connection epoch because the core queues repeated IDs with fresh deadlines. Removed/disconnected/obsolete scopes are pruned. This preserves exact-once behavior at O(unique call IDs in each live epoch) memory cost; a TTL would allow replay.
 
@@ -234,6 +232,9 @@ The QML-facing property exposes cached terminal metadata, omitting only unused c
 
 ## Local maintenance
 
-`maintenance` accepts only local status, preview, confirm, cancel and signed-check operations. A previewed fixed `rex skill` command is captured and consumed once; closing invalidates its generation. The CLI owns external file ownership rules. About copies fixed build/runtime/license identity, not workspace/config/environment data. Signed check state lives beside the separate Qt profile; update guidance never invokes a Rune installer or package helper.
+`maintenance` accepts only local status, preview, confirm, cancel and signed-check operations. A previewed fixed `rex skill` command is captured and consumed once; closing invalidates its generation. Fixed local helper commands have a 30-second deadline; timeout kills and reaps the direct child, clears busy state and reports that partial effects may remain. It does not retry or claim rollback. The CLI owns external file ownership rules. About copies fixed build/runtime/license identity, not workspace/config/environment data. Signed check state lives beside the separate Qt profile; update guidance never invokes a Rune installer or package helper.
 
 The adapter caches serialized immutable core frames by `Arc` identity for visible panes. It refreshes connection/status metadata independently and prunes inactive pane projections. This is an internal construction cache: records still contain complete frames, and consumers must continue treating each record as a coherent snapshot.
+
+
+Server-address clipboard events carry `scope: "server"` and a captured host/connection epoch, without requiring a selected terminal. They are accepted only for the visible matching host/epoch after the backend validates the exact sanitized reported address. Terminal clipboard events retain the stricter connected session/pane target check; unknown scopes are rejected. This permits cached server facts and local Pair address copy without widening OSC 52 eligibility.

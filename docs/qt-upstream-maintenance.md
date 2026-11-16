@@ -41,14 +41,19 @@ cd test-driver
 qmake6 ../../rex-qt.pro CONFIG+=test_driver
 make -j2
 cd ../../..
-python3 scripts/qt-private.py --native-wayland-smoke
+python3 scripts/qt-private.py
+python3 scripts/qt-wayland-private.py --cage /path/to/cage
 ```
 
 Use the repository-required Rust/Zig versions and installed Qt requirements from `qt/README.md`. Qt acceptance needs Rex, Neovim and an owned disposable server; never substitute the personal endpoint. The native smoke needs an available Wayland compositor. Without one, run the offscreen checks and record native verification as missing. Task-local toolchains/caches are not tracked and must be configured explicitly in a new worktree. After checking logs and reviewing the candidate diff, publish only to an owned-fork branch/PR; do not merge automatically. Remove only this disposable worktree when finished.
 
 ## Tested rehearsal and practical limits
 
-On 2026-11-15, `git fetch upstream master` resolved to `8c1382a0ecfe542c57ffc3608efb6762c4877be2`. The local integration rehearsal uses a detached disposable worktree and `git merge --no-edit upstream/master`; upstream is already an ancestor, so the expected result is `Already up to date.` This tests the actual fetch/worktree/merge path, not a hypothetical conflict resolution. No new upstream commits were available, so compatibility with a future release is not established by this rehearsal. Checks of the resulting source are recorded in `qt-quick-status.md`.
+On 2026-11-15, the actual disposable candidate merged upstream `fcc1974846891201ff9d8daf9d82d7012647407e` into downstream `2ec919a`, producing local merge `804e2c4`. Two incoming commits affected Rune key-mode behavior and private fixtures; the merge was clean, with no incoming edits to the Qt boundary, Cargo/lockfile, vendor or shared connection/terminal files. The delivery branch was not changed.
+
+Candidate evidence: clean production/test-driver Qt builds, formatting, both Rune/backend release builds and a separate no-default-features backend build passed. Core tests passed 384 with two existing ignores; backend tests passed 34. Rune UI tests passed 806 with three ignores and one HOME-dependent download path assertion failure; that exact test passed with a private HOME. All 24 incoming key-mode tests passed. The initial aggregate failure is not reported as an aggregate pass. Candidate Clippy and SDK suites were not rerun.
+
+Private offscreen acceptance passed. Rune and Qt also attached concurrently to distinct owned sessions on one disposable server: `client.list` observed both, Rune produced a verified terminal capture, Qt passed three runtime steps, both exited successfully, and only the owned server was stopped. Ignored candidate evidence is under the managed worktree's `.build-tools/logs/` and `.build-tools/simultaneous/`. These results test a real upstream update, not future source/API compatibility.
 
 Likely hotspots: the additive Cargo binary list; public `HostCommand`, `HostModel`, terminal sender and Ghostty frame fields consumed in `qt/backend/`; renamed core APIs; terminal ownership/key semantics; upstream vendored versions and their toolchain requirements. Preserve upstream lockfile/vendor updates rather than pinning stale dependencies to hide incompatibilities. README and `.gitignore` additions may have trivial textual conflicts. Public core APIs have no stable downstream compatibility promise.
 
