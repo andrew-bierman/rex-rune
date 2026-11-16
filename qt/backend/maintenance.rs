@@ -1,9 +1,11 @@
 use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
 use std::{
+    io::{Read, Seek, SeekFrom},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::mpsc::{self, Receiver},
+    time::{Duration, Instant},
 };
 
 pub const AGENTS: &[(&str, &str)] = &[
@@ -47,32 +49,78 @@ impl Change {
         args
     }
 }
+// Skill operations only inspect or update local integration files. Thirty seconds
+// allows slow local storage while ensuring a stalled helper releases busy state.
+const REX_TIMEOUT: Duration = Duration::from_secs(30);
+
 fn rex(args: &[String]) -> Result<Value> {
-    let run = |program: &std::ffi::OsStr| {
-        Command::new(program)
-            .args(args)
-            .stdin(Stdio::null())
-            .output()
-    };
-    let output = match run(std::ffi::OsStr::new("rex")) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+    let result = rex_with_timeout(std::ffi::OsStr::new("rex"), args, REX_TIMEOUT);
+    match result {
+        Err(error)
+            if error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) =>
+        {
             match rex_rune::platform::tools::off_path("rex") {
-                Some(path) => run(path.as_os_str()),
-                None => Err(e),
+                Some(path) => rex_with_timeout(path.as_os_str(), args, REX_TIMEOUT),
+                None => Err(error),
             }
         }
         result => result,
     }
-    .context("Cannot run local rex command")?;
+}
+
+fn rex_with_timeout(
+    program: &std::ffi::OsStr,
+    args: &[String],
+    timeout: Duration,
+) -> Result<Value> {
+    // Files avoid waiting on pipe readers if a helper leaves inherited handles open.
+    let mut stdout = tempfile::tempfile().context("Cannot capture local rex output")?;
+    let mut stderr = tempfile::tempfile().context("Cannot capture local rex errors")?;
+    let mut child = Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(stdout.try_clone()?)
+        .stderr(stderr.try_clone()?)
+        .spawn()
+        .context("Cannot run local rex command")?;
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            result => {
+                let killed = child.kill();
+                let reaped = child.wait();
+                killed.context("Cannot stop local rex command")?;
+                reaped.context("Cannot reap local rex command")?;
+                if let Err(error) = result {
+                    return Err(error).context("Cannot wait for local rex command");
+                }
+                bail!(
+                    "Local rex command timed out. Changes may be partially applied; refresh installed state before trying again."
+                );
+            }
+        }
+    };
+    let mut output = Vec::new();
+    let mut errors = Vec::new();
+    stdout.seek(SeekFrom::Start(0))?;
+    stdout.read_to_end(&mut output)?;
+    stderr.seek(SeekFrom::Start(0))?;
+    stderr.read_to_end(&mut errors)?;
     ensure!(
-        output.status.success(),
+        status.success(),
         "rex skill failed: {}",
-        String::from_utf8_lossy(&output.stderr)
+        String::from_utf8_lossy(&errors)
             .lines()
             .find(|l| !l.trim().is_empty())
             .unwrap_or("command failed")
     );
-    serde_json::from_slice(&output.stdout).context("Invalid rex skill JSON response")
+    serde_json::from_slice(&output).context("Invalid rex skill JSON response")
 }
 struct Reply {
     kind: &'static str,
@@ -232,3 +280,7 @@ pub fn report() -> String {
         std::env::consts::ARCH
     )
 }
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "maintenance_tests.rs"]
+mod tests;

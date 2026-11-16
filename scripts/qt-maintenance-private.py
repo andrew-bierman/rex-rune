@@ -36,6 +36,10 @@ if a[2]=='status':
  print(json.dumps({'harnesses':[{'id':'claude','detected':True,'items':[{'kind':'skill','state':'current'}]},{'id':'codex','detected':True,'items':[{'kind':'skill','state':'foreign','path':str(home/'foreign')} ]},{'id':'pi','detected':True,'items':[{'kind':'skill','state':'missing'}]}]}))
 elif '--dry-run' in a:
  print(json.dumps({'steps':[{'kind':'skill','path':str(home/'managed'),'change':'remove' if a[2]=='remove' else 'write','harnesses':['claude']}]}))
+elif (home/'stall').exists():
+ (home/'stall').unlink()
+ (home/'stalled.pid').write_text(str(os.getpid()))
+ os.execv('/usr/bin/sleep',['sleep','600'])
 elif (home/'fail').exists():
  print('fixture exact failure',file=sys.stderr);sys.exit(7)
 else:
@@ -79,6 +83,25 @@ else:
     run('failure',page('integrationsSettingsButton')+[wait('status.harnesses.0.items.0.state','current')]+preview+[
         {'op':'click','control':'integrationConfirm'},wait('error','rex skill failed: fixture exact failure'),{'op':'snapshot','path':str(work/'failure-state.json')}])
     (work/'home'/'fail').unlink()
+    # Exercise the production deadline, then prove that the same backend can
+    # refresh after reaping its stalled direct child. No mutation is replayed.
+    (work/'home'/'stall').touch()
+    run('timeout',page('integrationsSettingsButton')+[
+        wait('status.harnesses.0.items.0.state','current')]+preview+[
+        {'op':'click','control':'integrationConfirm'},wait('busy',True),
+        {'op':'pause','ms':31000},wait('busy',False),
+        wait('error','Local rex command timed out. Changes may be partially applied; refresh installed state before trying again.'),
+        {'op':'click','control':'integrationRefresh'},wait('busy',False),
+        wait('error',None),wait('status.harnesses.0.items.0.state','current'),
+        {'op':'snapshot','path':str(work/'timeout-state.json')}])
+    stalled_pid=int((work/'home'/'stalled.pid').read_text())
+    try:
+        os.kill(stalled_pid,0)
+    except ProcessLookupError:
+        pass
+    else:
+        raise AssertionError(f'stalled owned Rex child was not reaped: {stalled_pid}')
+    assert not (work/'home'/'managed').exists()
     run('about',page('aboutSettingsButton')+[
         {'op':'click','control':'copyMaintenanceReport'},{'op':'snapshot','path':str(work/'about-state.json')},
         {'op':'screenshot','path':str(work/'about.png')},{'op':'click','control':'aboutClose'}])
@@ -93,7 +116,7 @@ else:
         wait('error','update state is busy or not writable; try again shortly'),
         {'op':'screenshot','path':str(work/'updates.png')},{'op':'click','control':'updatesClose'}])
     calls=[json.loads(line) for line in (work/'home'/'calls.jsonl').read_text().splitlines()]
-    assert sum(a[2]=='setup' and '--dry-run' not in a for a in calls)==2
+    assert sum(a[2]=='setup' and '--dry-run' not in a for a in calls)==3
     assert (work/'home'/'foreign').read_text()=='foreign-owned'
     assert not socket.exists()
     (work/'result.json').write_text(json.dumps({'passed':True,'calls':len(calls),'report':report},indent=2))
