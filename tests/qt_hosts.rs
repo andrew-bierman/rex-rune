@@ -267,7 +267,7 @@ fn upstream_connection_failures_and_missing_ssh_fact_remain_visible_without_star
 }
 
 #[test]
-fn saving_a_host_edit_revokes_its_consent_without_copying_another_hosts_choice() {
+fn only_replacing_a_host_endpoint_revokes_its_consent() {
     let dir = scratch();
     let path = dir.path().join("workspace.json");
     let mut settings = settings();
@@ -278,6 +278,24 @@ fn saving_a_host_edit_revokes_its_consent_without_copying_another_hosts_choice()
     hosts
         .edit(&mut settings, &path, &id, "Edited label", &endpoint, None)
         .unwrap();
+    assert!(settings.hosts[0].remote_control);
+    assert!(settings.hosts[1].remote_control);
+    let saved = Settings::load(&path).unwrap();
+    assert!(saved.hosts[0].remote_control);
+    assert!(saved.hosts[1].remote_control);
+    assert_eq!(hosts.ids()[0], id);
+
+    hosts
+        .edit(
+            &mut settings,
+            &path,
+            &id,
+            "Replaced endpoint",
+            "https://replacement.invalid/rex",
+            None,
+        )
+        .unwrap();
+    assert_ne!(hosts.ids()[0], id);
     assert!(!settings.hosts[0].remote_control);
     assert!(settings.hosts[1].remote_control);
     let saved = Settings::load(&path).unwrap();
