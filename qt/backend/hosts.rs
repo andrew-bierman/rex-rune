@@ -852,6 +852,7 @@ mod tests {
     #[test]
     fn editing_same_endpoint_preserves_consent_but_replacement_drops_it() {
         let (mut settings, mut hosts) = configured();
+        settings.hosts[0].endpoint = "https://qt-host-original.invalid".into();
         settings.hosts[0].remote_control = true;
         settings.hosts[1].remote_control = true;
         let id = hosts.ids()[0].clone();
@@ -874,7 +875,7 @@ mod tests {
         let saved: Settings = serde_json::from_slice(&std::fs::read(&profile).unwrap()).unwrap();
         assert!(saved.hosts[0].remote_control);
 
-        let replacement = format!("unix://{}", dir.path().join("replacement.sock").display());
+        let replacement = "https://qt-host-replacement.invalid".to_owned();
         let replaced = hosts
             .edit(&mut settings, &profile, &id, "Renamed", &replacement, None)
             .unwrap();
