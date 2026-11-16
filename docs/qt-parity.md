@@ -1,6 +1,6 @@
 # Qt Linux source-build capability evidence
 
-This records the implemented Linux Rune baseline, using Qt-native controls rather than pixel-identical Rune chrome. Local review follow-up verification is complete; shipping remains pending. This matrix is evidence, not a claim that every platform or real remote service has been exercised. Artifact paths are ignored local evidence directories under `.build-tools/` and contain only disposable fixtures.
+This records the implemented Linux Rune baseline, using Qt-native controls rather than pixel-identical Rune chrome. Local review follow-up verification is complete and the implementation is published in the owned-fork PR, left unmerged. Build/test Actions are unavailable; local test results remain distinct from the successful task-list check. This matrix is evidence, not a claim that every platform or real remote service has been exercised. Artifact paths are ignored local evidence directories under `.build-tools/` and contain only disposable fixtures.
 
 | Capability | Implementation and verification | Practical limit |
 | --- | --- | --- |
