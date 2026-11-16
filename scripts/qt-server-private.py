@@ -110,6 +110,14 @@ def exercise(args):
         status_fixture=subprocess.check_output([real_rex,"--autostart=false","--server",endpoint,"api","call","server.status","{}"],env=env,text=True).strip()
         profile,p,receive,send,state=connect(endpoint)
         receive(lambda v:v.get('server',{}).get('can_stop') is True)
+        facts=receive(lambda v:bool(v.get('server',{}).get('listeners')))
+        copy_address=facts['server']['listeners'][0]['address']
+        assert copy_address
+        native(profile,[{'op':'waitState','field':'server.listeners.0.address','value':copy_address}]+controls()+[
+            {'op':'resize','width':1024,'height':900},
+            {'op':'click','control':'serverCopyAddress-0'},
+            {'op':'waitClipboard','text':copy_address,'exact':True},
+            {'op':'snapshot','path':str(work/'server-copy.json')}], 'native-server-copy')
         p.stdin.write(json.dumps(dict(version=3,op='server_prepare_stop',host=state()['host'],epoch=state()['epoch']+1,request_id=99))+'\n');p.stdin.flush()
         receive(lambda v:v.get('type')=='error' and 'connection changed' in v.get('message',''))
         assert server.poll() is None
@@ -185,12 +193,15 @@ for line in sys.stdin:
  v=json.loads(line)
  with open(LOG,'a') as log:log.write(v['op']+'\\n')
  if v['op']=='shutdown':break
+ if v['op'] in ('visibility','remote_context'):continue
  if v['op']=='server_pair':state['server']['pair']=pair
  if v['op']=='server_pair_close':state['server']['pair']=None
  emit(state)
+ if v['op']=='server_copy' and v.get('text')==pair['address']:
+  emit({'version':3,'type':'clipboard','scope':'server','host':state['host'],'epoch':state['epoch'],'text':pair['address']})
 """.replace('PAIR',repr(pair)).replace('LOG',repr(str(work/'operations'))))
     fixture.chmod(0o700)
-    steps=[{'op':'waitState','field':'server.can_pair','value':True},{'op':'resize','width':640,'height':480},{'op':'click','control':'settingsButton'},{'op':'waitControl','control':'settingsPopup','property':'opened','value':True},{'op':'click','control':'serverSettingsButton'},{'op':'click','control':'pairDeviceButton'},{'op':'waitControl','control':'pairQr','property':'visible','value':True},{'op':'pause','ms':200},{'op':'screenshot','path':str(work/'pair-640.png')},{'op':'controlKey','key':'Escape'},{'op':'waitState','field':'server.pair','value':None}]
+    steps=[{'op':'waitState','field':'server.can_pair','value':True},{'op':'resize','width':640,'height':480},{'op':'click','control':'settingsButton'},{'op':'waitControl','control':'settingsPopup','property':'opened','value':True},{'op':'click','control':'serverSettingsButton'},{'op':'click','control':'pairDeviceButton'},{'op':'waitControl','control':'pairQr','property':'visible','value':True},{'op':'pause','ms':200},{'op':'click','control':'pairCopyAddress'},{'op':'waitClipboard','text':pair['address'],'exact':True},{'op':'screenshot','path':str(work/'pair-640.png')},{'op':'controlKey','key':'Escape'},{'op':'waitState','field':'server.pair','value':None}]
     script=work/'steps.json';script.write_text(json.dumps(steps))
     env=dict(os.environ,DBUS_SESSION_BUS_ADDRESS='unix:path='+str(work/'absent-bus'),QT_QPA_PLATFORM='offscreen',QT_QUICK_BACKEND='software',QT_QPA_PLATFORMTHEME='generic',HOME=str(work),XDG_CONFIG_HOME=str(work),XDG_RUNTIME_DIR=str(work))
     with (work/'native.log').open('w') as log:

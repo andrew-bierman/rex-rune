@@ -33,6 +33,6 @@ Dialog {
             }
         }
         Label { textFormat: Text.PlainText; text: root.pair ? root.pair.address || "" : ""; wrapMode: Text.Wrap; Layout.fillWidth: true }
-        Button { text: qsTr("Copy address"); enabled: !!root.pair && !!root.pair.address; onClicked: root.copyRequested(root.pair.address) }
+        Button { objectName: "pairCopyAddress"; text: qsTr("Copy address"); enabled: !!root.pair && !!root.pair.address; onClicked: root.copyRequested(root.pair.address) }
     }
 }

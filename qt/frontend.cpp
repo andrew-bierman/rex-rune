@@ -251,9 +251,11 @@ void Frontend::read() {
             emit preferencesRejected(quint64(object["request_id"].toInteger()));
         }
         else if (type == "host_saved") emit hostSaved();
-        else if (type == "clipboard" && m_visible && object["host"] == m_state["host"] && object["epoch"] == m_state["epoch"]
-                 && object["session"] == m_state["session"] && object["pane"] == m_state["pane"]
-                 && m_state["connected"].toBool()) QGuiApplication::clipboard()->setText(object["text"].toString());
+        else if (type == "clipboard" && m_visible && !object["host"].toString().isEmpty() && object["epoch"].isDouble()
+                 && object["host"] == m_state["host"] && object["epoch"] == m_state["epoch"]
+                 && (object["scope"] == "server" || (object["scope"].isUndefined()
+                     && object["session"] == m_state["session"] && object["pane"] == m_state["pane"]
+                     && m_state["connected"].toBool()))) QGuiApplication::clipboard()->setText(object["text"].toString());
         else if (type == "action" && m_visible && object["host"] == m_state["host"] && object["epoch"] == m_state["epoch"] &&
                  object["generation"] == m_state["keymap"].toObject()["generation"] &&
                  object["session"] == m_state["session"] && object["pane"] == m_state["pane"])

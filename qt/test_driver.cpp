@@ -160,7 +160,7 @@ void TestDriver::step() {
         if (!m_waiting) QTextStream(stderr) << "Qt test step " << m_index << ": " << s["op"].toString() << Qt::endl;
         const auto op = s["op"].toString();
         bool complete = true;
-        if (!m_terminal && !QStringList{"waitState","waitText","waitProblem","pause","click","waitControl","screenshot","controlKey","field","snapshot","resize","serverConfirm"}.contains(op))
+        if (!m_terminal && !QStringList{"waitState","waitText","waitProblem","waitClipboard","pause","click","waitControl","screenshot","controlKey","field","snapshot","resize","serverConfirm"}.contains(op))
             throw std::runtime_error("selected terminal item missing");
         if (op == "waitText" || op == "waitState" || op == "waitClipboard" || op == "waitPrimary" || op == "waitProblem" || op == "waitOpenedUrl" || op == "waitControl") {
             if (!m_waiting) { m_wait.start(); m_waiting = true; }

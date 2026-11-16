@@ -456,7 +456,7 @@ impl Backend {
                             .is_some_and(|rows| rows.iter().any(|r| r["address"] == text)),
                     "address report changed"
                 );
-                self.after_state.push(json!({"type":"clipboard","version":VERSION,"host":slot.id,"epoch":slot.model.connection_epoch,"text":text}));
+                self.after_state.push(json!({"type":"clipboard","scope":"server","version":VERSION,"host":slot.id,"epoch":slot.model.connection_epoch,"text":text}));
             }
             _ => bail!("unknown server operation"),
         }

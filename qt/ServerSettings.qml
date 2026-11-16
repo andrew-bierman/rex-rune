@@ -35,9 +35,10 @@ ColumnLayout {
         model: root.serverState.listeners || []
         delegate: RowLayout {
             required property var modelData
+            required property int index
             Layout.fillWidth: true
             Label { textFormat: Text.PlainText; text: modelData.transport + ": " + (modelData.address || qsTr("Not reported")); wrapMode: Text.Wrap; Layout.fillWidth: true }
-            Button { text: qsTr("Copy address"); enabled: !!modelData.address; onClicked: root.copyRequested(modelData.address) }
+            Button { objectName: "serverCopyAddress-" + index; text: qsTr("Copy address"); enabled: !!modelData.address; onClicked: root.copyRequested(modelData.address) }
         }
     }
     Label { textFormat: Text.PlainText; text: root.serverState.setup_running ? qsTr("Starting once…") : (root.serverState.setup_result ? root.serverState.setup_result.message : ""); visible: text.length > 0; wrapMode: Text.Wrap; Layout.fillWidth: true }
