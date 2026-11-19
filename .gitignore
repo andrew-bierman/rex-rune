@@ -1,4 +1,6 @@
 /target/
+/.build-tools/
+/qt/build/
 /dist/
 /scripts/__pycache__/
 /resources/program-icons/.new/

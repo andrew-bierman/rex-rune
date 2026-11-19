@@ -1,3 +1,17 @@
+# Andrew's agent preferences
+
+## Keep agent browser work off the primary desktop
+
+Use the full Arch CUA desktop in an agent-owned workspace for browser research and automation. Camofox has also worked well and is a preferred real-browser option. A new window or a small Hyprland window on Andrew's primary desktop is not isolation.
+
+Do not open browser or terminal windows on the primary desktop, switch its workspaces, or steal focus unless Andrew explicitly requests that interaction. Keep routine work in the agent's existing terminal session.
+
+Prefer an interactive real browser, not headless browsing. If CUA is unavailable, investigate the Arch CUA connection and available agent-owned desktop surfaces rather than treating one failed browser-host connection as proof that CUA is unusable. Use Camofox on an isolated desktop/display when appropriate. Do not silently substitute headless browsing or take over the primary desktop; report a remaining limitation.
+
+Check the browser's launch mode and target display before starting it. Camofox may run interactively on the agent's own desktop; do not aim it at Andrew's primary DISPLAY or WAYLAND_DISPLAY. Do not close or move Andrew's unrelated windows when cleaning up agent-owned resources.
+
+--- project-doc ---
+
 # Contributor and agent guide
 
 Rex Rune is a native Linux client for Rex terminal servers, written in Rust on Rune. See [README.md](README.md) for what it does and how to run it, [PRODUCT.md](PRODUCT.md) for product principles and [DESIGN.md](DESIGN.md) for the design system.
@@ -88,6 +102,13 @@ Some probes connect to the configured Rex server and create sessions there. Of t
 - The client was `rex-linux` through 0.7.x, and four things keep that name so those installs still update: the product id in signed release metadata, the bridge tarballs, the `rex-linux` command, and the `[rex-linux]` package repository. Do not rename them; [docs/releases.md](docs/releases.md#the-rex-linux-bridge) says what depends on each and how to retire them.
 - Outside pull requests are not accepted. Never ask a contributor to open a PR or invite one in issue replies; welcome issues (including issues pointing at fork commits or branches), harvest changes from forks following [`docs/fork-harvest-2026-11.md`](docs/fork-harvest-2026-11.md)'s approach (cherry-pick or rewrite what fits), credit the author with a `Co-authored-by:` trailer, and mention the author in [CHANGELOG.md](CHANGELOG.md).
 
+## Qt downstream desktop isolation
+
+- Run automated Qt GUI checks only offscreen or on a disposable private compositor, with private HOME, config, clipboard and service fixtures. Do not use the person's desktop for automated input, captures or stress tests.
+- Use a separate agent desktop or virtual display for visible agent-operated demos and computer use. Another Hyprland workspace on Andrew's desktop is not isolation. Do not open windows on the primary desktop or change its workspace/focus without an explicit request for that interaction; do not change global window rules or desktop configuration.
+- Never attach to, resize, type into or capture an unrelated working pane or window. Keep the existing `rex-client-comparison` Rex group label; name only newly created task tabs or panes.
+- If the desktop becomes unresponsive or not-responding dialogs start repeating, stop this task's GUI clients and probes first. Preserve Rex servers, active sessions and unrelated work; resume GUI checks only after the person has indicated recovery. Keep visible demos closed until startup, popup, disconnect/reconnect and output responsiveness checks pass.
+
 ## Vendored patches
 
 `vendor/rune`, `vendor/rexrs` and `vendor/ghostty-vt` are upstream snapshots plus small, documented patches, wired in through `[patch]` in `Cargo.toml`. Rules:
@@ -98,3 +119,7 @@ Some probes connect to the configured Rex server and create sessions there. Of t
 - The Nix package (`nix/package.nix`) pins fetched sources by hash. A Rune bump also means updating the `rune-kit` hash in `cargoLock.outputHashes`; a `ghostty-vt` bump also means updating the Ghostty source archive and the Zig dependency hash there. The Windows CI job reads the Ghostty archive's URL and hash from the crate's `GHOSTTY.lock` by itself, but the README's "Building on Windows" section quotes both: update them there too.
 - Remove a patch once upstream provides an equivalent.
 - Regenerate rexrs types with `python3 codegen/generate.py` (from `vendor/rexrs`) rather than editing generated files by hand.
+
+## Shared machine resource protocol
+
+Before heavy builds, test suites or GUI stress probes, read `~/Code/dotfiles/docs/guides/agent-resource-protocol.md` and check live fleet claims with `beadle` / `lease` using a distinct stable `BEADS_ACTOR`. Defer heavy work while another agent holds a live quiet-window claim; never steal it. On Linux, run heavy commands through `leasehold hold --if-unavailable fail` (or launch the agent with `leasehold run`) with truthful slot/memory sizing. Capacity admission does not replace fleet claims. Timing-sensitive measurements additionally require an owned fleet resource claim, recorded load and paired adjacent samples. Preserve owner-only cleanup and isolated GUI/server fixtures.

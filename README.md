@@ -9,6 +9,11 @@ libghostty-vt for terminal emulation and the
 Linux-only; macOS and Windows build from source. Rex Rune is not affiliated
 with, endorsed by or supported by Superlogical or the Rex authors.
 
+This fork also includes an alternate [Qt Quick frontend](qt/README.md), built as
+`rex-qt` with a separate Rust backend executable. It is an early single-terminal
+milestone; the Rune application remains the default build. See the
+[verification record](docs/qt-quick-status.md) for checked behavior and limits.
+
 ![Rex Rune in the default Midnight theme, with three tabs, the sessions sidebar and a three-pane split showing a fictional project's file tree, source code and checks](docs/screenshot.png)
 
 ## Install
