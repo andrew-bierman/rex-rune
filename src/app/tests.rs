@@ -4100,6 +4100,14 @@ fn ssh_start_is_explicit_one_shot_and_defaults_to_not_now() {
         rt.state.panel.as_ref().unwrap().kind,
         PanelKind::StartSsh { .. }
     ));
+    let copy = element_text(&rt, "dialog").join("\n");
+    assert!(
+        copy.contains("loginctl enable-linger")
+            && copy.contains("logging out of work-alias")
+            && !copy.contains("10 seconds")
+            && !copy.contains("temporary"),
+        "the SSH setup preview explains lingering without claiming an idle stop"
+    );
     assert!(
         rt.state.ssh_setup.ran.is_empty(),
         "opening a preview cannot execute"
@@ -4151,6 +4159,105 @@ fn ssh_start_is_explicit_one_shot_and_defaults_to_not_now() {
             .iter()
             .any(|c| matches!(c, HostCommand::CreateSession { .. }))
     );
+}
+
+/// Run alone with REX_TEST_SNAP_DIR to also draw all four states with the bundled fonts.
+#[test]
+fn ssh_start_states_fit_at_minimum_size() {
+    use rex_rune::ssh::setup::Attachment;
+
+    let mut camera = pane_verb_tests::Camera::new();
+    let _families = camera
+        .as_ref()
+        .map(|_| rune::text::with_families("Inter", "IBM Plex Mono"));
+    let mut ws = workspace();
+    let endpoint = "ssh://work-alias";
+    ws.settings.hosts[0].endpoint = endpoint.into();
+    ws.hosts[0].model.ssh_server_missing = true;
+    ws.preview_ssh_start(0);
+    let size = (640., 480.);
+    let mut rt = if camera.is_some() {
+        let fonts = super::fonts::load("IBM Plex Mono", &[]);
+        Runtime::with_text(
+            ws,
+            view,
+            size,
+            Env::new(true, 1.),
+            rune::text::TextSystem::new(fonts.files, fonts.families),
+        )
+    } else {
+        runtime_at(ws, size)
+    };
+    let mut check = |rt: &mut Runtime<Workspace>, state: &str, extra: &[&str]| {
+        for _ in 0..90 {
+            rt.frame(1. / 60.);
+        }
+        let elements = rt.elements();
+        let find = |name: &str| {
+            elements
+                .iter()
+                .find(|e| {
+                    !e.exiting
+                        && (e.key.as_deref() == Some(name)
+                            || e.text.as_ref().is_some_and(|t| t.starts_with(name)))
+                })
+                .unwrap_or_else(|| panic!("{state}: missing {name}"))
+        };
+        let [dx, dy, dw, dh] = find("dialog").visible;
+        for name in ["cancel-ssh-start", "confirm-ssh-start"]
+            .into_iter()
+            .chain(extra.iter().copied())
+        {
+            let e = find(name);
+            let [x, y, w, h] = e.rect;
+            assert_eq!(e.rect, e.visible, "{state}: {name} is clipped");
+            assert!(
+                w > 0. && h > 0. && x >= dx && y >= dy && x + w <= dx + dw && y + h <= dy + dh,
+                "{state}: {name} {:?} is outside the visible dialog",
+                e.rect
+            );
+        }
+        if let Some(camera) = &mut camera {
+            camera.snap(rt, &format!("ssh-start-{state}-small"));
+        }
+    };
+
+    check(&mut rt, "preview", &[]);
+    rt.update(|s, tx| s.submit(tx));
+    check(&mut rt, "busy", &["Starting ssh://work-alias…"]);
+    rt.update(|s, tx| {
+        s.ssh_start_finished(
+            endpoint,
+            Err(anyhow::anyhow!("remote Rex is too old").into()),
+            tx,
+        );
+    });
+    check(&mut rt, "error", &["remote Rex is too old"]);
+    rt.update(|s, tx| {
+        s.submit(tx);
+        s.ssh_start_finished(
+            endpoint,
+            Ok(Attachment::Review {
+                reason: "Automatic SSH socket lookup cannot find this listener. Save its reported Unix socket endpoint to connect without starting it again.".into(),
+                endpoint: Some("ssh://work-alias/custom/rex.sock".into()),
+            }),
+            tx,
+        );
+    });
+    let review = [
+        "Automatic SSH socket lookup cannot find this listener.",
+        "ssh://work-alias/custom/rex.sock",
+        "save-ssh-socket",
+    ];
+    check(&mut rt, "review", &review);
+    rt.wheel(320., 150., -480.);
+    check(&mut rt, "review-scrolled", &review);
+    assert!(rt.elements().iter().any(|e| {
+        e.text
+            .as_ref()
+            .is_some_and(|t| t.starts_with("Uses your SSH configuration"))
+            && e.scrolled[1] > 0.
+    }));
 }
 
 #[test]
