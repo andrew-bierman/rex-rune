@@ -27,6 +27,8 @@ pub enum Intent {
     RetryHost(usize),
     /// Review an opt-in, one-time personal server start.
     StartSsh(usize),
+    InstallSsh(usize),
+    HostKey(usize),
     /// The default shell form for a host.
     HostShell(usize),
     /// The download folder form (Settings).
@@ -164,6 +166,8 @@ impl Intent {
                 | Intent::HostShell(_)
                 | Intent::DownloadFolder
                 | Intent::StartSsh(_)
+                | Intent::InstallSsh(_)
+                | Intent::HostKey(_)
                 | Intent::RenameSession
                 | Intent::RenameWindow(_)
                 | Intent::CloseWindow(_)
@@ -429,6 +433,12 @@ pub enum PanelKind {
     },
     /// Captures the endpoint, not a mutable host index.
     StartSsh {
+        endpoint: String,
+    },
+    InstallSsh {
+        endpoint: String,
+    },
+    HostKey {
         endpoint: String,
     },
     /// Configuration menu anchored beside the Shortcuts filter.
@@ -704,6 +714,23 @@ impl Workspace {
                     "Review first",
                     "",
                     Intent::StartSsh(host),
+                )
+                .in_section(1),
+            );
+        }
+        if self.can_check_key(host).is_some() {
+            entries.push(
+                Entry::new("Check host key…", "Review first", "", Intent::HostKey(host))
+                    .in_section(1),
+            );
+        }
+        if self.can_install_ssh(host) {
+            entries.push(
+                Entry::new(
+                    "Install Rex on this host…",
+                    "Review first",
+                    "",
+                    Intent::InstallSsh(host),
                 )
                 .in_section(1),
             );

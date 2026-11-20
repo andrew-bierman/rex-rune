@@ -827,6 +827,28 @@ impl Workspace {
                 .detail(name.clone()),
             );
         }
+        if self.can_check_key(host).is_some() {
+            rows.push(
+                Command::new(
+                    "host.check_key",
+                    G,
+                    "Check host key…",
+                    Intent::HostKey(host),
+                )
+                .detail(name.clone()),
+            );
+        }
+        if self.can_install_ssh(host) {
+            rows.push(
+                Command::new(
+                    "host.install_rex",
+                    G,
+                    "Install Rex on this host…",
+                    Intent::InstallSsh(host),
+                )
+                .detail(name.clone()),
+            );
+        }
         rows.extend([
             Command::action(
                 "host.collapse_others",

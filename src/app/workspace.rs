@@ -179,6 +179,9 @@ pub struct Workspace {
     pub notification_outbox: super::notify::Outbox,
     pub integrations: super::integrations::Integrations,
     pub ssh_setup: super::ssh_setup::Setup,
+    pub(super) ssh_install: Option<super::ssh_install::Install>,
+    pub(super) install_serial: u64,
+    pub(super) host_key: super::host_key::Check,
     /// The tailnet's machines, for Add host.
     pub discovery: super::discover::Discovery,
     /// The terminal theme this client declares, from Settings; none is Follow server.
@@ -342,6 +345,9 @@ impl Workspace {
             notification_outbox: Default::default(),
             integrations: Default::default(),
             ssh_setup: Default::default(),
+            ssh_install: None,
+            install_serial: 0,
+            host_key: Default::default(),
             discovery: Default::default(),
             term_theme,
             theme_dirs,
@@ -455,6 +461,7 @@ impl Workspace {
         if self.settings.hosts.len() <= 1 || index >= self.hosts.len() {
             return;
         }
+        self.leave_install_dialog();
         self.navigation.cancel();
         let state = self.hosts.remove(index);
         self.forget_host(state);
@@ -487,6 +494,9 @@ impl Workspace {
         endpoint: String,
         shell: Option<String>,
     ) {
+        if self.settings.hosts[index].endpoint != endpoint {
+            self.stop_install_for_host(index);
+        }
         let host = &mut self.settings.hosts[index];
         host.label = label;
         host.shell = shell;
@@ -1530,6 +1540,8 @@ impl Workspace {
             Intent::Session(target, action) => self.session_action(target, action, tx),
             Intent::AddHost => self.open_add_host(),
             Intent::StartSsh(host) => self.preview_ssh_start(host),
+            Intent::InstallSsh(host) => self.preview_ssh_install(host),
+            Intent::HostKey(host) => self.preview_host_key(host),
             Intent::AddMachine(index) => self.add_machine(index, tx),
             Intent::MachineForm(index) => self.machine_form(index),
             Intent::AddHostManually => self.open_panel(
@@ -1579,6 +1591,7 @@ impl Workspace {
             }
             Intent::Sidebar => self.toggle_sidebar(),
             Intent::Settings => {
+                self.leave_install_dialog();
                 self.bindings.sequence.clear();
                 self.reload_shortcuts();
                 self.shortcut_filter = TextEdit::new("");
@@ -2005,6 +2018,7 @@ impl Workspace {
     }
 
     pub fn open_panel(&mut self, kind: PanelKind, title: &str, fields: &[(&str, &str, &str)]) {
+        self.leave_install_dialog();
         self.bindings.sequence.clear();
         for term in self.terminals.values_mut() {
             term.end_selection();
@@ -2020,6 +2034,7 @@ impl Workspace {
                     | PanelKind::RemoveHost(_)
                     | PanelKind::AgentChange { .. }
                     | PanelKind::StartSsh { .. }
+                    | PanelKind::InstallSsh { .. }
                     | PanelKind::PairDevice(_)
                     | PanelKind::Themes
                     | PanelKind::Fonts(_)
@@ -2090,6 +2105,7 @@ impl Workspace {
     }
 
     pub fn close_panel(&mut self, tx: &mut Tx) {
+        self.leave_install_dialog();
         self.recorder = None;
         self.leave_download_dialog();
         self.bindings.sequence.clear();
@@ -2103,6 +2119,7 @@ impl Workspace {
             return;
         }
         self.leave_download_dialog();
+        self.leave_install_dialog();
         if let Some(mut back) = self.panel.as_mut().and_then(|p| p.back.take()) {
             if let Some(input) = back.inputs.first_mut() {
                 input.focused = true;
@@ -2118,6 +2135,7 @@ impl Workspace {
             return;
         }
         self.leave_download_dialog();
+        self.leave_install_dialog();
         if let Some(mut back) = self.panel.as_mut().and_then(|p| p.back.take()) {
             if let Some(input) = back.inputs.first_mut() {
                 input.focused = true;
