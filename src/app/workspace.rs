@@ -665,7 +665,9 @@ impl Workspace {
         self.ring_bells(index, bells);
         self.track_activity(index);
         self.restore_activity_selection(activity_selection);
+        self.restore_row_selection();
         self.deliver_program_notices(index, notices);
+        self.sync_layer_menu(tx);
         if self
             .panel
             .as_ref()
@@ -1432,7 +1434,10 @@ impl Workspace {
         if let Some(panel) = &mut self.panel {
             if !matches!(
                 action,
-                Intent::Pane(..) | Intent::MovePaneTo(_) | Intent::InsertPath(_)
+                Intent::Pane(..)
+                    | Intent::LayerMenu(_)
+                    | Intent::MovePaneTo(_)
+                    | Intent::InsertPath(_)
             ) {
                 panel.target = None;
             }
@@ -1520,6 +1525,8 @@ impl Workspace {
                 );
             }
             Intent::Pane(target, action) => self.pane_action(target, action, tx),
+            Intent::Layer(target, action) => self.layer_action(target, action),
+            Intent::LayerMenu(target) => self.layer_menu(target),
             Intent::Session(target, action) => self.session_action(target, action, tx),
             Intent::AddHost => self.open_add_host(),
             Intent::StartSsh(host) => self.preview_ssh_start(host),
@@ -1690,15 +1697,51 @@ impl Workspace {
             })
     }
 
+    /// The floating-layer verbs for a captured pane, anchored where the pane menu was: the
+    /// second page behind the pane menu's one layer row.
+    fn layer_menu(&mut self, layer: LayerTarget) {
+        let Some(root) = self
+            .panel
+            .as_ref()
+            .filter(|p| matches!(p.kind, PanelKind::Pane))
+        else {
+            return;
+        };
+        if let Some(reason) = self.layer_root_blocked(root, &layer) {
+            self.inform(reason.sentence());
+            return;
+        }
+        let title = format!("{} · {}", layer.tab, layer.pane);
+        let anchor = root.anchor;
+        let target = root.target.clone();
+        self.open_panel(PanelKind::Layer, &title, &[]);
+        let panel = self.panel.as_mut().expect("the layer menu");
+        panel.target = target;
+        panel.layer = Some(layer);
+        panel.anchor = anchor;
+        if let Some(first) = self.entries().iter().position(|e| e.enabled) {
+            self.panel.as_mut().unwrap().selected = first;
+        }
+    }
+
     pub fn pane_menu(&mut self, block: String, anchor: Option<(f32, f32)>) {
         let anchor = anchor.map(|(x, y)| (x / self.ui_scale(), y / self.ui_scale()));
         let Some(target) = self.target(&block) else {
             return;
         };
-        let title = format!("{} · {}", target.tab, target.name);
+        let layer = if self.layer_gate().is_none() {
+            self.capture_pane_layer(&target)
+        } else {
+            None
+        };
+        let title = match &layer {
+            Some(layer) => format!("{} · {}", layer.tab, layer.pane),
+            None => format!("{} · {}", target.tab, target.name),
+        };
         self.open_panel(PanelKind::Pane, &title, &[]);
         let panel = self.panel.as_mut().unwrap();
         panel.target = Some(target);
+        panel.layer = layer;
         panel.anchor = anchor;
         // The rows' availability is the target's (Copy needs its selection), known only now.
         if let Some(first) = self.entries().iter().position(|e| e.enabled) {
@@ -2087,16 +2130,60 @@ impl Workspace {
 
     pub fn navigate_panel(&mut self, delta: isize) {
         let entries = self.entries();
-        if let Some(panel) = &mut self.panel {
-            let mut selected = panel.selected as isize + delta;
-            while selected >= 0 && (selected as usize) < entries.len() {
-                if entries[selected as usize].enabled {
-                    panel.selected = selected as usize;
-                    panel.reveal = true;
-                    break;
-                }
-                selected += delta.signum();
+        let Some(mut selected) = self.panel.as_ref().map(|p| p.selected as isize + delta) else {
+            return;
+        };
+        while selected >= 0 && (selected as usize) < entries.len() {
+            if entries[selected as usize].enabled {
+                self.select_row(selected as usize);
+                break;
             }
+            selected += delta.signum();
+        }
+    }
+
+    /// Point the keyboard at entry `index` and remember which row that is: a host wake that
+    /// reorders the list keeps the highlight on this row instead of on whatever moved into its
+    /// place (`restore_row_selection`), and Enter runs it (`submit`). Only the paths that move
+    /// the keyboard record it; a row chosen some other way is acted on where it is.
+    pub fn select_row(&mut self, index: usize) {
+        let row = self
+            .entries()
+            .get(index)
+            .and_then(|entry| entry.id.as_deref().map(str::to_owned));
+        if let Some(panel) = self.panel.as_mut() {
+            panel.reveal |= index != panel.selected;
+            panel.row = row.map(|row| (index, row));
+            panel.selected = index;
+        }
+    }
+
+    /// Keep the keyboard's row while a host wake rebuilds the list it points at: the row the
+    /// keyboard left its highlight on is followed to its new position, and one that is gone
+    /// leaves the highlight alone and runs nothing (`submit`). A selection made some other way
+    /// — a pointer hover, a row with no identity — is left exactly as it was.
+    pub fn restore_row_selection(&mut self) {
+        let Some(panel) = self.panel.as_ref() else {
+            return;
+        };
+        let selected = panel.selected;
+        let Some((index, row)) = panel.row.clone() else {
+            return;
+        };
+        if index != selected {
+            return;
+        }
+        let entries = self.entries();
+        // Found: follow the row. Gone: the highlight stays where it is and this row is never
+        // retargeted, so `submit` refuses it until the keyboard picks another row.
+        if let Some(found) = entries
+            .iter()
+            .position(|entry| entry.id.as_deref() == Some(row.as_str()))
+        {
+            let panel = self.panel.as_mut().unwrap();
+            panel.reveal |= found != panel.selected;
+            panel.selected = found;
+            panel.row = Some((found, row));
         }
     }
 
@@ -2119,8 +2206,10 @@ impl Workspace {
         }
         let first = self.entries().iter().position(|e| e.enabled).unwrap_or(0);
         if let Some(panel) = &mut self.panel {
-            panel.selected = first;
             panel.error = None;
+        }
+        self.select_row(first);
+        if let Some(panel) = &mut self.panel {
             panel.reveal = true;
         }
     }
@@ -2135,13 +2224,24 @@ impl Workspace {
             .collect();
         if panel.is_list() {
             let selected = panel.selected;
-            if let Some(entry) = self
-                .entries()
-                .into_iter()
-                .nth(selected)
-                .filter(|e| e.enabled)
-            {
-                self.perform(entry.action, tx);
+            let row = panel.row.clone();
+            let entries = self.entries();
+            // A row with an identity runs by it: a list the server reordered under the
+            // keyboard must not hand Enter the row that took its place. A row that is no
+            // longer listed runs nothing.
+            let index = match &row {
+                Some((index, row)) if *index == selected => entries
+                    .iter()
+                    .position(|entry| entry.id.as_deref() == Some(row.as_str())),
+                _ => Some(selected),
+            };
+            let Some(index) = index else {
+                self.inform("That row is no longer in the list. Nothing was changed.");
+                return;
+            };
+            if let Some(entry) = entries.get(index).filter(|e| e.enabled) {
+                let action = entry.action.clone();
+                self.perform(action, tx);
             }
             return;
         }
@@ -2289,8 +2389,15 @@ impl Workspace {
                 }
                 let target = self.panel.as_ref().and_then(|p| p.target.clone());
                 let session = self.panel.as_ref().and_then(|p| p.session.clone());
+                let layer = self.panel.as_ref().and_then(|p| p.layer.clone());
                 let tab = self.panel.as_ref().and_then(|p| p.tab.clone());
                 self.close_panel(tx);
+                // A layer close names its own session and layer: it never falls back to the
+                // session on screen, and a changed layer closes nothing.
+                if let Some(layer) = layer {
+                    self.confirmed_layer_close(&layer);
+                    return;
+                }
                 if let Some(tab) = tab {
                     self.confirmed_tab_close(&tab, &method, payload);
                     return;
