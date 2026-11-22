@@ -432,13 +432,15 @@ fn run(
                 request["text"] = json!(paste);
                 backend.send(request)?;
             }
-            Event::Paste(_) => {
+            Event::Paste(_) if close_dialog.is_none() && !screen.settings_open => {
                 problem = if screen.sidebar {
-                    "Press F6 to focus the shell before pasting"
+                    match screen.settings.shortcut(Action::ToggleFocus) {
+                        Some(key) => format!("Press {key} to focus the shell before pasting"),
+                        None => "Enable the focus shortcut in Settings before pasting".into(),
+                    }
                 } else {
-                    "Wait for the shell to connect before pasting"
-                }
-                .into();
+                    "Wait for the shell to connect before pasting".into()
+                };
                 screen.dirty = true;
             }
             Event::Key(key) => {
