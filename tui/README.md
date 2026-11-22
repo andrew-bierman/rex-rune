@@ -19,7 +19,7 @@ mkdir -p "$PWD/dist"
   cd tui
   mise exec -- makepkg --clean
 )
-sudo pacman -U dist/rex-tui-0.1.0-9-x86_64.pkg.tar.zst
+sudo pacman -U dist/rex-tui-0.1.0-10-x86_64.pkg.tar.zst
 rex-tui
 ```
 
@@ -190,3 +190,24 @@ stays on one line. **Enter pastes the draft into the captured pane without
 pressing Enter in the shell.** Press **Esc** to return to the shell after
 pasting or discard an unsent draft. If the pane or connection changes,
 discard the draft and reopen the composer for the new target.
+
+## Pane-only mouse selection
+
+To select text without including tabs, other panes, or the sidebar, add this
+to `settings.toml` and reload Settings:
+
+```toml
+[selection]
+mouse = true
+
+[keys]
+copy_selection = "F12"
+```
+
+Add the binding to your existing `[keys]` section, if present. Drag with the
+left mouse button starting inside the pane, release, then press **F12**.
+Dragging beyond a pane edge keeps the selection within the original pane.
+Copy uses OSC 52 to write to your terminal emulator's clipboard. Foot
+enables this by default. Hold **Shift** while selecting to use Foot's native
+selection instead, including its usual copy shortcut. Mouse selection and
+its copy shortcut are off by default.

@@ -14,9 +14,13 @@ default_colors = "terminal" # Set "server" to use the Rex terminal defaults.
 [experimental]
 input_composer = false
 
+[selection]
+mouse = false
+
 [keys]
 settings = "F1"
 compose_input = "F11"
+copy_selection = "F12"
 new_session = "F2"
 previous_tab = "F3"
 next_tab = "F4"

@@ -1,0 +1,171 @@
+#!/usr/bin/env python3
+"""Verify pane-only mouse selection through a packaged rex-tui and disposable Rex."""
+
+import argparse
+import base64
+import errno
+import json
+import os
+from pathlib import Path
+import pty
+import re
+import select
+import subprocess
+import tempfile
+import termios
+import time
+
+CLIPBOARD = re.compile(rb"\x1b\]52;c;([A-Za-z0-9+/=]+)\x1b\\")
+CAPTURE_ON = b"\x1b[?1002h\x1b[?1006h"
+CAPTURE_OFF = b"\x1b[?1006l\x1b[?1002l"
+SETTINGS_TITLE = "┌ Settings ".encode()
+
+
+def exercise(launcher, root, env, api):
+    settings = root / "config" / "rex-tui" / "settings.toml"
+    settings.write_text("[sidebar]\nwidth = 20\n")
+    master, slave = pty.openpty()
+    try:
+        termios.tcsetwinsize(slave, (24, 80))
+        app = subprocess.Popen([launcher], env=env, stdin=slave, stdout=slave, stderr=slave)
+    finally:
+        os.close(slave)
+    output = bytearray()
+
+    def pump():
+        if select.select([master], [], [], .05)[0]:
+            try:
+                output.extend(os.read(master, 65536))
+            except OSError as error:
+                # Linux PTY masters report EIO when the last slave closes.
+                if error.errno != errno.EIO:
+                    raise
+
+    def wait_for(predicate, description):
+        deadline = time.monotonic() + 10
+        while not predicate():
+            if time.monotonic() >= deadline or app.poll() is not None:
+                raise AssertionError(f"{description}: {bytes(output[-1200:])!r}")
+            pump()
+
+    def send(data):
+        os.write(master, data)
+
+    def clipboard():
+        return [base64.b64decode(match) for match in CLIPBOARD.findall(output)]
+
+    try:
+        wait_for(lambda: b"F2 Create session" in output, "connected to private Rex")
+        assert CAPTURE_ON not in output, "mouse capture was enabled by default"
+        send(b"\x1bOQ")
+        wait_for(
+            lambda: b"Waiting for terminal" in output or b"rex-selection-private>" in output,
+            "opening a shell",
+        )
+        send(b"\x1b[19~")
+        wait_for(
+            lambda: len(api("session.list")["sessions"]) == 1
+            and len(blocks(api, api("session.list")["sessions"][0]["session_id"])) == 2,
+            "right split",
+        )
+        sid = api("session.list")["sessions"][0]["session_id"]
+        for pane, marker in zip(blocks(api, sid), ("LEFT_PANE_ONLY", "RIGHT_PANE_ONLY"), strict=True):
+            api("block.event", session_id=sid, block_id=pane,
+                event={"type": "paste", "payload": {"text": f"printf '\\033[2J\\033[H{marker}'; sleep 30"}})
+            api("block.event", session_id=sid, block_id=pane,
+                event={"type": "key", "payload": {"key": "enter", "action": "press", "mods": ""}})
+        wait_for(lambda: b"LEFT_PANE_ONLY" in output and b"RIGHT_PANE_ONLY" in output, "both pane markers")
+
+        settings.write_text("[sidebar]\nwidth = 20\n[selection]\nmouse = true\n")
+        send(b"\x1bOP")
+        wait_for(lambda: SETTINGS_TITLE in output, "open Settings")
+        send(b"r")
+        wait_for(lambda: CAPTURE_ON in output, "enable mouse capture on reload")
+        send(b"\x1b")
+        time.sleep(.15)
+
+        # One-based SGR coordinates. The left pane starts at (22, 5). Start
+        # after the last character and drag backwards across the sidebar boundary.
+        send(b"\x1b[<0;36;5M\x1b[<32;2;5M\x1b[<0;2;5m")
+        send(b"\x1b[24~")
+        wait_for(clipboard, "copy after release acknowledgement")
+        assert clipboard() == [b"LEFT_PANE_ONLY"], clipboard()
+
+        # Drag out through the *other* pane. Fresh clipboard content is still
+        # exactly the left marker and cannot include the right marker.
+        copy_count = len(clipboard())
+        send(b"\x1b[<0;22;5M\x1b[<32;76;5M\x1b[<0;76;5m")
+        send(b"\x1b[24~")
+        wait_for(lambda: len(clipboard()) == copy_count + 1, "copy clipped across other pane")
+        assert clipboard()[-1] == b"LEFT_PANE_ONLY", clipboard()
+
+        send(b"\x1bOP")
+        start = len(output)
+        wait_for(lambda: SETTINGS_TITLE in output[start:], "reopen Settings")
+        copy_count = len(clipboard())
+        send(b"\x1b[24~")
+        pump()
+        assert len(clipboard()) == copy_count, "modal leaked copy shortcut"
+        settings.write_text("[sidebar]\nwidth = 20\n")
+        send(b"r")
+        wait_for(lambda: CAPTURE_OFF in output, "disable mouse capture on reload")
+        send(b"\x1b")
+        time.sleep(.15)
+        send(b"\x1b[21~")
+        assert app.wait(timeout=4) == 0
+        pump()
+        print("Pane-only selection copied exact left-pane text across sidebar and split boundaries.")
+    finally:
+        if app.poll() is None:
+            app.kill()
+            app.wait()
+        os.close(master)
+
+
+def blocks(api, session):
+    view = api("session.view", session_id=session)
+    return [block["block_id"] for window in view["windows"] for layer in window["layers"]
+            for block in layer["blocks"] if block.get("creator_name") == "com.superlogical.terminal"]
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("launcher", type=Path, help="Path to the packaged rex-tui launcher")
+    args = parser.parse_args()
+    with tempfile.TemporaryDirectory(prefix="rex-tui-selection-") as temp:
+        root = Path(temp)
+        profile = root / "config" / "rex-tui" / "workspace.json"
+        profile.parent.mkdir(parents=True)
+        endpoint = f"unix://{root / 'rex.sock'}"
+        profile.write_text(json.dumps({"hosts": [{"label": "Private Sidebar", "endpoint": endpoint}]}))
+        env = {key: value for key, value in os.environ.items()
+               if not key.startswith(("REX_", "HERDR_"))}
+        env.update(HOME=temp, XDG_CONFIG_HOME=str(root / "config"),
+                   XDG_STATE_HOME=str(root / "state"), XDG_RUNTIME_DIR=temp,
+                   TERM="xterm-256color", SHELL="/bin/sh", PS1="rex-selection-private> ")
+        rex = os.environ.get("REX_BIN", "rex")
+
+        def api(method, **payload):
+            command = [rex, "--autostart=false", "--server", endpoint, "api", "call",
+                       method, json.dumps(payload)]
+            return json.loads(subprocess.check_output(command, env=env, timeout=4))
+
+        with (root / "server.log").open("wb") as log:
+            server = subprocess.Popen([rex, "server", "run", "--listen", endpoint,
+                                       "--restore=false", "--config", "/dev/null",
+                                       "--state-dir", str(root / "server")],
+                                      env=env, stdout=log, stderr=log)
+            try:
+                deadline = time.monotonic() + 5
+                while not (root / "rex.sock").exists():
+                    if server.poll() is not None or time.monotonic() >= deadline:
+                        raise RuntimeError("Disposable Rex socket did not open")
+                    time.sleep(.05)
+                exercise(args.launcher.resolve(), root, env, api)
+            finally:
+                server.terminate()
+                server.wait(timeout=5)
+
+
+if __name__ == "__main__":
+    main()

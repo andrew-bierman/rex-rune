@@ -1,5 +1,6 @@
 mod close;
 mod composer;
+mod selection;
 mod settings;
 mod ui;
 
@@ -304,7 +305,9 @@ fn run(
     let mut close_dialog: Option<CloseDialog> = None;
     let mut close_request_id = 0u64;
     let mut modal_keys = HashSet::new();
+    let mut mouse_capture = selection::MouseCapture::default();
     loop {
+        mouse_capture.set(screen.settings.mouse_selection)?;
         let (update, message, rejected_request, closed) = {
             let mut inbox = backend.inbox.lock().unwrap();
             (
@@ -360,6 +363,28 @@ fn run(
                 }
             })?;
             screen.dirty = false;
+        }
+        let selection_enabled = screen.settings.mouse_selection
+            && !screen.settings_open
+            && screen.composer.is_none()
+            && close_dialog.is_none();
+        if let Some(request) =
+            screen
+                .selection
+                .reconcile(&state, &screen.pane_grids, selection_enabled)
+        {
+            backend.send(request)?;
+            screen.dirty = true;
+        }
+        if let Some(result) = screen.selection.take_copy(&state) {
+            problem = match result {
+                Ok(text) => {
+                    selection::write_clipboard(&mut std::io::stdout(), text)?;
+                    String::new()
+                }
+                Err(message) => message.into(),
+            };
+            screen.dirty = true;
         }
         if state["hosts"]["pending"] != true {
             let scope = (
@@ -450,6 +475,12 @@ fn run(
         }
         match input {
             Event::Resize(..) => screen.dirty = true,
+            Event::Mouse(mouse) if selection_enabled => {
+                if let Some(request) = screen.selection.mouse(&state, &screen.pane_grids, mouse) {
+                    backend.send(request)?;
+                    screen.dirty = true;
+                }
+            }
             Event::Paste(paste)
                 if close_dialog.is_none()
                     && !screen.sidebar
@@ -482,6 +513,7 @@ fn run(
                     match (key.code, key.modifiers) {
                         (KeyCode::Esc, KeyModifiers::NONE) => screen.settings_open = false,
                         (KeyCode::Char('e'), KeyModifiers::NONE) => {
+                            mouse_capture.set(false)?;
                             problem = match edit_settings(terminal, settings_path)? {
                                 Ok(()) => reload_settings(&mut screen, settings_path),
                                 Err(error) => format!("{error:#}"),
@@ -527,6 +559,17 @@ fn run(
                     ) => {
                         if let Some(request) = resize_split(&state, action, key.kind) {
                             backend.send(request)?;
+                        }
+                    }
+                    Some(Action::CopySelection) => {
+                        if key.kind == KeyEventKind::Press {
+                            problem = screen
+                                .selection
+                                .request_copy()
+                                .err()
+                                .unwrap_or_default()
+                                .into();
+                            screen.dirty = true;
                         }
                     }
                     Some(Action::ComposeInput) => {

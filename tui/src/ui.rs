@@ -1,6 +1,7 @@
 use crate::{
     composer::Composer,
     items,
+    selection::{Grid, Selection},
     settings::{Action, Chrome, PaneDefaultColors, Panes, Settings, SidebarSide},
     targeted, text,
 };
@@ -101,6 +102,8 @@ pub struct Screen {
     pub composer: Option<Composer>,
     pub dirty: bool,
     pub pane_sizes: Vec<(String, u16, u16)>,
+    pub pane_grids: Vec<Grid>,
+    pub selection: Selection,
     selected: usize,
     selected_id: Option<(String, String, String)>,
     sidebar_offset: usize,
@@ -116,6 +119,8 @@ impl Default for Screen {
             composer: None,
             dirty: true,
             pane_sizes: Vec::new(),
+            pane_grids: Vec::new(),
+            selection: Selection::default(),
             selected: 0,
             selected_id: None,
             sidebar_offset: 0,
@@ -241,6 +246,7 @@ impl Screen {
     ) {
         let area = frame.area();
         self.pane_sizes.clear();
+        self.pane_grids.clear();
         frame.render_widget(Block::new().style(self.settings.chrome.style()), area);
         if area.width < 38 || area.height < 8 {
             frame.render_widget(Paragraph::new("Enlarge the terminal to use rex-tui."), area);
@@ -311,7 +317,13 @@ impl Screen {
                 active && !self.sidebar && !self.settings_open && self.composer.is_none(),
                 self.settings.panes,
                 self.settings.chrome,
+                self.settings.mouse_selection && self.selection.highlights(state, pane),
             );
+            if self.settings.mouse_selection
+                && let Some(grid) = Grid::new(pane, inner)
+            {
+                self.pane_grids.push(grid);
+            }
             if pane["terminal"]["owner"] == true
                 && pane["terminal"]["connected"] == true
                 && inner.width > 1
@@ -417,6 +429,7 @@ impl Screen {
         let actions = Span::raw(
             [
                 self.hint(Action::Settings, "Settings"),
+                self.hint(Action::CopySelection, "Copy"),
                 self.hint(Action::ComposeInput, "Compose"),
                 self.hint(Action::NewSession, "Session"),
                 self.hint(Action::NewTab, "Tab"),
@@ -627,6 +640,7 @@ fn draw_pane(
     focused: bool,
     options: Panes,
     chrome: Chrome,
+    highlight_selection: bool,
 ) -> Rect {
     let snapshot = &pane["frame"];
     let roles = &snapshot["color_roles"];
@@ -681,6 +695,15 @@ fn draw_pane(
             .and_then(Value::as_str)
             .unwrap_or_default()
             .as_bytes();
+        let selection = highlight_selection
+            .then(|| items(&snapshot["selection_rows"]).get(y))
+            .flatten()
+            .and_then(|row| {
+                let [start, end] = items(row) else {
+                    return None;
+                };
+                Some(start.as_u64()?..=end.as_u64()?)
+            });
         for (x, cell) in items(row).iter().take(inner.width.into()).enumerate() {
             let wide = items(row)
                 .get(x + 1)
@@ -740,6 +763,29 @@ fn draw_pane(
             } else {
                 symbol
             };
+            if selection
+                .as_ref()
+                .is_some_and(|range| range.contains(&(x as u64)))
+            {
+                style = match (chrome.selection_text, chrome.selection_background) {
+                    (None, None) if reversed => style.remove_modifier(Modifier::REVERSED),
+                    (None, None) => style.add_modifier(Modifier::REVERSED),
+                    (text, background) => {
+                        let (text, background) = if reversed {
+                            (background, text)
+                        } else {
+                            (text, background)
+                        };
+                        if let Some(color) = text {
+                            style = style.fg(color);
+                        }
+                        if let Some(color) = background {
+                            style = style.bg(color);
+                        }
+                        style
+                    }
+                };
+            }
             if let Some(target) = buffer.cell_mut((inner.x + x as u16, inner.y + y as u16)) {
                 target.set_symbol(symbol).set_style(style);
             }
@@ -792,6 +838,7 @@ mod tests {
                     false,
                     options,
                     Chrome::default(),
+                    false,
                 );
             })
             .unwrap();
@@ -809,6 +856,25 @@ mod tests {
             "untouched space inherits the outer background"
         );
 
+        let mut selected = pane.clone();
+        selected["frame"]["selection_rows"] = json!([[1, 2]]);
+        let rendered = terminal
+            .draw(|frame| {
+                draw_pane(
+                    frame,
+                    frame.area(),
+                    &selected,
+                    false,
+                    options,
+                    Chrome::default(),
+                    true,
+                );
+            })
+            .unwrap();
+        let cells = rendered.buffer.content();
+        assert!(cells[1].modifier.contains(Modifier::REVERSED));
+        assert!(!cells[2].modifier.contains(Modifier::REVERSED));
+
         let mut overridden = pane.clone();
         overridden["frame"]["color_roles"]["inherit"][1] = json!(false);
         let rendered = terminal
@@ -820,6 +886,7 @@ mod tests {
                     false,
                     options,
                     Chrome::default(),
+                    false,
                 );
             })
             .unwrap();
@@ -847,6 +914,7 @@ mod tests {
                         false,
                         options,
                         Chrome::default(),
+                        false,
                     );
                 })
                 .unwrap();

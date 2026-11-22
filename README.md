@@ -36,6 +36,7 @@ examples](tui/README.md#settings-and-themes).
 - Browse and fold hosts and sessions, open tabs, and switch focus between the sidebar and a shell.
 - Create sessions and shell tabs, split panes right or down, resize dividers with the keyboard, and confirm before closing a tab or ending a session.
 - Type and paste into the focused pane, resize panes when the terminal changes size, and leave sessions running when the client exits.
+- Enable pane-only mouse selection and copy while keeping Foot's native Shift-drag selection.
 - Edit and reload TOML settings, choose named themes, inherit terminal colors, customize the sidebar and pane chrome, and remap shortcuts.
 - Try an opt-in input composer that edits a command locally and pastes it into the selected shell.
 - Install the TUI and its matching backend from one x86_64 Arch package. The package builds in clean Arch CI and is exercised in private Foot against disposable Rex sessions.
@@ -51,7 +52,7 @@ such as notifications and opening links.
 
 | Area | Remaining TUI work |
 | --- | --- |
-| Mouse and clipboard | Pane-only drag selection and copy are in progress. Next are click-to-focus, mouse divider resizing, a right-click action menu, and mouse forwarding for programs that request it. |
+| Mouse and clipboard | Add click-to-focus, mouse divider resizing, a right-click action menu, and mouse forwarding for programs that request it. |
 | Scrollback and search | Find within a pane, jump between prompts, and add keyboard copy mode with character, line, and block selection. |
 | Navigation | Add a searchable command palette, a global switcher for sessions and tabs, sidebar filtering, and recent-tab history. |
 | Tabs and panes | Add rename and reorder, directional focus and movement, pane zoom and balancing, close-pane and close-others actions, and support for floating panes as the shared backend gains it. |
