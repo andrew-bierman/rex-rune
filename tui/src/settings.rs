@@ -22,6 +22,7 @@ pub enum Action {
     NextTab,
     NewTab,
     ToggleFocus,
+    FilterSidebar,
     NextPane,
     SplitRight,
     SplitDown,
@@ -56,6 +57,7 @@ const DEFAULT_KEYS: [(Action, &str); 30] = [
     (Action::NextTab, "F4"),
     (Action::NewTab, "F5"),
     (Action::ToggleFocus, "F6"),
+    (Action::FilterSidebar, "/"),
     (Action::NextPane, "F7"),
     (Action::SplitRight, "F8"),
     (Action::SplitDown, "F9"),
@@ -403,6 +405,7 @@ impl Settings {
                     | Action::MoveTabLeft
                     | Action::MoveTabRight
                     | Action::NextAttention
+                    | Action::FilterSidebar
             )
         };
         let mut defaults = DEFAULT_KEYS;

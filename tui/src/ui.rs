@@ -7,7 +7,9 @@ use crate::{
     settings::{Action, Chrome, PaneDefaultColors, Panes, Settings, SidebarSide},
     targeted, text,
 };
-use crossterm::event::{KeyCode, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{
+    KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Position, Rect},
@@ -27,15 +29,17 @@ const DEFAULT_COLOR: Color = Color::Reset;
 #[derive(PartialEq, Eq)]
 struct RowId<'a>(&'a str, &'a str, &'a str);
 
+type SidebarId = (String, String, String);
+
 impl RowId<'_> {
-    fn owned(&self) -> (String, String, String) {
+    fn owned(&self) -> SidebarId {
         (self.0.to_owned(), self.1.to_owned(), self.2.to_owned())
     }
 }
 
 #[derive(PartialEq, Eq)]
 struct SidebarTarget {
-    id: (String, String, String),
+    id: SidebarId,
     epoch: Value,
     disclosure: bool,
 }
@@ -82,11 +86,23 @@ impl Row<'_> {
 }
 
 fn rows<'a>(state: &'a Value, folded: &HashMap<String, HashSet<String>>) -> Vec<Row<'a>> {
+    sidebar_rows(state, folded, None)
+}
+
+fn sidebar_rows<'a>(
+    state: &'a Value,
+    folded: &HashMap<String, HashSet<String>>,
+    query: Option<&str>,
+) -> Vec<Row<'a>> {
+    let matches =
+        |item: &Value| query.is_none_or(|query| label(item).to_lowercase().contains(query));
     let mut result = Vec::new();
     for host in items(&state["hosts"]["rows"]) {
         let folded = folded.get(text(host, "id"));
         let sessions = items(&host["sessions"]);
-        let host_expanded = !folded.is_some_and(|ids| ids.contains(""));
+        let host_matches = matches(host);
+        let host_index = result.len();
+        let host_expanded = query.is_some() || !folded.is_some_and(|ids| ids.contains(""));
         result.push(Row {
             host,
             session: None,
@@ -97,14 +113,18 @@ fn rows<'a>(state: &'a Value, folded: &HashMap<String, HashSet<String>>) -> Vec<
             continue;
         }
         for session in sessions {
-            let tabs = if session["opened"] == true
+            let session_matches = host_matches || matches(session);
+            let session_index = result.len();
+            let tabs = if query.is_some()
+                || session["opened"] == true
                 || (host["active"] == true && session["selected"] == true)
             {
                 items(&session["tabs"])
             } else {
                 &[]
             };
-            let session_expanded = !folded.is_some_and(|ids| ids.contains(text(session, "id")));
+            let session_expanded =
+                query.is_some() || !folded.is_some_and(|ids| ids.contains(text(session, "id")));
             result.push(Row {
                 host,
                 session: Some(session),
@@ -112,7 +132,7 @@ fn rows<'a>(state: &'a Value, folded: &HashMap<String, HashSet<String>>) -> Vec<
                 expanded: (!tabs.is_empty()).then_some(session_expanded),
             });
             if session_expanded {
-                for tab in tabs {
+                for tab in tabs.iter().filter(|tab| session_matches || matches(tab)) {
                     result.push(Row {
                         host,
                         session: Some(session),
@@ -121,9 +141,32 @@ fn rows<'a>(state: &'a Value, folded: &HashMap<String, HashSet<String>>) -> Vec<
                     });
                 }
             }
+            if query.is_some() {
+                if result.len() > session_index + 1 {
+                    result[session_index].expanded = Some(true);
+                } else if session_matches {
+                    result[session_index].expanded = None;
+                } else {
+                    result.pop();
+                }
+            }
+        }
+        if query.is_some() {
+            if result.len() > host_index + 1 {
+                result[host_index].expanded = Some(true);
+            } else if host_matches {
+                result[host_index].expanded = None;
+            } else {
+                result.pop();
+            }
         }
     }
     result
+}
+
+struct SidebarFilter {
+    query: String,
+    previous_selection: Option<SidebarId>,
 }
 
 pub struct Screen {
@@ -139,7 +182,8 @@ pub struct Screen {
     pub selection: Selection,
     pub pane_menu: Option<Menu>,
     selected: usize,
-    selected_id: Option<(String, String, String)>,
+    filter: Option<SidebarFilter>,
+    selected_id: Option<SidebarId>,
     sidebar_offset: usize,
     sidebar_scrolled: bool,
     sidebar_inner: Rect,
@@ -162,6 +206,7 @@ impl Default for Screen {
             selection: Selection::default(),
             pane_menu: None,
             selected: 0,
+            filter: None,
             selected_id: None,
             sidebar_offset: 0,
             sidebar_scrolled: false,
@@ -202,8 +247,108 @@ impl Screen {
         self.selected = self.selected.min(rows.len().saturating_sub(1));
     }
 
+    pub fn start_filter(&mut self) {
+        self.filter = Some(SidebarFilter {
+            query: String::new(),
+            previous_selection: self.selected_id.clone(),
+        });
+        self.sidebar_scrolled = false;
+        self.sidebar_press = None;
+        self.dirty = true;
+    }
+
+    pub fn filtering(&self) -> bool {
+        self.filter.is_some()
+    }
+
+    pub fn stop_filter(&mut self) {
+        if let Some(filter) = self.filter.take() {
+            self.selected_id = filter.previous_selection;
+            self.sidebar_scrolled = false;
+            self.dirty = true;
+        }
+    }
+
+    fn visible_rows<'a>(&self, state: &'a Value) -> Vec<Row<'a>> {
+        let query = self.filter.as_ref().and_then(|filter| {
+            let query = filter.query.trim();
+            (!query.is_empty()).then(|| query.to_lowercase())
+        });
+        sidebar_rows(state, &self.folded, query.as_deref())
+    }
+
+    fn update_filter(&mut self, state: &Value) {
+        let filter = self.filter.as_ref().unwrap();
+        let query = filter.query.trim().to_lowercase();
+        if query.is_empty() {
+            self.selected_id = filter.previous_selection.clone();
+        } else {
+            let rows = self.visible_rows(state);
+            let matched = |row: &Row<'_>| {
+                label(row.tab.or(row.session).unwrap_or(row.host))
+                    .to_lowercase()
+                    .contains(query.as_str())
+            };
+            let index = rows.iter().position(|row| {
+                matched(row)
+                    && self
+                        .selected_id
+                        .as_ref()
+                        .is_some_and(|id| row.id().owned() == *id)
+            });
+            self.selected = index.or_else(|| rows.iter().position(matched)).unwrap_or(0);
+            self.remember_selection(&rows);
+        }
+        self.dirty = true;
+    }
+
+    pub fn filter_paste(&mut self, state: &Value, text: &str) {
+        let filter = self.filter.as_mut().unwrap();
+        let remaining = 256usize.saturating_sub(filter.query.chars().count());
+        filter
+            .query
+            .extend(text.chars().filter(|c| !c.is_control()).take(remaining));
+        self.update_filter(state);
+    }
+
+    pub fn filter_key(&mut self, state: &Value, key: KeyEvent) -> Option<Value> {
+        if key.kind == KeyEventKind::Release {
+            return None;
+        }
+        match (key.code, key.modifiers) {
+            (KeyCode::Esc, KeyModifiers::NONE) => self.stop_filter(),
+            (KeyCode::Char('u'), KeyModifiers::CONTROL) => {
+                self.filter.as_mut().unwrap().query.clear();
+                self.update_filter(state);
+            }
+            (KeyCode::Backspace, KeyModifiers::NONE) => {
+                self.filter.as_mut().unwrap().query.pop();
+                self.update_filter(state);
+            }
+            (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
+                self.filter_paste(state, c.encode_utf8(&mut [0; 4]));
+            }
+            (KeyCode::Enter, KeyModifiers::NONE) if key.kind == KeyEventKind::Press => {
+                return self.navigate(state, key.code);
+            }
+            (
+                KeyCode::Up
+                | KeyCode::Down
+                | KeyCode::Home
+                | KeyCode::End
+                | KeyCode::PageUp
+                | KeyCode::PageDown,
+                KeyModifiers::NONE,
+            ) => {
+                return self.navigate(state, key.code);
+            }
+            _ => {}
+        }
+        None
+    }
+
     pub fn navigate(&mut self, state: &Value, key: KeyCode) -> Option<Value> {
-        let rows = rows(state, &self.folded);
+        let rows = self.visible_rows(state);
         let last = rows.len().saturating_sub(1);
         self.restore_selection(&rows, state);
         if matches!(
@@ -598,10 +743,15 @@ impl Screen {
                 Style::new().fg(self.settings.chrome.accent).bold(),
             ),
             Span::raw(if self.sidebar {
-                format!(
-                    "↑↓ Move  ←→ Fold  ↵ Open  {}",
-                    self.hint(Action::ToggleFocus, "Type")
-                )
+                if self.filtering() {
+                    "↑↓ Move  ↵ Open  Ctrl+U Clear  Esc End filter".into()
+                } else {
+                    format!(
+                        "↑↓ Move  ←→ Fold  ↵ Open  {}  {}",
+                        self.hint(Action::FilterSidebar, "Filter"),
+                        self.hint(Action::ToggleFocus, "Type")
+                    )
+                }
             } else {
                 [
                     self.hint(Action::ToggleFocus, "Browse"),
@@ -673,9 +823,34 @@ impl Screen {
             } else {
                 chrome.border
             }));
-        let inner = block.inner(area);
+        let mut inner = block.inner(area);
         frame.render_widget(block, area);
-        let rows = rows(state, &self.folded);
+        if let Some(filter) = &self.filter
+            && inner.height > 1
+        {
+            let prompt = Rect::new(inner.x, inner.y, inner.width, 1);
+            let width = usize::from(inner.width.saturating_sub(2));
+            let tail = String::from_iter(
+                filter
+                    .query
+                    .chars()
+                    .rev()
+                    .scan(width, |left, c| {
+                        *left = left.checked_sub(c.width().unwrap_or(0))?;
+                        Some(c)
+                    })
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev(),
+            );
+            frame.render_widget(
+                Paragraph::new(Line::styled(format!("/ {tail}"), chrome.selection())),
+                prompt,
+            );
+            inner.y += 1;
+            inner.height -= 1;
+        }
+        let rows = self.visible_rows(state);
         self.restore_selection(&rows, state);
         let capacity = usize::from(inner.height);
         self.sidebar_inner = inner;
@@ -687,6 +862,9 @@ impl Screen {
                 .max(self.selected.saturating_add(1).saturating_sub(capacity));
         }
         let mut lines = Vec::with_capacity(capacity);
+        if rows.is_empty() && self.filtering() {
+            lines.push(Line::styled("No matches", Style::new().fg(chrome.muted)));
+        }
         for (index, row) in rows
             .iter()
             .enumerate()
@@ -1498,6 +1676,102 @@ mod tests {
     }
 
     #[test]
+    fn sidebar_filter_opens_matching_tab_and_restores_folds() {
+        let state = json!({"hosts":{"rows":[
+            {"id":"other","label":"Test rig"},
+            {"id":"h","label":"Builds","epoch":4,"sessions":[
+                {"id":"s","label":"Deploy","tabs":[
+                    {"id":"a","label":"Scratch"}, {"id":"b","label":"Résumé"}
+                ]},
+                {"id":"unrelated","label":"Personal"}
+            ]}
+        ]}});
+        let mut screen = Screen::default();
+        screen.navigate(&state, KeyCode::End);
+        screen.navigate(&state, KeyCode::Left);
+        screen.navigate(&state, KeyCode::Left);
+        let original = screen.selected_id.clone();
+        let folds = screen.folded.clone();
+        screen.start_filter();
+        screen.filter_paste(&state, "RÉSUMÉ");
+        assert_eq!(
+            screen
+                .visible_rows(&state)
+                .iter()
+                .map(|row| row.id().owned())
+                .collect::<Vec<_>>(),
+            [
+                ("h".into(), "".into(), "".into()),
+                ("h".into(), "s".into(), "".into()),
+                ("h".into(), "s".into(), "b".into())
+            ]
+        );
+        let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(
+            screen.filter_key(&state, enter).unwrap(),
+            json!({
+                "op":"host", "action":"navigate", "host":"h","epoch":4,
+                "args":{"session":"s","window":"b"}
+            })
+        );
+        screen.filter_paste(&state, "x");
+        assert!(screen.filter_key(&state, enter).is_none());
+        screen.filter_key(
+            &state,
+            KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
+        );
+        assert_eq!(
+            screen.filter_key(&state, enter).unwrap()["args"]["window"],
+            "b"
+        );
+        screen.filter_key(
+            &state,
+            KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(screen.visible_rows(&state).len(), 2);
+        screen.filter_key(
+            &state,
+            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
+        );
+        assert_eq!(screen.filter.as_ref().unwrap().query, "j");
+        screen.filter_key(&state, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(!screen.filtering());
+        assert_eq!(screen.selected_id, original);
+        assert_eq!(screen.folded, folds);
+    }
+
+    #[test]
+    fn sidebar_filter_keeps_matching_branches_and_selection_on_reorder() {
+        let mut state = json!({"hosts":{"rows":[{"id":"h","label":"Laptop","sessions":[
+            {"id":"s","label":"Build","tabs":[{"id":"a","label":"Alpha"},{"id":"b","label":"Beta"}]},
+            {"id":"test","label":"Test"}
+        ]}]}});
+        let mut screen = Screen::default();
+        screen.start_filter();
+        screen.filter_paste(&state, "build");
+        assert_eq!(screen.visible_rows(&state).len(), 4);
+        screen.navigate(&state, KeyCode::End);
+        state["hosts"]["rows"][0]["sessions"][0]["tabs"]
+            .as_array_mut()
+            .unwrap()
+            .reverse();
+        assert_eq!(
+            screen.navigate(&state, KeyCode::Enter).unwrap()["args"]["window"],
+            "b"
+        );
+        screen.filter_key(
+            &state,
+            KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL),
+        );
+        screen.filter_paste(&state, "laptop");
+        assert_eq!(screen.visible_rows(&state).len(), 5);
+        assert_eq!(
+            screen.navigate(&state, KeyCode::Enter).unwrap()["action"],
+            "activate"
+        );
+    }
+
+    #[test]
     fn sidebar_cursor_tracks_tab_identity_across_inventory_updates() {
         let mut state = json!({
             "session": "s", "window": "a", "hosts": {"pending": true, "rows": [{
@@ -1551,7 +1825,7 @@ mod tests {
     fn footer_uses_one_row_when_the_shortcuts_fit() {
         let screen = Screen::default();
         let state = json!({"status": "Connected"});
-        assert_eq!(screen.footer(&state, "", 100).len(), 1);
+        assert_eq!(screen.footer(&state, "", 120).len(), 1);
         assert_eq!(screen.footer(&state, "", 60).len(), 2);
     }
 

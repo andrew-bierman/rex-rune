@@ -95,12 +95,17 @@ fi
 | Shift+F9 | Ask to close the focused pane or its tab if it has only one pane |
 | Shift+F6 / Shift+F7 / Shift+F8 | Rename the active session, tab, or focused pane |
 | F6 | Switch input between the sidebar and the terminal |
+| / | Filter hosts, sessions, and known tabs while browsing the sidebar |
 | F7 | Cycle pane focus |
 | Ctrl+Alt+Arrow | Focus the adjacent pane in that direction |
 | F8 / F9 | Split the focused pane right or down |
 | Ctrl+Shift+Arrow | Move a divider next to the focused pane |
 | F10 | Exit while leaving server sessions running |
 | Alt+PageUp / Alt+PageDown | Scroll the active pane back or forward |
+
+While filtering, use the arrow keys to move through results and Enter to open
+the highlighted row. Press Ctrl+U to clear the query or Esc to restore the
+original sidebar selection and folds. Remap `/` with `filter_sidebar` in `[keys]`.
 
 Directional focus stops at the edge of the split layout. Remap it with
 `focus_left`, `focus_right`, `focus_up`, and `focus_down` in `[keys]`.
