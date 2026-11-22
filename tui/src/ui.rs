@@ -94,7 +94,18 @@ impl Default for Screen {
 }
 
 impl Screen {
-    fn restore_selection(&mut self, rows: &[Row<'_>]) {
+    pub fn follow_active_row(&mut self) {
+        self.selected_id = None;
+    }
+
+    fn remember_selection(&mut self, rows: &[Row<'_>]) {
+        self.selected_id = rows.get(self.selected).map(|row| {
+            let RowId(host, session, tab) = row.id();
+            (host.to_owned(), session.to_owned(), tab.to_owned())
+        });
+    }
+
+    fn restore_selection(&mut self, rows: &[Row<'_>], state: &Value) {
         if let Some((host, session, tab)) = &self.selected_id {
             for id in [
                 RowId(host, session, tab),
@@ -106,6 +117,10 @@ impl Screen {
                     return;
                 }
             }
+        } else if let Some(index) = rows.iter().rposition(|row| row.active(state)) {
+            self.selected = index;
+            self.remember_selection(rows);
+            return;
         }
         self.selected = self.selected.min(rows.len().saturating_sub(1));
     }
@@ -113,7 +128,7 @@ impl Screen {
     pub fn navigate(&mut self, state: &Value, key: KeyCode) -> Option<Value> {
         let rows = rows(state);
         let last = rows.len().saturating_sub(1);
-        self.restore_selection(&rows);
+        self.restore_selection(&rows, state);
         match key {
             KeyCode::Up | KeyCode::Char('k') => self.selected = self.selected.saturating_sub(1),
             KeyCode::Down | KeyCode::Char('j') => self.selected = (self.selected + 1).min(last),
@@ -135,10 +150,7 @@ impl Screen {
             _ => return None,
         }
         self.dirty = true;
-        self.selected_id = rows.get(self.selected).map(|row| {
-            let RowId(host, session, tab) = row.id();
-            (host.to_owned(), session.to_owned(), tab.to_owned())
-        });
+        self.remember_selection(&rows);
         None
     }
 
@@ -265,7 +277,7 @@ impl Screen {
         let inner = block.inner(area);
         frame.render_widget(block, area);
         let rows = rows(state);
-        self.restore_selection(&rows);
+        self.restore_selection(&rows, state);
         let capacity = usize::from(inner.height);
         self.sidebar_offset = self
             .sidebar_offset
@@ -523,5 +535,24 @@ mod tests {
         let right = pane_rectangle(area, &json!([0.5, 0, 0.5, 1])).unwrap();
         assert_eq!(left.right(), right.left());
         assert_eq!(right.right(), area.right());
+    }
+
+    #[test]
+    fn sidebar_focus_follows_the_current_tab() {
+        let mut state = json!({
+            "session": "s", "window": "b", "hosts": {"rows": [{
+                "id": "h", "epoch": 4, "active": true, "sessions": [{
+                    "id": "s", "opened": true, "tabs": [{"id": "a"}, {"id": "b"}]
+                }]
+            }]}
+        });
+        let mut screen = Screen::default();
+        let request = screen.navigate(&state, KeyCode::Enter).unwrap();
+        assert_eq!(request["args"]["window"], "b");
+
+        state["window"] = json!("a");
+        screen.follow_active_row();
+        let request = screen.navigate(&state, KeyCode::Enter).unwrap();
+        assert_eq!(request["args"]["window"], "a");
     }
 }

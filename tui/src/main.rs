@@ -306,6 +306,9 @@ fn run(terminal: &mut ratatui::DefaultTerminal, backend: &mut Backend) -> Result
                     KeyCode::F(6) if local => {
                         if down && (!screen.sidebar || state["pane"].is_string()) {
                             screen.sidebar = !screen.sidebar;
+                            if screen.sidebar {
+                                screen.follow_active_row();
+                            }
                             problem.clear();
                             screen.dirty = true;
                             last_claim = None;
