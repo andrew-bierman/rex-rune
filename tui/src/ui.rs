@@ -1,20 +1,24 @@
-use crate::{items, targeted, text};
+use crate::{
+    items,
+    settings::{Action, Chrome, Panes, Settings, SidebarSide},
+    targeted, text,
+};
 use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Position, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Paragraph},
+    widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
 };
 use serde_json::{Value, json};
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+};
 use unicode_width::UnicodeWidthChar;
 
 const DEFAULT_COLOR: Color = Color::Reset;
-const MUTED: Color = Color::DarkGray;
-const ACCENT: Color = Color::Cyan;
-const WARNING: Color = Color::Yellow;
 
 #[derive(PartialEq, Eq)]
 struct RowId<'a>(&'a str, &'a str, &'a str);
@@ -91,6 +95,8 @@ fn rows<'a>(state: &'a Value, folded: &HashMap<String, HashSet<String>>) -> Vec<
 
 pub struct Screen {
     pub sidebar: bool,
+    pub settings: Settings,
+    pub settings_open: bool,
     pub dirty: bool,
     pub pane_sizes: Vec<(String, u16, u16)>,
     selected: usize,
@@ -103,6 +109,8 @@ impl Default for Screen {
     fn default() -> Self {
         Self {
             sidebar: true,
+            settings: Settings::default(),
+            settings_open: false,
             dirty: true,
             pane_sizes: Vec::new(),
             selected: 0,
@@ -199,8 +207,8 @@ impl Screen {
         None
     }
 
-    pub fn cycle(&self, state: &Value, key: KeyCode) -> Option<Value> {
-        let (entries, current, field, op) = if key == KeyCode::F(7) {
+    pub fn cycle(&self, state: &Value, action: Action) -> Option<Value> {
+        let (entries, current, field, op) = if action == Action::NextPane {
             (&state["panes"], &state["pane"], "pane", "select_pane")
         } else {
             (&state["windows"], &state["window"], "id", "select_window")
@@ -210,7 +218,7 @@ impl Screen {
             return None;
         }
         let index = entries.iter().position(|entry| entry[field] == *current)?;
-        let step = if key == KeyCode::F(3) {
+        let step = if action == Action::PreviousTab {
             entries.len() - 1
         } else {
             1
@@ -221,9 +229,16 @@ impl Screen {
         Some(message)
     }
 
-    pub fn draw(&mut self, frame: &mut Frame<'_>, state: &Value, problem: &str) {
+    pub fn draw(
+        &mut self,
+        frame: &mut Frame<'_>,
+        state: &Value,
+        problem: &str,
+        settings_path: &Path,
+    ) {
         let area = frame.area();
         self.pane_sizes.clear();
+        frame.render_widget(Block::new().style(self.settings.chrome.style()), area);
         if area.width < 38 || area.height < 8 {
             frame.render_widget(Paragraph::new("Enlarge the terminal to use rex-tui."), area);
             return;
@@ -234,23 +249,41 @@ impl Screen {
             Constraint::Length(footer_lines.len() as u16),
         ])
         .areas(area);
-        let [sidebar, work] = Layout::horizontal([
-            Constraint::Length((area.width / 4).clamp(18, 33)),
-            Constraint::Min(0),
-        ])
-        .areas(body);
+        let sidebar_width = self
+            .settings
+            .sidebar
+            .width
+            .unwrap_or_else(|| (area.width / 4).clamp(18, 33))
+            .min(area.width - 19);
+        let sidebar_constraint = Constraint::Length(sidebar_width);
+        let main_constraint = Constraint::Min(0);
+        let (sidebar, work) = match self.settings.sidebar.side {
+            SidebarSide::Left => {
+                let [sidebar, work] =
+                    Layout::horizontal([sidebar_constraint, main_constraint]).areas(body);
+                (sidebar, work)
+            }
+            SidebarSide::Right => {
+                let [work, sidebar] =
+                    Layout::horizontal([main_constraint, sidebar_constraint]).areas(body);
+                (sidebar, work)
+            }
+        };
         self.draw_sidebar(frame, sidebar, state);
         let [tabs, terminal] =
             Layout::vertical([Constraint::Length(3), Constraint::Min(0)]).areas(work);
-        draw_tabs(frame, tabs, state);
+        draw_tabs(frame, tabs, state, self.settings.chrome);
         let panes = items(&state["panes"]);
         if panes.is_empty() {
             let (empty, help) = if state["connected"] != true {
-                ("Waiting for Rex", "↑ ↓ Navigate  ·  Enter Open")
+                ("Waiting for Rex", "↑ ↓ Navigate  ·  Enter Open".into())
             } else if items(&state["sessions"]).is_empty() {
-                ("No sessions on this host", "F2 Create session")
+                (
+                    "No sessions on this host",
+                    self.hint(Action::NewSession, "Create session"),
+                )
             } else {
-                ("Choose a session from the sidebar", "Enter Open  ·  F2 New")
+                ("Choose a session from the sidebar", "Enter Open".into())
             };
             frame.render_widget(
                 Paragraph::new(vec![
@@ -267,7 +300,14 @@ impl Screen {
                 continue;
             };
             let active = pane["pane"] == state["pane"];
-            let inner = draw_pane(frame, rect, pane, active && !self.sidebar);
+            let inner = draw_pane(
+                frame,
+                rect,
+                pane,
+                active && !self.sidebar && !self.settings_open,
+                self.settings.panes,
+                self.settings.chrome,
+            );
             if pane["terminal"]["owner"] == true
                 && pane["terminal"]["connected"] == true
                 && inner.width > 1
@@ -278,6 +318,58 @@ impl Screen {
             }
         }
         frame.render_widget(Paragraph::new(footer_lines), footer);
+        if self.settings_open {
+            self.draw_settings(frame, settings_path, problem);
+        }
+    }
+
+    fn hint(&self, action: Action, label: &str) -> String {
+        self.settings
+            .shortcut(action)
+            .map_or_else(String::new, |key| format!("{key} {label}"))
+    }
+
+    fn draw_settings(&self, frame: &mut Frame<'_>, path: &Path, problem: &str) {
+        let area = frame.area();
+        let width = area.width.min(70);
+        let height = area.height.min(12);
+        let bounds = Rect::new(
+            area.x + (area.width - width) / 2,
+            area.y + (area.height - height) / 2,
+            width,
+            height,
+        );
+        let chrome = self.settings.chrome;
+        let width = self
+            .settings
+            .sidebar
+            .width
+            .map_or_else(|| "auto".into(), |width| width.to_string());
+        let mut lines = vec![
+            Line::raw("E Edit    R Reload    Esc Close"),
+            Line::from(path.display().to_string()),
+            Line::raw(""),
+            Line::from(format!("Theme  {}", self.settings.theme)),
+            Line::from(format!(
+                "Sidebar  {:?}, {width}",
+                self.settings.sidebar.side
+            )),
+            Line::from(format!("Startup focus  {:?}", self.settings.startup_focus)),
+            Line::raw(""),
+        ];
+        if !problem.is_empty() {
+            lines.push(Line::styled(problem, Style::new().fg(chrome.warning)));
+        }
+        frame.render_widget(Clear, bounds);
+        frame.render_widget(
+            Paragraph::new(lines).wrap(Wrap { trim: true }).block(
+                Block::bordered()
+                    .title(" Settings ")
+                    .style(chrome.style())
+                    .border_style(Style::new().fg(chrome.accent)),
+            ),
+            bounds,
+        );
     }
 
     fn footer<'a>(&self, state: &'a Value, problem: &'a str, width: u16) -> Vec<Line<'a>> {
@@ -295,21 +387,46 @@ impl Screen {
                 } else {
                     " Terminal  "
                 },
-                Style::new().fg(ACCENT).bold(),
+                Style::new().fg(self.settings.chrome.accent).bold(),
             ),
             Span::raw(if self.sidebar {
-                "↑/↓ Move  ←/→ Fold  Enter Open  F6 Type"
+                format!(
+                    "↑/↓ Move  ←/→ Fold  Enter Open  {}",
+                    self.hint(Action::ToggleFocus, "Type")
+                )
             } else {
-                "F6 Browse  F3/4 Tabs  F7 Pane"
+                [
+                    self.hint(Action::ToggleFocus, "Browse"),
+                    self.hint(Action::PreviousTab, "Prev"),
+                    self.hint(Action::NextTab, "Next"),
+                    self.hint(Action::NextPane, "Pane"),
+                ]
+                .into_iter()
+                .filter(|hint| !hint.is_empty())
+                .collect::<Vec<_>>()
+                .join("  ")
             }),
         ]);
-        let actions = Span::raw(" F2 Session  F5 Tab  F8/9 Split  F10 Exit");
+        let actions = Span::raw(
+            [
+                self.hint(Action::Settings, "Settings"),
+                self.hint(Action::NewSession, "Session"),
+                self.hint(Action::NewTab, "Tab"),
+                self.hint(Action::SplitRight, "Split →"),
+                self.hint(Action::SplitDown, "↓"),
+                self.hint(Action::Quit, "Exit"),
+            ]
+            .into_iter()
+            .filter(|hint| !hint.is_empty())
+            .collect::<Vec<_>>()
+            .join("  "),
+        );
         let status = Span::styled(
             status,
             if problem.is_empty() {
                 Style::new()
             } else {
-                Style::new().fg(WARNING)
+                Style::new().fg(self.settings.chrome.warning)
             },
         );
         let separator = Span::raw("  ");
@@ -324,11 +441,19 @@ impl Screen {
     }
 
     fn draw_sidebar(&mut self, frame: &mut Frame<'_>, area: Rect, state: &Value) {
+        let chrome = self.settings.chrome;
         let block = Block::default()
-            .title(Line::styled(" rex-tui ", Style::new().fg(ACCENT).bold()))
+            .title(Line::styled(
+                " rex-tui ",
+                Style::new().fg(chrome.accent).bold(),
+            ))
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::new().fg(if self.sidebar { ACCENT } else { MUTED }));
+            .border_style(Style::new().fg(if self.sidebar {
+                chrome.accent
+            } else {
+                chrome.border
+            }));
         let inner = block.inner(area);
         frame.render_widget(block, area);
         let rows = rows(state, &self.folded);
@@ -349,9 +474,9 @@ impl Screen {
             let cursor = self.sidebar && index == self.selected;
             let selected = row.active(state);
             let row_style = if cursor {
-                Style::new().add_modifier(Modifier::REVERSED).bold()
+                chrome.selection()
             } else if selected {
-                Style::new().fg(ACCENT).bold()
+                Style::new().fg(chrome.accent).bold()
             } else {
                 Style::new()
             };
@@ -389,9 +514,9 @@ impl Screen {
                             row_style
                         } else {
                             row_style.fg(if row.host["connected"] == true {
-                                ACCENT
+                                chrome.accent
                             } else {
-                                MUTED
+                                chrome.muted
                             })
                         },
                     ),
@@ -405,7 +530,7 @@ impl Screen {
     }
 }
 
-fn draw_tabs(frame: &mut Frame<'_>, area: Rect, state: &Value) {
+fn draw_tabs(frame: &mut Frame<'_>, area: Rect, state: &Value, chrome: Chrome) {
     let active = items(&state["hosts"]["rows"])
         .iter()
         .find(|host| host["active"] == true);
@@ -414,7 +539,7 @@ fn draw_tabs(frame: &mut Frame<'_>, area: Rect, state: &Value) {
         .title(Line::raw(format!(" {title} ")))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(MUTED));
+        .border_style(Style::new().fg(chrome.border));
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let windows = items(&state["windows"]);
@@ -447,7 +572,7 @@ fn draw_tabs(frame: &mut Frame<'_>, area: Rect, state: &Value) {
                 Span::styled(
                     format!(" {} {name} ", if active { "▰" } else { "▫" }),
                     if active {
-                        Style::new().add_modifier(Modifier::REVERSED).bold()
+                        chrome.selection()
                     } else {
                         Style::new()
                     },
@@ -484,22 +609,34 @@ fn rgb(value: &Value, fallback: Color) -> Color {
     })
 }
 
-fn draw_pane(frame: &mut Frame<'_>, area: Rect, pane: &Value, focused: bool) -> Rect {
+fn draw_pane(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    pane: &Value,
+    focused: bool,
+    options: Panes,
+    chrome: Chrome,
+) -> Rect {
     let snapshot = &pane["frame"];
     let background = rgb(&snapshot["bg"], DEFAULT_COLOR);
     let foreground = rgb(&snapshot["fg"], DEFAULT_COLOR);
-    let block = Block::default()
-        .title(Line::styled(
-            format!(" {} {} ", if focused { "▸" } else { "·" }, label(pane)),
-            if focused {
-                Style::new().fg(ACCENT).bold()
+    let mut block = Block::default().style(Style::new().bg(background));
+    if options.borders {
+        block = block
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::new().fg(if focused {
+                chrome.accent
             } else {
-                Style::new()
-            },
-        ))
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(if focused { ACCENT } else { MUTED }));
+                chrome.border
+            }));
+    }
+    if options.headers {
+        block = block.title(Line::styled(
+            format!(" {} {} ", if focused { "▸" } else { "·" }, label(pane)),
+            Style::new().fg(if focused { chrome.accent } else { chrome.muted }),
+        ));
+    }
     let inner = block.inner(area);
     frame.render_widget(block, area);
     if !snapshot.is_object() {
@@ -568,6 +705,39 @@ fn draw_pane(frame: &mut Frame<'_>, area: Rect, pane: &Value, focused: bool) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settings_panel_shows_effective_config_and_an_error() {
+        let fixture = crate::settings::tests::Fixture::new();
+        let path = fixture.0.join("settings.toml");
+        std::fs::write(
+            &path,
+            "[sidebar]\nside = \"right\"\nwidth = 27\n[keys]\nsettings = \"F12\"",
+        )
+        .unwrap();
+        let mut screen = Screen {
+            settings: Settings::load(&path).unwrap(),
+            settings_open: true,
+            ..Screen::default()
+        };
+        let backend = ratatui::backend::TestBackend::new(100, 25);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let rendered = terminal
+            .draw(|frame| {
+                screen.draw(frame, &Value::Null, "Invalid color", &path);
+            })
+            .unwrap();
+        let buffer = rendered.buffer;
+        let display: String = buffer
+            .content()
+            .chunks(100)
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>() + "\n")
+            .collect();
+        assert!(display.contains("Theme  terminal"));
+        assert!(display.contains("Sidebar  Right, 27"));
+        assert!(display.contains("Invalid color"));
+        assert!(display.contains("F12 Settings"));
+    }
 
     #[test]
     fn sidebar_cursor_tracks_tab_identity_across_inventory_updates() {

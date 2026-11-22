@@ -1,0 +1,23 @@
+# Workspace hosts and sessions are configured in workspace.json.
+theme = "terminal"
+startup_focus = "sidebar"
+
+[sidebar]
+side = "left"
+# width = 28 # Columns. Omit for automatic sizing.
+
+[panes]
+borders = true
+headers = true
+
+[keys]
+settings = "F1"
+new_session = "F2"
+previous_tab = "F3"
+next_tab = "F4"
+new_tab = "F5"
+toggle_focus = "F6"
+next_pane = "F7"
+split_right = "F8"
+split_down = "F9"
+quit = "F10"
