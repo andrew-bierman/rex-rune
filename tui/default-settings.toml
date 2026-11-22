@@ -26,6 +26,7 @@ attention = false
 settings = "F1"
 compose_input = "F11"
 copy_selection = "F12"
+find = "Alt+/"
 scroll_up = "Alt+PageUp"
 scroll_down = "Alt+PageDown"
 focus_left = "Ctrl+Alt+Left"

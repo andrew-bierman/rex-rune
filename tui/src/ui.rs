@@ -634,7 +634,15 @@ impl Screen {
                     && self.pane_menu.is_none(),
                 self.settings.panes,
                 self.settings.chrome,
-                self.settings.mouse_selection && self.selection.highlights(state, pane),
+                PaneHighlights {
+                    selection: self.settings.mouse_selection
+                        && self.selection.highlights(state, pane),
+                    search: active
+                        && self
+                            .prompt
+                            .as_ref()
+                            .is_some_and(InputPrompt::showing_matches),
+                },
             );
             if self.settings.mouse_selection
                 && let Some(grid) = Grid::new(pane, inner)
@@ -650,11 +658,27 @@ impl Screen {
                     .push((text(pane, "pane").to_owned(), inner.width, inner.height));
             }
         }
-        frame.render_widget(Paragraph::new(footer_lines), footer);
+        if let Some(prompt) = &self.prompt
+            && prompt.is_find()
+        {
+            prompt.draw_find(
+                frame,
+                Rect {
+                    height: 1,
+                    ..footer
+                },
+                state,
+                self.settings.chrome,
+            );
+        } else {
+            frame.render_widget(Paragraph::new(footer_lines), footer);
+        }
         if self.settings_open {
             self.draw_settings(frame, settings_path, problem);
         }
-        if let Some(prompt) = &self.prompt {
+        if let Some(prompt) = &self.prompt
+            && !prompt.is_find()
+        {
             prompt.draw(frame, self.settings.chrome);
         }
         if let Some(menu) = &self.pane_menu
@@ -769,6 +793,11 @@ impl Screen {
             [
                 self.hint(Action::Settings, "Settings"),
                 self.hint(Action::CopySelection, "Copy"),
+                if !self.sidebar && state["pane"].is_string() {
+                    self.hint(Action::Find, "Find")
+                } else {
+                    String::new()
+                },
                 self.hint(Action::ComposeInput, "Compose"),
                 self.hint(Action::NewSession, "Session"),
                 self.hint(Action::NewTab, "Tab"),
@@ -1080,6 +1109,20 @@ fn ansi_color(code: Option<&u8>) -> Option<Color> {
     Some(Color::Indexed(index as u8))
 }
 
+#[derive(Default)]
+struct PaneHighlights {
+    selection: bool,
+    search: bool,
+}
+
+fn search_span(hit: &Value) -> Option<std::ops::RangeInclusive<(u64, u64)>> {
+    let position = |point: &Value| match items(point) {
+        [x, y] => Some((y.as_u64()?, x.as_u64()?)),
+        _ => None,
+    };
+    Some(position(&hit["start"])?..=position(&hit["end"])?)
+}
+
 fn draw_pane(
     frame: &mut Frame<'_>,
     area: Rect,
@@ -1087,7 +1130,7 @@ fn draw_pane(
     focused: bool,
     options: Panes,
     chrome: Chrome,
-    highlight_selection: bool,
+    highlights: PaneHighlights,
 ) -> Rect {
     let snapshot = &pane["frame"];
     let roles = &snapshot["color_roles"];
@@ -1135,6 +1178,11 @@ fn draw_pane(
         frame.render_widget(Paragraph::new("  Waiting for terminal…"), inner);
         return inner;
     }
+    let selected_match = if highlights.search {
+        search_span(&snapshot["search"]["selected"])
+    } else {
+        None
+    };
     let buffer = frame.buffer_mut();
     buffer.set_style(inner, Style::new().bg(background));
     for (y, row) in items(&snapshot["cells"])
@@ -1152,7 +1200,8 @@ fn draw_pane(
             .and_then(Value::as_str)
             .unwrap_or_default()
             .as_bytes();
-        let selection = highlight_selection
+        let selection = highlights
+            .selection
             .then(|| items(&snapshot["selection_rows"]).get(y))
             .flatten()
             .and_then(|row| {
@@ -1226,7 +1275,17 @@ fn draw_pane(
             } else {
                 symbol
             };
-            if selection
+            if selected_match
+                .as_ref()
+                .is_some_and(|hit| hit.contains(&(y as u64, x as u64)))
+            {
+                style = if reversed {
+                    style.remove_modifier(Modifier::REVERSED)
+                } else {
+                    style.add_modifier(Modifier::REVERSED)
+                }
+                .add_modifier(Modifier::BOLD);
+            } else if selection
                 .as_ref()
                 .is_some_and(|range| range.contains(&(x as u64)))
             {
@@ -1360,7 +1419,7 @@ mod tests {
                         false,
                         options,
                         Chrome::default(),
-                        false,
+                        PaneHighlights::default(),
                     );
                 })
                 .unwrap();
@@ -1555,7 +1614,7 @@ mod tests {
                     false,
                     options,
                     Chrome::default(),
-                    false,
+                    PaneHighlights::default(),
                 );
             })
             .unwrap();
@@ -1584,13 +1643,44 @@ mod tests {
                     false,
                     options,
                     Chrome::default(),
-                    true,
+                    PaneHighlights {
+                        selection: true,
+                        search: false,
+                    },
                 );
             })
             .unwrap();
         let cells = rendered.buffer.content();
         assert!(cells[1].modifier.contains(Modifier::REVERSED));
         assert!(!cells[2].modifier.contains(Modifier::REVERSED));
+
+        let mut found = pane.clone();
+        found["frame"]["search"]["selected"] = json!({"start":[1,0], "end":[2,0]});
+        let rendered = terminal
+            .draw(|frame| {
+                draw_pane(
+                    frame,
+                    frame.area(),
+                    &found,
+                    false,
+                    options,
+                    Chrome::default(),
+                    PaneHighlights {
+                        search: true,
+                        selection: false,
+                    },
+                );
+            })
+            .unwrap();
+        let cells = rendered.buffer.content();
+        assert!(
+            cells[1]
+                .modifier
+                .contains(Modifier::REVERSED | Modifier::BOLD)
+        );
+        assert!(!cells[2].modifier.contains(Modifier::REVERSED));
+        assert!(cells[2].modifier.contains(Modifier::BOLD));
+        assert!(!cells[3].modifier.contains(Modifier::BOLD));
 
         let mut overridden = pane.clone();
         overridden["frame"]["color_roles"]["inherit"][1] = json!(false);
@@ -1603,7 +1693,7 @@ mod tests {
                     false,
                     options,
                     Chrome::default(),
-                    false,
+                    PaneHighlights::default(),
                 );
             })
             .unwrap();
@@ -1631,7 +1721,7 @@ mod tests {
                         false,
                         options,
                         Chrome::default(),
-                        false,
+                        PaneHighlights::default(),
                     );
                 })
                 .unwrap();

@@ -560,7 +560,16 @@ fn run(
                     }
                     match prompt.key(&state, key, InputPrompt::visible(terminal.size()?)) {
                         Edit::Continue => {}
-                        Edit::Cancel => screen.prompt = None,
+                        Edit::Cancel => {
+                            let clear = {
+                                let inbox = backend.inbox.lock().unwrap();
+                                prompt.clear_find(inbox.state.as_ref().unwrap_or(&state))
+                            };
+                            if let Some(request) = clear {
+                                backend.send(request)?;
+                            }
+                            screen.prompt = None;
+                        }
                         // Keep the prompt open so repeated Enter presses stay out of the shell.
                         Edit::Send(request) => backend.send(request)?,
                     }
@@ -888,9 +897,14 @@ fn run(
                             screen.dirty = true;
                         }
                     }
-                    Some(Action::ComposeInput) => {
+                    Some(action @ (Action::ComposeInput | Action::Find)) => {
                         if key.kind == KeyEventKind::Press {
-                            match InputPrompt::compose(&state) {
+                            let prompt = if action == Action::Find {
+                                InputPrompt::find(&state)
+                            } else {
+                                InputPrompt::compose(&state)
+                            };
+                            match prompt {
                                 Ok(prompt) => {
                                     screen.prompt = Some(prompt);
                                     modal_keys.insert(key.code);

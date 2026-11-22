@@ -102,6 +102,7 @@ fi
 | Ctrl+Shift+Arrow | Move a divider next to the focused pane |
 | F10 | Exit while leaving server sessions running |
 | Alt+PageUp / Alt+PageDown | Scroll the active pane back or forward |
+| Alt+/ | Find text in the active pane and its scrollback |
 
 While filtering, use the arrow keys to move through results and Enter to open
 the highlighted row. Press Ctrl+U to clear the query or Esc to restore the
@@ -324,6 +325,11 @@ A mouse-tracking application in the selected pane receives wheel events.
 Use **Alt+PageUp** or **Alt+PageDown** for local scrollback in the active
 pane, including with mouse capture off. Typing returns to live output.
 Remap these shortcuts with `scroll_up` and `scroll_down` in `[keys]`.
+
+Press **Alt+/** to find text in the active pane. Type a query and press
+**Enter**. The footer shows the match count and the pane highlights the
+current result. Press **Up** for an older match or **Down** for a newer
+one. **Esc** closes Find. Remap the opener with `find` in `[keys]`.
 
 With mouse capture off, Foot can translate the wheel into Up and Down,
 which may step through shell or chat history. For pane wheel scrolling
