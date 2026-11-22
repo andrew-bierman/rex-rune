@@ -368,7 +368,26 @@ impl Settings {
         };
         let mouse_selection = file.selection.mouse || file.experimental.mouse_actions;
         let mut keys = BTreeMap::<Action, Binding>::new();
-        for (action, fallback) in DEFAULT_KEYS {
+        let is_optional_default = |action| {
+            matches!(
+                action,
+                Action::ScrollUp
+                    | Action::ScrollDown
+                    | Action::RenameSession
+                    | Action::RenameTab
+                    | Action::RenamePane
+                    | Action::FocusLeft
+                    | Action::FocusRight
+                    | Action::FocusUp
+                    | Action::FocusDown
+            )
+        };
+        let mut defaults = DEFAULT_KEYS;
+        // Resolve configured bindings before assigning newer defaults.
+        defaults.sort_by_key(|(action, _)| {
+            is_optional_default(*action) && !file.keys.contains_key(action)
+        });
+        for (action, fallback) in defaults {
             if action == Action::ComposeInput && !file.experimental.input_composer {
                 continue;
             }
@@ -376,19 +395,7 @@ impl Settings {
                 continue;
             }
             let binding = file.keys.remove(&action);
-            let optional_default = binding.is_none()
-                && matches!(
-                    action,
-                    Action::ScrollUp
-                        | Action::ScrollDown
-                        | Action::RenameSession
-                        | Action::RenameTab
-                        | Action::RenamePane
-                        | Action::FocusLeft
-                        | Action::FocusRight
-                        | Action::FocusUp
-                        | Action::FocusDown
-                );
+            let optional_default = binding.is_none() && is_optional_default(action);
             let label = binding.unwrap_or_else(|| fallback.into());
             if label.eq_ignore_ascii_case("none") {
                 continue;
@@ -525,6 +532,14 @@ pub mod tests {
             Some("Ctrl+Alt+Right")
         );
         assert_eq!(settings.shortcut(Action::NextPane), Some("F7"));
+    }
+
+    #[test]
+    fn a_configured_focus_binding_takes_priority_over_a_rename_default() {
+        let file = toml::from_str("[keys]\nfocus_left = \"Shift+F6\"").unwrap();
+        let settings = Settings::from_file(file, Path::new("")).unwrap();
+        assert_eq!(settings.shortcut(Action::FocusLeft), Some("Shift+F6"));
+        assert_eq!(settings.shortcut(Action::RenameSession), None);
     }
 
     #[test]
