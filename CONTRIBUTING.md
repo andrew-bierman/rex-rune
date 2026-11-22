@@ -23,7 +23,7 @@ fork and include how you verified it. Maintainers review outside changes
 through issues and credit authors when incorporating their work.
 
 See the [TUI build and install guide](tui/README.md#install-on-arch-linux-and-omarchy)
-and the [private demo capture](tui/README.md#capture-the-demo) for a disposable
-Rex server and Foot setup. For Qt, see the
+and the [private demo capture](tui/README.md#capture-the-demo) for a reproducible Foot setup
+with fictional workspace data. For Qt, see the
 [verification driver](qt/README.md#verification-driver). Use disposable
 sessions for checks that send input or change the workspace layout.
