@@ -1,0 +1,114 @@
+name: rex-tui portable artifacts
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/tui-portable.yml
+      - dist-workspace.toml
+      - scripts/stage-tui-pair.py
+      - scripts/verify-tui-artifact.py
+      - Cargo.lock
+      - Cargo.toml
+      - build.rs
+      - mise.toml
+      - qt/backend/**
+      - src/**
+      - tui/**
+      - vendor/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  portable:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+            archive: tar.xz
+            dist-sha256: 7fee44ff3ff71ed0064b32d4ec62fee6b58bd37c5887b12a86aedddc5af0c7b5
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-22.04-arm
+            archive: tar.xz
+            dist-sha256: 58efb33edf01342875bfd0c3ce2befa9d73075579ca1b3e5dd75b98c88f92e83
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+            archive: tar.xz
+            dist-sha256: 6aa89bb1e7c18f51ae8b148ce2fc6ab00ac46ed8173d4f2ed9afa12101218773
+          - target: aarch64-apple-darwin
+            runner: macos-15
+            archive: tar.xz
+            dist-sha256: d1eec30e63eed23e5a5bd48fe96eae314799811bffca254ec1d2264638ba1890
+          - target: x86_64-pc-windows-msvc
+            runner: windows-2025
+            archive: zip
+            dist-sha256: 7bb53fbc998321f77a3bbb044084a52747c8ed041cf6d6a604802aa57b9c80c6
+    env:
+      TARGET: ${{ matrix.target }}
+      ARCHIVE_EXTENSION: ${{ matrix.archive }}
+      DIST_SHA256: ${{ matrix.dist-sha256 }}
+      DIST_VERSION: 0.34.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+        if: runner.os == 'Windows'
+        with:
+          arch: x64
+      - name: Fetch pinned Ghostty source on Windows
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          lock=vendor/ghostty-vt-sys/GHOSTTY.lock
+          url=$(sed -n 's/^url = //p' "$lock" | tr -d '\r')
+          checksum=$(sed -n 's/^sha256 = //p' "$lock" | tr -d '\r')
+          mkdir -p target/ghostty-source
+          curl --proto '=https' --tlsv1.2 -fsSLo target/ghostty-source.tar.gz "$url"
+          echo "$checksum  target/ghostty-source.tar.gz" | sha256sum -c -
+          "$SYSTEMROOT/System32/tar.exe" -xzf "$(cygpath -w "$PWD/target/ghostty-source.tar.gz")" \
+            -C "$(cygpath -w "$PWD/target/ghostty-source")" --strip-components=1
+          echo "GHOSTTY_SOURCE_DIR=$(cygpath -w "$PWD/target/ghostty-source")" >> "$GITHUB_ENV"
+      - name: Build and verify the native artifact
+        shell: bash
+        run: |
+          test "$(mise exec -- rustc -vV | sed -n 's/^host: //p' | tr -d '\r')" = "$TARGET"
+          dist_config_version=$(python -c 'import tomllib; print(tomllib.load(open("dist-workspace.toml", "rb"))["dist"]["cargo-dist-version"])')
+          test "$DIST_VERSION" = "$dist_config_version"
+          version=$(python -c 'import tomllib; print(tomllib.load(open("tui/Cargo.toml", "rb"))["package"]["version"])')
+          mkdir -p target/dist-tool target/portable-receipt
+          tool="cargo-dist-$TARGET"
+          archive="$tool.$ARCHIVE_EXTENSION"
+          curl --proto '=https' --tlsv1.2 -fsSLo "target/dist-tool/$archive" \
+            "https://github.com/axodotdev/cargo-dist/releases/download/v$DIST_VERSION/$archive"
+          python -c 'import hashlib,sys; from pathlib import Path; assert hashlib.sha256(Path(sys.argv[1]).read_bytes()).hexdigest() == sys.argv[2]' \
+            "target/dist-tool/$archive" "$DIST_SHA256"
+          if [[ "$ARCHIVE_EXTENSION" == zip ]]; then
+            python -m zipfile -e "target/dist-tool/$archive" target/dist-tool
+            dist_tool="$PWD/target/dist-tool/dist.exe"
+          else
+            tar -xJf "target/dist-tool/$archive" -C target/dist-tool
+            dist_tool="$PWD/target/dist-tool/$tool/dist"
+          fi
+          "$dist_tool" --version
+          manifest="target/portable-receipt/$TARGET-dist-manifest.json"
+          mise exec -- "$dist_tool" build --artifacts local --target "$TARGET" \
+            --tag "rex-tui-v$version" --output-format json > "$manifest"
+          package="rex-tui-$TARGET.$ARCHIVE_EXTENSION"
+          python scripts/verify-tui-artifact.py "$TARGET" "target/distrib/$package" "$manifest"
+          cp "target/distrib/$package" "target/distrib/$package.sha256" target/portable-receipt/
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rex-tui-portable-${{ matrix.target }}
+          path: target/portable-receipt/
+          if-no-files-found: error

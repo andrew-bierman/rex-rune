@@ -38,6 +38,12 @@ The script targets the build host by default. Pass `--target TRIPLE` for a
 configured cross toolchain. Run `rex-tui` (or `rex-tui.exe`) from the staged
 directory. Keep the companion `rex-qt-backend` executable beside it.
 
+The portable artifact workflow exercises Linux and macOS on x86_64 and arm64,
+and Windows on x86_64. Each job checks the package checksum and both executables
+and uploads the archive with its cargo-dist manifest. Both Linux executables
+must support glibc 2.35. Windows arm64 is in the distribution plan and awaits a
+validation runner setup for the pinned cargo-dist tool.
+
 ## Hosts and profiles
 
 Run `rex-tui` in Foot or another terminal. It uses
