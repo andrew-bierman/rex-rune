@@ -20,7 +20,7 @@ The package includes rex-tui and its matching backend. For a source build, follo
 
 ## Quick start
 
-1. Start your local Rex server or have the remote endpoint ready. [Rex server setup on Linux](https://www.superlogical.com/rex/docs/linux/installation).
+1. Start your local Rex server or have the remote endpoint ready. The Linux install instructions require a Discord sign-in. [Rex server setup on Linux](https://www.superlogical.com/rex/docs/linux/installation).
 2. Run `rex-tui` in Foot or another terminal. It connects to your local Rex server by default. See the [remote hosts and profiles guide](tui/README.md#hosts-and-profiles) for other servers.
 3. Press **F2** to create a session on the active host. Use the sidebar arrows and **Enter** to open an existing session or tab.
 
@@ -60,12 +60,14 @@ The roadmap takes its cues from the official [Rex for Mac actions](https://www.s
 | Mouse | Divider resizing, tab context actions, and forwarding for terminal programs that request it |
 | Settings | Theme picking and import, key sequences and modes, and terminal display preferences |
 
+After the keyboard workflows, the roadmap includes a richer input composer and optional terminal preloading.
+
 ## Contribute
 
 See the [contribution guide](CONTRIBUTING.md) for reporting bugs, proposing changes, and sharing tested patches. The [Arch package workflow](.github/workflows/tui-package.yml) builds and installs the package in clean CI.
 
 ## Upstream and license
 
-rex-tui is an independent fork of [Rex Rune](https://github.com/shuv1337/rex-rune). The upstream project maintains the [Rune frontend](https://github.com/shuv1337/rex-rune#readme). This fork also includes an [experimental Qt Quick frontend](qt/README.md). The [upstream sync guide](tui/README.md#releases-and-upstream-sync) documents how the fork takes shared core updates and tests both frontends.
+rex-tui is an independent fork of [Rex Rune](https://github.com/shuv1337/rex-rune). The upstream project maintains the [Rune frontend](https://github.com/shuv1337/rex-rune#readme). This fork also includes an [alpha Qt Quick frontend](qt/README.md). The [upstream sync guide](tui/README.md#releases-and-upstream-sync) documents how the fork takes shared core updates and tests both frontends.
 
 Project code is released under the [MIT License](LICENSE). See the [vendored dependency notes](docs/building.md#vendored-dependencies) and [icon notices](resources/icons/README.md) for licenses and attribution.
