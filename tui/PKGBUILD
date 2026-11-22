@@ -1,0 +1,23 @@
+pkgname=rex-tui
+pkgver=0.1.0
+pkgrel=3
+pkgdesc='Terminal interface for Rex servers'
+arch=('x86_64')
+url='https://github.com/andrew-bierman/rex-rune'
+license=('MIT')
+depends=('bash' 'ca-certificates' 'coreutils' 'glibc' 'libgcc')
+options=('!debug')
+
+# Build from this checkout using the Rust and Zig versions pinned by mise.toml.
+build() {
+    cd "$startdir/.."
+    cargo build --locked --release --no-default-features --bin rex-qt-backend --target-dir "$srcdir/backend-target"
+    cargo build --locked --release --manifest-path tui/Cargo.toml --target-dir "$srcdir/tui-target"
+}
+
+package() {
+    install -Dm755 "$startdir/rex-tui-launcher" "$pkgdir/usr/bin/rex-tui"
+    install -Dm755 "$srcdir/tui-target/release/rex-tui" "$pkgdir/usr/lib/rex-tui/rex-tui"
+    install -Dm755 "$srcdir/backend-target/release/rex-qt-backend" "$pkgdir/usr/lib/rex-tui/rex-qt-backend"
+    install -Dm644 "$startdir/../LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

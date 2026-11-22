@@ -8,3 +8,5 @@
 /tools/vptr/target/
 /mise.local.toml
 /.mise/lib/
+
+/tui/target/
