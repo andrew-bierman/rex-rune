@@ -1,5 +1,6 @@
 mod close;
 mod composer;
+mod mouse;
 mod selection;
 mod settings;
 mod ui;
@@ -8,6 +9,7 @@ use anyhow::{Context, Result, bail};
 use close::{CloseDialog, CloseTarget};
 use composer::{Composer, Edit};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use mouse::{Choice, Focus, FocusStatus, MenuAction, Pointer, PointerAction};
 use serde_json::{Value, json};
 use settings::{Action, Settings, StartupFocus};
 use std::{
@@ -136,6 +138,19 @@ fn create_workspace_item(state: &Value, action: Action) -> Result<Value, &'stati
     request["action"] = json!(action);
     request["args"] = args;
     Ok(request)
+}
+
+fn scroll_active_pane(state: &Value, action: Action) -> Option<Value> {
+    if state["connected"] != true
+        || state["hosts"]["pending"] == true
+        || state["terminal"]["connected"] != true
+        || !state["pane"].is_string()
+    {
+        return None;
+    }
+    let mut request = targeted(state, "scroll");
+    request["lines"] = json!(if action == Action::ScrollUp { -3 } else { 3 });
+    Some(request)
 }
 
 fn resize_split(state: &Value, action: Action, kind: KeyEventKind) -> Option<Value> {
@@ -288,6 +303,23 @@ fn reload_settings(screen: &mut ui::Screen, path: &Path) -> String {
     }
 }
 
+fn focus_clicked_pane(
+    state: &Value,
+    screen: &mut ui::Screen,
+    backend: &mut Backend,
+    request_id: &mut u64,
+    target: mouse::Target,
+) -> Result<Option<Focus>> {
+    if target.selected(state) {
+        screen.sidebar = false;
+        return Ok(None);
+    }
+    *request_id = request_id.wrapping_add(1);
+    let (focus, request) = Focus::start(target, *request_id);
+    backend.send(request)?;
+    Ok(Some(focus))
+}
+
 fn run(
     terminal: &mut ratatui::DefaultTerminal,
     backend: &mut Backend,
@@ -303,9 +335,11 @@ fn run(
     let mut resize_scope: Option<(String, Option<u64>, String, String)> = None;
     let mut last_claim = None;
     let mut close_dialog: Option<CloseDialog> = None;
-    let mut close_request_id = 0u64;
+    let mut request_id = 0u64;
     let mut modal_keys = HashSet::new();
     let mut mouse_capture = selection::MouseCapture::default();
+    let mut pointer = Pointer::default();
+    let mut pending_focus: Option<Focus> = None;
     loop {
         mouse_capture.set(screen.settings.mouse_selection)?;
         let (update, message, rejected_request, closed) = {
@@ -341,6 +375,30 @@ fn run(
                 }
             );
         }
+        if let Some(focus) = &pending_focus {
+            match focus.status(&state, rejected_request) {
+                FocusStatus::Pending => {}
+                FocusStatus::Selected => {
+                    pending_focus = None;
+                    screen.sidebar = false;
+                    problem.clear();
+                    screen.dirty = true;
+                }
+                FocusStatus::Rejected => {
+                    pending_focus = None;
+                    problem = "The clicked pane could not be focused".into();
+                    screen.dirty = true;
+                }
+            }
+        }
+        let pointer_enabled = screen.settings.mouse_actions
+            && !screen.settings_open
+            && screen.composer.is_none()
+            && close_dialog.is_none();
+        if !pointer_enabled {
+            pointer.cancel();
+            screen.cancel_sidebar_mouse();
+        }
         if close_dialog
             .as_ref()
             .is_some_and(|dialog| !dialog.active(&state, rejected_request))
@@ -363,6 +421,12 @@ fn run(
                 }
             })?;
             screen.dirty = false;
+        }
+        if screen.pane_menu.as_ref().is_some_and(|menu| {
+            !pointer_enabled || !menu.target.visible(&state, &screen.pane_grids)
+        }) {
+            screen.pane_menu = None;
+            screen.dirty = true;
         }
         let selection_enabled = screen.settings.mouse_selection
             && !screen.settings_open
@@ -459,6 +523,74 @@ fn run(
             screen.dirty = true;
             continue;
         }
+        if pending_focus.is_some() {
+            if let Event::Key(key) = input {
+                consume_modal_key(&mut modal_keys, key, true);
+            }
+            if matches!(input, Event::Resize(..)) {
+                screen.dirty = true;
+            }
+            continue;
+        }
+        if let Some(menu) = screen.pane_menu.as_mut() {
+            let focused = menu.target.selected(&state);
+            let can_copy = screen.selection.can_copy(menu.target.id());
+            let choice = match input {
+                Event::Key(key) => {
+                    consume_modal_key(&mut modal_keys, key, true);
+                    menu.key(key, focused, can_copy)
+                }
+                Event::Mouse(mouse) => {
+                    let size = terminal.size()?;
+                    menu.mouse(
+                        mouse,
+                        ratatui::layout::Rect::new(0, 0, size.width, size.height),
+                        focused,
+                        can_copy,
+                    )
+                }
+                _ => MenuAction::Keep,
+            };
+            match choice {
+                MenuAction::Keep => {}
+                MenuAction::Dismiss => screen.pane_menu = None,
+                MenuAction::Choose(choice) => {
+                    if let Some(menu) = screen.pane_menu.take() {
+                        match choice {
+                            Choice::Focus => {
+                                pending_focus = focus_clicked_pane(
+                                    &state,
+                                    &mut screen,
+                                    backend,
+                                    &mut request_id,
+                                    menu.target,
+                                )?;
+                            }
+                            Choice::Copy => {
+                                problem = screen
+                                    .selection
+                                    .request_copy()
+                                    .err()
+                                    .unwrap_or_default()
+                                    .into();
+                            }
+                            Choice::SplitRight | Choice::SplitDown => {
+                                let action = if choice == Choice::SplitRight {
+                                    Action::SplitRight
+                                } else {
+                                    Action::SplitDown
+                                };
+                                if let Ok(request) = create_workspace_item(&state, action) {
+                                    backend.send(request)?;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            screen.dirty = true;
+            continue;
+        }
         if let Event::Key(key) = &input {
             let swallowed = consume_modal_key(&mut modal_keys, *key, close_dialog.is_some());
             if let Some(dialog) = &mut close_dialog {
@@ -475,11 +607,74 @@ fn run(
         }
         match input {
             Event::Resize(..) => screen.dirty = true,
-            Event::Mouse(mouse) if selection_enabled => {
-                if let Some(request) = screen.selection.mouse(&state, &screen.pane_grids, mouse) {
-                    backend.send(request)?;
-                    screen.dirty = true;
+            Event::Mouse(event) if selection_enabled => {
+                if pointer_enabled
+                    && let ui::SidebarMouse::Handled(request) = screen.sidebar_mouse(&state, event)
+                {
+                    if matches!(
+                        event.kind,
+                        event::MouseEventKind::Down(event::MouseButton::Left)
+                    ) {
+                        pointer.cancel();
+                        focus_terminal_on_attach = false;
+                    }
+                    if let Some(request) = request {
+                        backend.send(request)?;
+                    }
+                    continue;
                 }
+                if let Some(request) = mouse::wheel(&state, &screen.pane_grids, event) {
+                    backend.send(request)?;
+                    continue;
+                }
+                if !pointer_enabled {
+                    if let Some(request) = screen.selection.mouse(&state, &screen.pane_grids, event)
+                    {
+                        backend.send(request)?;
+                        screen.dirty = true;
+                    }
+                    continue;
+                }
+                match pointer.event(&state, &screen.pane_grids, event) {
+                    PointerAction::None => {}
+                    PointerAction::Selection(event) => {
+                        if selection_enabled
+                            && let Some(request) =
+                                screen.selection.mouse(&state, &screen.pane_grids, event)
+                        {
+                            backend.send(request)?;
+                        }
+                    }
+                    PointerAction::BeginDrag(down, drag) => {
+                        if selection_enabled {
+                            for event in [down, drag] {
+                                if let Some(request) =
+                                    screen.selection.mouse(&state, &screen.pane_grids, event)
+                                {
+                                    backend.send(request)?;
+                                }
+                            }
+                        }
+                    }
+                    PointerAction::Focus(target) => {
+                        if let Some(request) =
+                            screen
+                                .selection
+                                .reconcile(&state, &screen.pane_grids, false)
+                        {
+                            backend.send(request)?;
+                        }
+                        pending_focus = focus_clicked_pane(
+                            &state,
+                            &mut screen,
+                            backend,
+                            &mut request_id,
+                            target,
+                        )?;
+                    }
+                    PointerAction::Menu(menu) => screen.pane_menu = Some(menu),
+                }
+                screen.dirty = true;
             }
             Event::Paste(paste)
                 if close_dialog.is_none()
@@ -534,13 +729,13 @@ fn run(
                 match action {
                     Some(action @ (Action::CloseSession | Action::CloseTab)) => {
                         if key.kind == KeyEventKind::Press {
-                            close_request_id = close_request_id.wrapping_add(1);
+                            request_id = request_id.wrapping_add(1);
                             let kind = if action == Action::CloseSession {
                                 CloseTarget::Session
                             } else {
                                 CloseTarget::Tab
                             };
-                            match CloseDialog::start(&state, kind, close_request_id) {
+                            match CloseDialog::start(&state, kind, request_id) {
                                 Ok((dialog, request)) => {
                                     backend.send(request)?;
                                     close_dialog = Some(dialog);
@@ -558,6 +753,11 @@ fn run(
                         | Action::ResizeDown),
                     ) => {
                         if let Some(request) = resize_split(&state, action, key.kind) {
+                            backend.send(request)?;
+                        }
+                    }
+                    Some(action @ (Action::ScrollUp | Action::ScrollDown)) => {
+                        if down && let Some(request) = scroll_active_pane(&state, action) {
                             backend.send(request)?;
                         }
                     }
@@ -711,6 +911,24 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keyboard_scrollback_uses_local_scroll_on_the_active_pane() {
+        let mut state = json!({"host":"host","epoch":7,"session":"s","window":"w","pane":"p",
+            "connected":true,"terminal":{"connected":true}});
+        let request = scroll_active_pane(&state, Action::ScrollUp).unwrap();
+        assert_eq!(
+            request,
+            json!({"op":"scroll","host":"host","epoch":7,"session":"s",
+            "window":"w","pane":"p","lines":-3})
+        );
+        assert_eq!(
+            scroll_active_pane(&state, Action::ScrollDown).unwrap()["lines"],
+            3
+        );
+        state["terminal"]["connected"] = json!(false);
+        assert!(scroll_active_pane(&state, Action::ScrollUp).is_none());
+    }
 
     #[test]
     fn reload_applies_settings_together_and_preserves_last_good_on_error() {

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify pane-only mouse selection through a packaged rex-tui and disposable Rex."""
+"""Verify rex-tui mouse interactions through a packaged launcher and disposable Rex."""
 
 import argparse
 import base64
@@ -21,7 +21,7 @@ CAPTURE_OFF = b"\x1b[?1006l\x1b[?1002l"
 SETTINGS_TITLE = "┌ Settings ".encode()
 
 
-def exercise(launcher, root, env, api):
+def exercise(launcher, root, env, api, mouse_actions):
     settings = root / "config" / "rex-tui" / "settings.toml"
     settings.write_text("[sidebar]\nwidth = 20\n")
     master, slave = pty.openpty()
@@ -70,8 +70,9 @@ def exercise(launcher, root, env, api):
         )
         sid = api("session.list")["sessions"][0]["session_id"]
         for pane, marker in zip(blocks(api, sid), ("LEFT_PANE_ONLY", "RIGHT_PANE_ONLY"), strict=True):
+            command = f"export TEST_PANE={marker}; printf '\\033[2J\\033[H{marker}\\n'"
             api("block.event", session_id=sid, block_id=pane,
-                event={"type": "paste", "payload": {"text": f"printf '\\033[2J\\033[H{marker}'; sleep 30"}})
+                event={"type": "paste", "payload": {"text": command}})
             api("block.event", session_id=sid, block_id=pane,
                 event={"type": "key", "payload": {"key": "enter", "action": "press", "mods": ""}})
         wait_for(lambda: b"LEFT_PANE_ONLY" in output and b"RIGHT_PANE_ONLY" in output, "both pane markers")
@@ -106,6 +107,101 @@ def exercise(launcher, root, env, api):
         send(b"\x1b[24~")
         pump()
         assert len(clipboard()) == copy_count, "modal leaked copy shortcut"
+        if mouse_actions:
+            settings.write_text("[sidebar]\nwidth = 20\n[selection]\nmouse = false\n"
+                                "[experimental]\nmouse_actions = true\n")
+            send(b"r\x1b")
+            time.sleep(.15)
+
+            def proof(name, expected):
+                path = root / name
+                command = f"""printf '%s' "$TEST_PANE" > '{path}'""".encode()
+                send(b"\x1b[200~" + command + b"\x1b[201~\r")
+                wait_for(lambda: path.exists() and bool(path.read_text()), name)
+                assert path.read_text() == expected, (name, path.read_text())
+
+            # Click the left pane without dragging; input reaches the acknowledged
+            # pane. Dragging in the right pane keeps the left pane's input focus.
+            send(b"\x1b[<0;24;5M\x1b[<0;24;5m")
+            wait_for(lambda: b"Terminal" in output, "focus left pane by click")
+            proof("after-click", "LEFT_PANE_ONLY")
+            count = len(clipboard())
+            send(b"\x1b[<0;52;5M\x1b[<32;76;5M\x1b[<0;76;5m\x1b[24~")
+            wait_for(lambda: len(clipboard()) == count + 1, "copy right-pane drag")
+            assert clipboard()[-1] == b"RIGHT_PANE_ONLY"
+            proof("after-drag", "LEFT_PANE_ONLY")
+
+            # An unfocused pane's menu exposes Focus but disables Split until
+            # selection has been acknowledged. Opening the menu is nonmutating.
+            start = len(output)
+            send(b"\x1b[<2;60;5M\x1b[<2;60;5m")
+            wait_for(lambda: b"Split right (unavailable)" in output[start:], "inactive pane menu")
+            send(b"\x1b[<0;62;8M\x1b[<0;62;8m")
+            pump()
+            assert len(blocks(api, sid)) == 2
+            send(b"\x1b[<0;62;6M\x1b[<0;62;6m")
+            time.sleep(.2)
+            proof("after-menu-focus", "RIGHT_PANE_ONLY")
+
+            start = len(output)
+            send(b"\x1b[<2;60;5M\x1b[<2;60;5m")
+            wait_for(lambda: b"Esc Dismiss" in output[start:], "open focused pane menu")
+            send(b"\x1b[<0;62;9M\x1b[<0;62;9m")
+            wait_for(lambda: len(blocks(api, sid)) == 3, "split down through pane menu")
+
+            # Sidebar mouse navigation and keyboard share row identity and
+            # folding state. Opening a tab changes the server's active window.
+            def active_window():
+                return api("session.view", session_id=sid)["active_window_id"]
+
+            first = active_window()
+            send(b"\x1b[15~")
+            wait_for(lambda: active_window() != first, "create second tab")
+            second = active_window()
+            time.sleep(.2)
+            send(b"\x1b[<0;4;2M\x1b[<0;4;2m")  # Host disclosure.
+            send(b"\x1b[<0;12;4M\x1b[<0;12;4m")  # Hidden first tab.
+            time.sleep(.2)
+            assert active_window() == second
+            send(b"\x1b[<0;4;2M\x1b[<0;4;2m")
+            send(b"\x1b[<0;12;4M\x1b[<0;12;4m")
+            wait_for(lambda: active_window() == first, "open first tab by sidebar click")
+            send(b"\x1bOF\r")  # End, Enter.
+            wait_for(lambda: active_window() == second, "open second tab by keyboard")
+
+            # The second tab's recent output supplies a known live tail and
+            # older lines missing from the visible grid. Test real wheel events
+            # and modified keyboard shortcuts against those marker transitions.
+            send(b"\x1b[17~")
+            time.sleep(.2)
+            command = b"i=1; while [ \"$i\" -le 59 ]; do if [ \"$i\" -le 35 ]; then printf '%s\\n' EARLY'ZZZ'; else printf '%s\\n' BBBB'BBBB'; fi; i=$((i+1)); done; printf '%s\\n' LIVE'TAIL'"
+            send(b"\x1b[200~" + command + b"\x1b[201~\r")
+            wait_for(lambda: b"LIVETAIL" in output, "scrollback live tail")
+            older = b"EARLYZZZ"
+            wheel_up = b"\x1b[<64;24;5M"
+            wheel_down = b"\x1b[<65;24;5M"
+            start = len(output)
+            send(wheel_up * 10)
+            wait_for(lambda: older in output[start:], "pane wheel reveals older output")
+            start = len(output)
+            send(wheel_down * 10)
+            wait_for(lambda: b"LIVETAIL" in output[start:], "pane wheel returns to live tail")
+            start = len(output)
+            send(b"\x1b[5;3~" * 10)
+            wait_for(lambda: older in output[start:], "Alt+PageUp scrolls the terminal")
+            start = len(output)
+            send(b"\x1b[6;3~" * 10)
+            wait_for(lambda: b"LIVETAIL" in output[start:], "Alt+PageDown scrolls the terminal")
+            start = len(output)
+            send(wheel_up * 10)
+            wait_for(lambda: older in output[start:], "scroll before the next shell key")
+            start = len(output)
+            send(b"x")
+            wait_for(lambda: b"LIVETAIL" in output[start:], "typing returns to the live tail")
+
+            start = len(output)
+            send(b"\x1bOP")
+            wait_for(lambda: SETTINGS_TITLE in output[start:], "reopen Settings after mouse actions")
         settings.write_text("[sidebar]\nwidth = 20\n")
         send(b"r")
         wait_for(lambda: CAPTURE_OFF in output, "disable mouse capture on reload")
@@ -115,6 +211,8 @@ def exercise(launcher, root, env, api):
         assert app.wait(timeout=4) == 0
         pump()
         print("Pane-only selection copied exact left-pane text across sidebar and split boundaries.")
+        if mouse_actions:
+            print("Pane clicks, drag and copy, pane menu, and sidebar mouse/keyboard passed.")
     finally:
         if app.poll() is None:
             app.kill()
@@ -131,6 +229,7 @@ def blocks(api, session):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("launcher", type=Path, help="Path to the packaged rex-tui launcher")
+    parser.add_argument("--mouse-actions", action="store_true", help="Also check opt-in focus and menu")
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="rex-tui-selection-") as temp:
         root = Path(temp)
@@ -161,7 +260,7 @@ def main():
                     if server.poll() is not None or time.monotonic() >= deadline:
                         raise RuntimeError("Disposable Rex socket did not open")
                     time.sleep(.05)
-                exercise(args.launcher.resolve(), root, env, api)
+                exercise(args.launcher.resolve(), root, env, api, args.mouse_actions)
             finally:
                 server.terminate()
                 server.wait(timeout=5)

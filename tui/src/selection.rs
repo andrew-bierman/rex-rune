@@ -8,7 +8,7 @@ use crate::{items, targeted};
 
 const SCOPE_FIELDS: [&str; 4] = ["host", "epoch", "session", "window"];
 
-#[derive(PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct Grid {
     pub pane: String,
     pub generation: u64,
@@ -155,6 +155,12 @@ impl Selection {
                     .as_u64()
                     .is_some_and(|revision| revision >= gesture.first_revision)
         })
+    }
+
+    pub fn can_copy(&self, pane: &str) -> bool {
+        self.gesture
+            .as_ref()
+            .is_some_and(|gesture| gesture.grid.pane == pane && gesture.final_revision.is_some())
     }
 
     pub fn request_copy(&mut self) -> Result<(), &'static str> {

@@ -19,7 +19,7 @@ mkdir -p "$PWD/dist"
   cd tui
   mise exec -- makepkg --clean
 )
-sudo pacman -U dist/rex-tui-0.1.0-10-x86_64.pkg.tar.zst
+sudo pacman -U dist/rex-tui-0.1.0-12-x86_64.pkg.tar.zst
 rex-tui
 ```
 
@@ -57,6 +57,7 @@ fi
 | F8 / F9 | Split the focused pane right or down |
 | Ctrl+Shift+Arrow | Move a divider next to the focused pane |
 | F10 | Exit while leaving server sessions running |
+| Alt+PageUp / Alt+PageDown | Scroll the active pane back or forward |
 
 Close prompts name the session or tab and explain what will stop. Press Y to
 confirm, or Enter or Esc to cancel.
@@ -227,3 +228,32 @@ Copy uses OSC 52 to write to your terminal emulator's clipboard. Foot
 enables this by default. Hold **Shift** while selecting to use Foot's native
 selection instead, including its usual copy shortcut. Mouse selection and
 its copy shortcut are off by default.
+
+When mouse capture is enabled, the wheel scrolls the pane under the pointer.
+A mouse-tracking application in the selected pane receives wheel events.
+Use **Alt+PageUp** or **Alt+PageDown** for local scrollback in the active
+pane, including with mouse capture off. Typing returns to live output.
+Remap these shortcuts with `scroll_up` and `scroll_down` in `[keys]`.
+
+### Experimental mouse focus and pane menu
+
+Enable pane and sidebar mouse actions:
+
+```toml
+[experimental]
+mouse_actions = true
+```
+
+Click inside a pane to focus it for typing. Dragging leaves focus alone.
+Right-click inside a pane for **Focus pane**, **Copy selection**, **Split
+right**, or **Split down**. Copy is available when you have selected text in
+that pane. Focus the pane before splitting it. Click outside the menu or
+press **Esc** to dismiss. Hold **Shift** to use Foot's native selection.
+Mouse actions also enable pane selection and its copy shortcut, even if
+`[selection] mouse = false`. Use `[selection] mouse = true` by itself for
+selection and copy without click-to-focus or menus.
+
+Click a sidebar row to open it, click its disclosure arrow to fold or
+expand it, and use the wheel to scroll the list. The wheel leaves typing
+focus unchanged. Use F6 to browse with the keyboard, then arrows,
+PageUp/PageDown, and Enter. Mouse actions and selection are off by default.

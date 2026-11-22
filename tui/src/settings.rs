@@ -33,10 +33,12 @@ pub enum Action {
     ResizeDown,
     ComposeInput,
     CopySelection,
+    ScrollUp,
+    ScrollDown,
     Quit,
 }
 
-const DEFAULT_KEYS: [(Action, &str); 18] = [
+const DEFAULT_KEYS: [(Action, &str); 20] = [
     (Action::Settings, "F1"),
     (Action::NewSession, "F2"),
     (Action::PreviousTab, "F3"),
@@ -55,6 +57,8 @@ const DEFAULT_KEYS: [(Action, &str); 18] = [
     (Action::ResizeDown, "Ctrl+Shift+Down"),
     (Action::ComposeInput, "F11"),
     (Action::CopySelection, "F12"),
+    (Action::ScrollUp, "Alt+PageUp"),
+    (Action::ScrollDown, "Alt+PageDown"),
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -256,6 +260,7 @@ fn optional_color<'de, D: serde::Deserializer<'de>>(input: D) -> Result<Option<C
 #[serde(default, deny_unknown_fields)]
 struct Experimental {
     input_composer: bool,
+    mouse_actions: bool,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -298,6 +303,7 @@ pub struct Settings {
     pub sidebar: Sidebar,
     pub panes: Panes,
     pub mouse_selection: bool,
+    pub mouse_actions: bool,
     keys: BTreeMap<Action, Binding>,
 }
 
@@ -346,24 +352,31 @@ impl Settings {
                 .with_context(|| format!("Parse theme {}", path.display()))?
                 .chrome
         };
+        let mouse_selection = file.selection.mouse || file.experimental.mouse_actions;
         let mut keys = BTreeMap::<Action, Binding>::new();
         for (action, fallback) in DEFAULT_KEYS {
             if action == Action::ComposeInput && !file.experimental.input_composer {
                 continue;
             }
-            if action == Action::CopySelection && !file.selection.mouse {
+            if action == Action::CopySelection && !mouse_selection {
                 continue;
             }
-            let label = file.keys.remove(&action).unwrap_or_else(|| fallback.into());
+            let binding = file.keys.remove(&action);
+            let default_scroll =
+                binding.is_none() && matches!(action, Action::ScrollUp | Action::ScrollDown);
+            let label = binding.unwrap_or_else(|| fallback.into());
             if label.eq_ignore_ascii_case("none") {
                 continue;
             }
             let chord =
                 Chord::parse(&label).with_context(|| format!("Invalid {action:?} binding"))?;
-            ensure!(
-                !keys.values().any(|binding| binding.chord == chord),
-                "Duplicate shortcut {label}"
-            );
+            if keys.values().any(|binding| binding.chord == chord) {
+                // A new scrollback default must not invalidate older custom bindings.
+                if default_scroll {
+                    continue;
+                }
+                bail!("Duplicate shortcut {label}");
+            }
             keys.insert(action, Binding { chord, label });
         }
         Ok(Self {
@@ -372,7 +385,8 @@ impl Settings {
             startup_focus: file.startup_focus,
             sidebar: file.sidebar,
             panes: file.panes,
-            mouse_selection: file.selection.mouse,
+            mouse_selection,
+            mouse_actions: file.experimental.mouse_actions,
             keys,
         })
     }
@@ -456,6 +470,56 @@ pub mod tests {
     impl Drop for Fixture {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn a_new_scroll_default_does_not_steal_an_existing_custom_binding() {
+        let file = toml::from_str("[keys]\nprevious_tab = \"Alt+PageUp\"").unwrap();
+        let settings = Settings::from_file(file, Path::new("")).unwrap();
+        let key = KeyEvent::new(KeyCode::PageUp, KeyModifiers::ALT);
+        assert_eq!(settings.action(key), Some(Action::PreviousTab));
+        assert_eq!(settings.shortcut(Action::ScrollUp), None);
+    }
+
+    #[test]
+    fn default_pane_scrollback_shortcuts_leave_plain_page_keys_available() {
+        let settings = Settings::default();
+        for (key, expected) in [
+            (KeyCode::PageUp, Action::ScrollUp),
+            (KeyCode::PageDown, Action::ScrollDown),
+        ] {
+            assert_eq!(
+                settings.action(KeyEvent::new(key, KeyModifiers::NONE)),
+                None
+            );
+            assert_eq!(
+                settings.action(KeyEvent::new(key, KeyModifiers::ALT)),
+                Some(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn copying_is_enabled_in_either_mouse_mode() {
+        let configs = [
+            ("", false, false),
+            ("[selection]\nmouse = true", true, false),
+            (
+                "[selection]\nmouse = false\n[experimental]\nmouse_actions = true",
+                true,
+                true,
+            ),
+        ];
+        for (source, selection, actions) in configs {
+            let settings =
+                Settings::from_file(toml::from_str(source).unwrap(), Path::new("")).unwrap();
+            assert_eq!(settings.mouse_selection, selection);
+            assert_eq!(settings.mouse_actions, actions);
+            assert_eq!(
+                settings.shortcut(Action::CopySelection),
+                selection.then_some("F12")
+            );
         }
     }
 

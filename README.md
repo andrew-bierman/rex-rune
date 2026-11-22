@@ -41,13 +41,15 @@ examples](tui/README.md#settings-and-themes).
 - Create sessions and shell tabs, split panes right or down, resize dividers with the keyboard, and confirm before closing a tab or ending a session.
 - Type and paste into the focused pane, resize panes when the terminal changes size, and leave sessions running when the client exits.
 - Enable pane-only mouse selection and copy while keeping Foot's native Shift-drag selection.
+- Try opt-in click-to-focus and a right-click menu for pane focus, copy, and splits.
 - Edit and reload TOML settings, choose named themes, inherit terminal colors, customize the sidebar and pane chrome, and remap shortcuts.
 - Try an opt-in input composer that edits a command locally and pastes it into the selected shell.
 - Install the TUI and its matching backend from one x86_64 Arch package. The package builds in clean Arch CI and is exercised in private Foot against disposable Rex sessions.
 
 ### Toward parity with Rex for Mac
 
-The target is parity for everyday Rex workflows in a terminal. Use the
+Keyboard access comes first for everyday Rex workflows. Mouse actions are
+optional and experimental. Use the
 [Mac action reference](https://www.superlogical.com/rex/docs/reference/mac-actions)
 and the [Mac settings reference](https://www.superlogical.com/rex/docs/reference/mac-settings)
 as the comparison. Track each workflow through a private TUI test before
@@ -56,13 +58,16 @@ such as notifications and opening links.
 
 | Area | Remaining TUI work |
 | --- | --- |
-| Mouse and clipboard | Add click-to-focus, mouse divider resizing, a right-click action menu, and mouse forwarding for programs that request it. |
+| Mouse and clipboard | Add mouse divider resizing, tab actions in the context menu, and mouse forwarding for programs that request it. |
 | Scrollback and search | Find within a pane, jump between prompts, and add keyboard copy mode with character, line, and block selection. |
 | Navigation | Add a searchable command palette, a global switcher for sessions and tabs, sidebar filtering, and recent-tab history. |
 | Tabs and panes | Add rename and reorder, directional focus and movement, pane zoom and balancing, close-pane and close-others actions, and support for floating panes as the shared backend gains it. |
 | Activity | Show program status on tabs, group work by session or priority, and add opt-in desktop notifications and sounds. |
 | Hosts and files | Manage hosts from the TUI, guide SSH setup and device pairing, and add remote path browsing, file insertion, and link opening. |
 | Terminal settings | Add a theme picker and theme imports, surface configurable key sequences and modes, and support the remaining terminal display preferences where Foot can express them. |
+
+The input composer and opt-in terminal preloading are lower priorities than
+keyboard parity.
 
 ## Upstream
 

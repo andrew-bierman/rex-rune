@@ -1,11 +1,12 @@
 use crate::{
     composer::Composer,
     items,
+    mouse::Menu,
     selection::{Grid, Selection},
     settings::{Action, Chrome, PaneDefaultColors, Panes, Settings, SidebarSide},
     targeted, text,
 };
-use crossterm::event::KeyCode;
+use crossterm::event::{KeyCode, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Position, Rect},
@@ -25,6 +26,24 @@ const DEFAULT_COLOR: Color = Color::Reset;
 #[derive(PartialEq, Eq)]
 struct RowId<'a>(&'a str, &'a str, &'a str);
 
+impl RowId<'_> {
+    fn owned(&self) -> (String, String, String) {
+        (self.0.to_owned(), self.1.to_owned(), self.2.to_owned())
+    }
+}
+
+#[derive(PartialEq, Eq)]
+struct SidebarTarget {
+    id: (String, String, String),
+    epoch: Value,
+    disclosure: bool,
+}
+
+pub(crate) enum SidebarMouse {
+    Ignore,
+    Handled(Option<Value>),
+}
+
 struct Row<'a> {
     host: &'a Value,
     session: Option<&'a Value>,
@@ -39,6 +58,17 @@ impl Row<'_> {
             self.session.map_or("", |session| text(session, "id")),
             self.tab.map_or("", |tab| text(tab, "id")),
         )
+    }
+
+    fn open(&self) -> Value {
+        let (action, args) = match self.session {
+            Some(session) => (
+                "navigate",
+                json!({"session": session["id"], "window": self.tab.map_or("", |tab| text(tab, "id"))}),
+            ),
+            None => ("activate", json!({})),
+        };
+        json!({"op":"host", "action":action, "args":args, "host":self.host["id"], "epoch":self.host["epoch"]})
     }
 
     fn active(&self, state: &Value) -> bool {
@@ -104,9 +134,13 @@ pub struct Screen {
     pub pane_sizes: Vec<(String, u16, u16)>,
     pub pane_grids: Vec<Grid>,
     pub selection: Selection,
+    pub pane_menu: Option<Menu>,
     selected: usize,
     selected_id: Option<(String, String, String)>,
     sidebar_offset: usize,
+    sidebar_scrolled: bool,
+    sidebar_inner: Rect,
+    sidebar_press: Option<SidebarTarget>,
     folded: HashMap<String, HashSet<String>>,
 }
 
@@ -121,9 +155,13 @@ impl Default for Screen {
             pane_sizes: Vec::new(),
             pane_grids: Vec::new(),
             selection: Selection::default(),
+            pane_menu: None,
             selected: 0,
             selected_id: None,
             sidebar_offset: 0,
+            sidebar_scrolled: false,
+            sidebar_inner: Rect::ZERO,
+            sidebar_press: None,
             folded: HashMap::new(),
         }
     }
@@ -132,13 +170,11 @@ impl Default for Screen {
 impl Screen {
     pub fn follow_active_row(&mut self) {
         self.selected_id = None;
+        self.sidebar_scrolled = false;
     }
 
     fn remember_selection(&mut self, rows: &[Row<'_>]) {
-        self.selected_id = rows.get(self.selected).map(|row| {
-            let RowId(host, session, tab) = row.id();
-            (host.to_owned(), session.to_owned(), tab.to_owned())
-        });
+        self.selected_id = rows.get(self.selected).map(|row| row.id().owned());
     }
 
     fn restore_selection(&mut self, rows: &[Row<'_>], state: &Value) {
@@ -165,11 +201,36 @@ impl Screen {
         let rows = rows(state, &self.folded);
         let last = rows.len().saturating_sub(1);
         self.restore_selection(&rows, state);
+        if matches!(
+            key,
+            KeyCode::Up
+                | KeyCode::Down
+                | KeyCode::Left
+                | KeyCode::Right
+                | KeyCode::Home
+                | KeyCode::End
+                | KeyCode::PageUp
+                | KeyCode::PageDown
+                | KeyCode::Enter
+                | KeyCode::Char('j' | 'k')
+        ) {
+            self.sidebar_scrolled = false;
+            self.sidebar_press = None;
+        }
         match key {
             KeyCode::Up | KeyCode::Char('k') => self.selected = self.selected.saturating_sub(1),
             KeyCode::Down | KeyCode::Char('j') => self.selected = (self.selected + 1).min(last),
             KeyCode::Home => self.selected = 0,
             KeyCode::End => self.selected = last,
+            KeyCode::PageUp => {
+                self.selected = self
+                    .selected
+                    .saturating_sub(usize::from(self.sidebar_inner.height.max(1)))
+            }
+            KeyCode::PageDown => {
+                self.selected =
+                    (self.selected + usize::from(self.sidebar_inner.height.max(1))).min(last)
+            }
             KeyCode::Left | KeyCode::Right => {
                 let row = rows.get(self.selected)?;
                 let RowId(host, session, tab) = row.id();
@@ -196,23 +257,104 @@ impl Screen {
                 }
             }
             KeyCode::Enter => {
-                let row = rows.get(self.selected)?;
-                let (action, args) = match row.session {
-                    Some(session) => (
-                        "navigate",
-                        json!({"session": session["id"], "window": row.tab.map_or("", |tab| text(tab, "id"))}),
-                    ),
-                    None => ("activate", json!({})),
-                };
-                return Some(
-                    json!({"op":"host", "action":action, "args":args, "host":row.host["id"], "epoch":row.host["epoch"]}),
-                );
+                self.dirty = true;
+                return rows.get(self.selected).map(Row::open);
             }
             _ => return None,
         }
         self.dirty = true;
         self.remember_selection(&rows);
         None
+    }
+
+    pub fn cancel_sidebar_mouse(&mut self) {
+        self.sidebar_press = None;
+    }
+
+    pub fn sidebar_mouse(&mut self, state: &Value, event: MouseEvent) -> SidebarMouse {
+        if !event.modifiers.is_empty() {
+            self.cancel_sidebar_mouse();
+            return SidebarMouse::Ignore;
+        }
+        let at = Position::new(event.column, event.row);
+        let inside = self.sidebar_inner.contains(at);
+        if inside
+            && matches!(
+                event.kind,
+                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+            )
+        {
+            self.cancel_sidebar_mouse();
+            self.sidebar_scrolled = true;
+            self.sidebar_offset = if event.kind == MouseEventKind::ScrollUp {
+                self.sidebar_offset.saturating_sub(3)
+            } else {
+                self.sidebar_offset.saturating_add(3)
+            };
+            self.dirty = true;
+            return SidebarMouse::Handled(None);
+        }
+        match event.kind {
+            MouseEventKind::Down(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left) => {}
+            MouseEventKind::Drag(MouseButton::Left) if self.sidebar_press.is_some() => {
+                self.cancel_sidebar_mouse();
+                return SidebarMouse::Handled(None);
+            }
+            _ => return SidebarMouse::Ignore,
+        }
+        if event.kind == MouseEventKind::Up(MouseButton::Left) && self.sidebar_press.is_none() {
+            return SidebarMouse::Ignore;
+        }
+        if !inside && self.sidebar_press.is_none() {
+            return SidebarMouse::Ignore;
+        }
+        let rows = rows(state, &self.folded);
+        let row = inside
+            .then(|| {
+                let index = self.sidebar_offset + usize::from(at.y - self.sidebar_inner.y);
+                rows.get(index).map(|row| {
+                    let indent = if row.session.is_some() { 4 } else { 2 };
+                    let disclosure =
+                        row.expanded.is_some() && at.x == self.sidebar_inner.x + indent;
+                    (
+                        index,
+                        row,
+                        SidebarTarget {
+                            id: row.id().owned(),
+                            epoch: row.host["epoch"].clone(),
+                            disclosure,
+                        },
+                    )
+                })
+            })
+            .flatten();
+
+        if event.kind == MouseEventKind::Down(MouseButton::Left) {
+            self.sidebar_press = row.map(|(_, _, target)| target);
+            return SidebarMouse::Handled(None);
+        }
+        let pressed = self.sidebar_press.take();
+        if let Some((index, row, target)) = row
+            && pressed.as_ref() == Some(&target)
+        {
+            self.sidebar = true;
+            self.selected = index;
+            self.selected_id = Some(target.id);
+            self.sidebar_scrolled = false;
+            self.dirty = true;
+            if target.disclosure {
+                return SidebarMouse::Handled(self.navigate(
+                    state,
+                    if row.expanded == Some(true) {
+                        KeyCode::Left
+                    } else {
+                        KeyCode::Right
+                    },
+                ));
+            }
+            return SidebarMouse::Handled(Some(row.open()));
+        }
+        SidebarMouse::Handled(None)
     }
 
     pub fn cycle(&self, state: &Value, action: Action) -> Option<Value> {
@@ -247,6 +389,7 @@ impl Screen {
         let area = frame.area();
         self.pane_sizes.clear();
         self.pane_grids.clear();
+        self.sidebar_inner = Rect::ZERO;
         frame.render_widget(Block::new().style(self.settings.chrome.style()), area);
         if area.width < 38 || area.height < 8 {
             frame.render_widget(Paragraph::new("Enlarge the terminal to use rex-tui."), area);
@@ -314,7 +457,11 @@ impl Screen {
                 frame,
                 rect,
                 pane,
-                active && !self.sidebar && !self.settings_open && self.composer.is_none(),
+                active
+                    && !self.sidebar
+                    && !self.settings_open
+                    && self.composer.is_none()
+                    && self.pane_menu.is_none(),
                 self.settings.panes,
                 self.settings.chrome,
                 self.settings.mouse_selection && self.selection.highlights(state, pane),
@@ -339,6 +486,16 @@ impl Screen {
         }
         if let Some(composer) = &self.composer {
             composer.draw(frame, self.settings.chrome);
+        }
+        if let Some(menu) = &self.pane_menu
+            && menu.target.visible(state, &self.pane_grids)
+        {
+            menu.draw(
+                frame,
+                state,
+                self.settings.chrome,
+                self.selection.can_copy(menu.target.id()),
+            );
         }
     }
 
@@ -483,11 +640,14 @@ impl Screen {
         let rows = rows(state, &self.folded);
         self.restore_selection(&rows, state);
         let capacity = usize::from(inner.height);
-        self.sidebar_offset = self
-            .sidebar_offset
-            .min(self.selected)
-            .min(rows.len().saturating_sub(capacity))
-            .max(self.selected.saturating_add(1).saturating_sub(capacity));
+        self.sidebar_inner = inner;
+        self.sidebar_offset = self.sidebar_offset.min(rows.len().saturating_sub(capacity));
+        if !self.sidebar_scrolled {
+            self.sidebar_offset = self
+                .sidebar_offset
+                .min(self.selected)
+                .max(self.selected.saturating_add(1).saturating_sub(capacity));
+        }
         let mut lines = Vec::with_capacity(capacity);
         for (index, row) in rows
             .iter()
@@ -805,6 +965,88 @@ fn draw_pane(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sidebar_event(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn sidebar_click_uses_the_same_row_as_keyboard_and_cancels_on_reorder() {
+        let mut state = json!({
+            "hosts":{"rows":[{"id":"h","epoch":1,"active":true,"sessions":[
+                {"id":"s","opened":true,"tabs":[{"id":"a"},{"id":"b"}]}
+            ]}]}
+        });
+        let mut screen = Screen {
+            sidebar_inner: Rect::new(1, 1, 20, 12),
+            sidebar: false,
+            ..Screen::default()
+        };
+        let down = sidebar_event(MouseEventKind::Down(MouseButton::Left), 12, 3);
+        let up = sidebar_event(MouseEventKind::Up(MouseButton::Left), 12, 3);
+        assert!(matches!(
+            screen.sidebar_mouse(&state, down),
+            SidebarMouse::Handled(None)
+        ));
+        state["hosts"]["rows"][0]["sessions"][0]["tabs"]
+            .as_array_mut()
+            .unwrap()
+            .swap(0, 1);
+        assert!(matches!(
+            screen.sidebar_mouse(&state, up),
+            SidebarMouse::Handled(None)
+        ));
+        assert!(!screen.sidebar);
+        screen.sidebar_mouse(&state, down);
+        let SidebarMouse::Handled(Some(request)) = screen.sidebar_mouse(&state, up) else {
+            panic!("Click should open its captured tab");
+        };
+        assert_eq!(request["args"]["window"], "b");
+        assert_eq!(screen.navigate(&state, KeyCode::Enter), Some(request));
+        assert!(screen.sidebar);
+    }
+
+    #[test]
+    fn sidebar_disclosure_folds_and_wheel_leaves_typing_focus_unchanged() {
+        let state = json!({"hosts":{"rows":[
+            {"id":"h","epoch":2,"sessions":[{"id":"s","opened":true,"tabs":[{"id":"a"}]}]}
+        ]}});
+        let mut screen = Screen {
+            sidebar_inner: Rect::new(1, 1, 20, 2),
+            sidebar: false,
+            ..Screen::default()
+        };
+        let wheel = sidebar_event(MouseEventKind::ScrollDown, 5, 1);
+        assert!(matches!(
+            screen.sidebar_mouse(&state, wheel),
+            SidebarMouse::Handled(None)
+        ));
+        assert!(!screen.sidebar);
+        assert_eq!(screen.sidebar_offset, 3);
+        screen.sidebar_offset = 0;
+        let down = sidebar_event(MouseEventKind::Down(MouseButton::Left), 3, 1);
+        let up = sidebar_event(MouseEventKind::Up(MouseButton::Left), 3, 1);
+        for expected in [true, false] {
+            screen.sidebar_mouse(&state, down);
+            assert!(matches!(
+                screen.sidebar_mouse(&state, up),
+                SidebarMouse::Handled(None)
+            ));
+            assert_eq!(
+                screen.folded.get("h").is_some_and(|ids| ids.contains("")),
+                expected
+            );
+        }
+        assert!(matches!(
+            screen.sidebar_mouse(&state, up),
+            SidebarMouse::Ignore
+        ));
+    }
 
     #[test]
     fn pane_renders_native_colors_explicit_colors_and_inverted_cells() {
