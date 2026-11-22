@@ -16,7 +16,7 @@ mkdir -p "$PWD/dist"
   cd tui
   mise exec -- makepkg --clean
 )
-sudo pacman -U dist/rex-tui-0.1.0-7-x86_64.pkg.tar.zst
+sudo pacman -U dist/rex-tui-0.1.0-8-x86_64.pkg.tar.zst
 rex-tui
 ```
 
@@ -146,3 +146,27 @@ selection_background = "#84dcc6"
 
 Theme colors apply to the interface. Shell panes display the colors supplied
 by Rex.
+
+## Experimental input composer
+
+The input composer is off by default. To try it, add the following to
+`settings.toml` and reload Settings.
+
+```toml
+[experimental]
+input_composer = true
+
+[keys]
+compose_input = "F11"
+```
+
+In an existing settings file, add `compose_input` to its existing `[keys]`
+section. The shortcut is used only when the composer is enabled.
+
+Open the composer with a connected shell pane selected. Edit the draft
+with the arrow, Home, End, Backspace, and Delete keys, or paste text from
+your terminal emulator. Each tab or newline becomes a space so the draft
+stays on one line. **Enter pastes the draft into the captured pane without
+pressing Enter in the shell.** Press **Esc** to return to the shell after
+pasting or discard an unsent draft. If the pane or connection changes,
+discard the draft and reopen the composer for the new target.
