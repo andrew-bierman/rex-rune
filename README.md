@@ -25,6 +25,10 @@ by default. Open a host with **Enter**, press **F2** to create a session with
 a shell, then press **F6** to type. The [TUI guide](tui/README.md) covers
 remote hosts, keyboard controls, and alternate profiles.
 
+A [personal Rex server started over SSH](docs/hosts.md#ssh-setup) runs until
+it is stopped or the host restarts. On Linux with systemd, logging out also
+ends that server and its sessions unless lingering is enabled for the login.
+
 ## Customize
 
 Press **F1** to edit or reload `settings.toml`. Set the sidebar size and

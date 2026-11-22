@@ -58,15 +58,7 @@ fn dispatch(s: &mut Workspace, ev: &KeyEvent, tx: &mut Tx, global_only: bool) ->
         connected: s.model().connected,
     };
     if s.bindings.context.as_ref() != Some(&context) {
-        if s.bindings.context.as_ref().is_some_and(|old| {
-            old.host != context.host
-                || old.session != context.session
-                || old.generation != context.generation
-                || old.server_revision != context.server_revision
-                || old.connected != context.connected
-        }) {
-            s.bindings.clear_modes();
-        }
+        s.bindings.adopt_modes(context.owner());
         s.bindings.sequence.clear();
         s.bindings.context = Some(context);
     }
@@ -259,7 +251,7 @@ pub fn list_key(s: &mut Workspace, ev: &KeyEvent, tx: &mut Tx) -> bool {
             && space(ev, tx)
             && s.panel
                 .as_ref()
-                .is_some_and(|p| matches!(p.kind, PanelKind::Pane)) =>
+                .is_some_and(|p| matches!(p.kind, PanelKind::Pane | PanelKind::Layer)) =>
         {
             s.close_panel(tx)
         }
@@ -305,6 +297,13 @@ pub fn on_key(s: &mut Workspace, ev: &KeyEvent, tx: &mut Tx) -> bool {
     use super::platform::keys::{WindowMenuKey, window_menu_key};
     let window_key = window_menu_key(&ev.key, ev.mods);
     if let Some(panel) = &s.panel {
+        if matches!(panel.kind, PanelKind::InstallSsh { .. })
+            && ev.key == Key::Enter
+            && ev.mods == rune::Mods::default()
+        {
+            s.install_enter(tx);
+            return true;
+        }
         // The system's Close would fall through to the window and quit Rex: with a popup
         // or Settings open, Command+W closes that instead.
         if window_key == Some(WindowMenuKey::Close) {
