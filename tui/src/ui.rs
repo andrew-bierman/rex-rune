@@ -1,4 +1,5 @@
 use crate::{
+    composer::Composer,
     items,
     settings::{Action, Chrome, Panes, Settings, SidebarSide},
     targeted, text,
@@ -97,6 +98,7 @@ pub struct Screen {
     pub sidebar: bool,
     pub settings: Settings,
     pub settings_open: bool,
+    pub composer: Option<Composer>,
     pub dirty: bool,
     pub pane_sizes: Vec<(String, u16, u16)>,
     selected: usize,
@@ -111,6 +113,7 @@ impl Default for Screen {
             sidebar: true,
             settings: Settings::default(),
             settings_open: false,
+            composer: None,
             dirty: true,
             pane_sizes: Vec::new(),
             selected: 0,
@@ -305,7 +308,7 @@ impl Screen {
                 frame,
                 rect,
                 pane,
-                active && !self.sidebar && !self.settings_open,
+                active && !self.sidebar && !self.settings_open && self.composer.is_none(),
                 self.settings.panes,
                 self.settings.chrome,
             );
@@ -321,6 +324,9 @@ impl Screen {
         frame.render_widget(Paragraph::new(footer_lines), footer);
         if self.settings_open {
             self.draw_settings(frame, settings_path, problem);
+        }
+        if let Some(composer) = &self.composer {
+            composer.draw(frame, self.settings.chrome);
         }
     }
 
@@ -411,6 +417,7 @@ impl Screen {
         let actions = Span::raw(
             [
                 self.hint(Action::Settings, "Settings"),
+                self.hint(Action::ComposeInput, "Compose"),
                 self.hint(Action::NewSession, "Session"),
                 self.hint(Action::NewTab, "Tab"),
                 self.hint(Action::SplitRight, "Split →"),
