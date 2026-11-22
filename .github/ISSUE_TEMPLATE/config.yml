@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report an upstream Rune frontend issue
+    url: https://github.com/shuv1337/rex-rune/issues
+    about: Use upstream for problems that only occur in the Rune frontend.
