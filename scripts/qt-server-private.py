@@ -142,7 +142,14 @@ def exercise(args):
         receive(lambda v:v.get('type')=='error')
         # Fake command edge: no SSH network or personal service is contacted.
         tools=work/'tools'
-        (tools/'ssh').write_text("#!/bin/sh\ncase \"$*\" in *\"rex version --json\"*) echo '{\"api_revision\":12}';; *) echo 'none fixture';; esac\n")
+        (tools/'ssh').write_text("""#!/bin/sh
+case " $* " in
+    *" -G "*) printf 'hostname qt-owned-fake\nport 22\nstricthostkeychecking yes\n' ;;
+    *" rex version --json "*) echo '{"api_revision":12}' ;;
+    *" StrictHostKeyChecking=yes "*) echo 'none fixture Linux 1000 rex' ;;
+    *) exit 99 ;;
+esac
+""")
         (tools/'rex').write_text("#!/bin/sh\nif [ \"$1\" = version ]; then echo '{\"api_revision\":12}'; exit; fi\nprintf 'attempt\\n' >> "+shlex.quote(str(work/'attempts'))+"\nprintf '%s\\n' "+shlex.quote(status_fixture)+"\n")
         for helper in tools.iterdir():helper.chmod(0o700)
         env['PATH']=str(tools)+os.pathsep+env['PATH']

@@ -673,7 +673,7 @@ impl Hosts {
             }).collect();
             json!({"id":slot.id,"label":config.label,"endpoint":config.endpoint,"shell":config.shell,"collapsed":config.collapsed,"remote_control":config.remote_control,
                 "active":slot.id==self.active,"connected":slot.model.connected,"enabled":slot.connection.is_some(),"status":slot.model.status,
-                "ssh_server_missing":slot.model.ssh_server_missing,"epoch":slot.model.connection_epoch,"sessions":sessions})
+                "ssh_server_missing":matches!(slot.model.ssh_problem.as_ref(), Some(rex_rune::ssh::Problem::NoServer(_))),"epoch":slot.model.connection_epoch,"sessions":sessions})
         }).collect();
         json!({"active":self.active,"rows":rows,"back":self.history.can_back(),"forward":self.history.can_forward(),"pending":self.pending.is_some(),"sidebar_open":settings.sidebar_open,"vertical_tabs":settings.vertical_tabs})
     }
