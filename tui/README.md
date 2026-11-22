@@ -109,6 +109,7 @@ width = 28
 [panes]
 borders = true
 headers = false
+default_colors = "terminal"
 
 [keys]
 next_tab = "Alt+n"
@@ -119,6 +120,16 @@ split_down = "none"
 Sidebar width is measured in columns and shrinks on narrow screens. Omit it
 for automatic sizing. The startup preference applies on the next launch, if a terminal connects
 before you interact. The sidebar accepts input while Rex is connecting.
+
+Pane text and empty space inherit the terminal emulator's default foreground
+and background. Explicit program colors and inverse text still apply. Set
+`default_colors = "server"` to use Rex's pane defaults instead. Older backends
+always supply the server colors.
+
+Program overrides of terminal defaults via OSC 10 and OSC 11 are retained
+when their effective color differs from the server default. A same-color
+override is indistinguishable from the default in the backend. Whole-screen
+reverse video uses the server colors for the reversed palette.
 
 Shortcut overrides accept function keys, ASCII characters, and named keys
 such as `Enter`, `Tab`, `PageUp`, and `Escape`. Prefix modifiers with

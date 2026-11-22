@@ -65,6 +65,7 @@ fn duplicate_expired_and_replacement_epoch_calls_cannot_toggle_the_view_or_reply
         path: dir.path().join("workspace.json"),
         hosts,
         adapters: HashMap::from([("host-1".into(), Adapter::default())]),
+        color_roles: false,
         generation: 1,
         discovery: Discovery::default(),
         after_state: Vec::new(),
