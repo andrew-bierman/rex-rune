@@ -19,7 +19,7 @@ mkdir -p "$PWD/dist"
   cd tui
   mise exec -- makepkg --clean
 )
-sudo pacman -U dist/rex-tui-0.1.0-9-x86_64.pkg.tar.zst
+sudo pacman -U dist/rex-tui-0.1.0-12-x86_64.pkg.tar.zst
 rex-tui
 ```
 
@@ -57,6 +57,7 @@ fi
 | F8 / F9 | Split the focused pane right or down |
 | Ctrl+Shift+Arrow | Move a divider next to the focused pane |
 | F10 | Exit while leaving server sessions running |
+| Alt+PageUp / Alt+PageDown | Scroll the active pane back or forward |
 
 Close prompts name the session or tab and explain what will stop. Press Y to
 confirm, or Enter or Esc to cancel.
@@ -70,9 +71,26 @@ default). Press F6 to focus the shell before using Foot's paste shortcut
 
 ## Appearance
 
-The sidebar, tab strip, and status lines use your terminal's default colors
-and ANSI palette. In Omarchy, Foot gets those colors from the active theme.
-The pane contents retain the colors supplied by Rex.
+The `terminal` theme uses the colors of the terminal emulator running
+`rex-tui`. Foot loads the active Omarchy palette through its configuration.
+The sidebar, tab strip, status lines, and default pane colors follow that
+palette. Colors explicitly set by a program still render as supplied by Rex.
+
+## Capture the demo
+
+Install Foot, labwc, and grim, then pass the underlying rex-tui executable
+from the package or your build. The script renders a fixed fictional workspace
+in a private headless compositor. It does not read your Rex profiles or contact
+a Rex server.
+
+```sh
+python3 scripts/tui-demo-capture.py --binary /usr/lib/rex-tui/rex-tui
+```
+
+Run the command from the repository root. It writes
+`docs/images/rex-tui-demo.png`. Use `--output` for another destination,
+`--font` to select a Foot font, or `--compositor` and `--library-path`
+for a separate labwc build.
 
 ## Releases and upstream sync
 
@@ -189,3 +207,53 @@ stays on one line. **Enter pastes the draft into the captured pane without
 pressing Enter in the shell.** Press **Esc** to return to the shell after
 pasting or discard an unsent draft. If the pane or connection changes,
 discard the draft and reopen the composer for the new target.
+
+## Pane-only mouse selection
+
+To select text without including tabs, other panes, or the sidebar, add this
+to `settings.toml` and reload Settings:
+
+```toml
+[selection]
+mouse = true
+
+[keys]
+copy_selection = "F12"
+```
+
+Add the binding to your existing `[keys]` section, if present. Drag with the
+left mouse button starting inside the pane, release, then press **F12**.
+Dragging beyond a pane edge keeps the selection within the original pane.
+Copy uses OSC 52 to write to your terminal emulator's clipboard. Foot
+enables this by default. Hold **Shift** while selecting to use Foot's native
+selection instead, including its usual copy shortcut. Mouse selection and
+its copy shortcut are off by default.
+
+When mouse capture is enabled, the wheel scrolls the pane under the pointer.
+A mouse-tracking application in the selected pane receives wheel events.
+Use **Alt+PageUp** or **Alt+PageDown** for local scrollback in the active
+pane, including with mouse capture off. Typing returns to live output.
+Remap these shortcuts with `scroll_up` and `scroll_down` in `[keys]`.
+
+### Experimental mouse focus and pane menu
+
+Enable pane and sidebar mouse actions:
+
+```toml
+[experimental]
+mouse_actions = true
+```
+
+Click inside a pane to focus it for typing. Dragging leaves focus alone.
+Right-click inside a pane for **Focus pane**, **Copy selection**, **Split
+right**, or **Split down**. Copy is available when you have selected text in
+that pane. Focus the pane before splitting it. Click outside the menu or
+press **Esc** to dismiss. Hold **Shift** to use Foot's native selection.
+Mouse actions also enable pane selection and its copy shortcut, even if
+`[selection] mouse = false`. Use `[selection] mouse = true` by itself for
+selection and copy without click-to-focus or menus.
+
+Click a sidebar row to open it, click its disclosure arrow to fold or
+expand it, and use the wheel to scroll the list. The wheel leaves typing
+focus unchanged. Use F6 to browse with the keyboard, then arrows,
+PageUp/PageDown, and Enter. Mouse actions and selection are off by default.
