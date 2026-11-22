@@ -10,8 +10,12 @@ side = "left"
 borders = true
 headers = true
 
+[experimental]
+input_composer = false
+
 [keys]
 settings = "F1"
+compose_input = "F11"
 new_session = "F2"
 previous_tab = "F3"
 next_tab = "F4"

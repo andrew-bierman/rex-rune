@@ -31,10 +31,11 @@ pub enum Action {
     ResizeRight,
     ResizeUp,
     ResizeDown,
+    ComposeInput,
     Quit,
 }
 
-const DEFAULT_KEYS: [(Action, &str); 16] = [
+const DEFAULT_KEYS: [(Action, &str); 17] = [
     (Action::Settings, "F1"),
     (Action::NewSession, "F2"),
     (Action::PreviousTab, "F3"),
@@ -51,6 +52,7 @@ const DEFAULT_KEYS: [(Action, &str); 16] = [
     (Action::ResizeRight, "Ctrl+Shift+Right"),
     (Action::ResizeUp, "Ctrl+Shift+Up"),
     (Action::ResizeDown, "Ctrl+Shift+Down"),
+    (Action::ComposeInput, "F11"),
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -238,6 +240,12 @@ fn optional_color<'de, D: serde::Deserializer<'de>>(input: D) -> Result<Option<C
     color(input).map(Some)
 }
 
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct Experimental {
+    input_composer: bool,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct File {
@@ -245,6 +253,7 @@ struct File {
     startup_focus: StartupFocus,
     sidebar: Sidebar,
     panes: Panes,
+    experimental: Experimental,
     keys: BTreeMap<Action, String>,
 }
 
@@ -255,6 +264,7 @@ impl Default for File {
             startup_focus: StartupFocus::Sidebar,
             sidebar: Sidebar::default(),
             panes: Panes::default(),
+            experimental: Experimental::default(),
             keys: BTreeMap::new(),
         }
     }
@@ -317,6 +327,9 @@ impl Settings {
         };
         let mut keys = BTreeMap::<Action, Binding>::new();
         for (action, fallback) in DEFAULT_KEYS {
+            if action == Action::ComposeInput && !file.experimental.input_composer {
+                continue;
+            }
             let label = file.keys.remove(&action).unwrap_or_else(|| fallback.into());
             if label.eq_ignore_ascii_case("none") {
                 continue;
@@ -422,6 +435,27 @@ pub mod tests {
     }
 
     #[test]
+    fn composer_shortcut_is_reserved_only_when_enabled() {
+        let disabled = Settings::default();
+        let f11 = KeyEvent::new(KeyCode::F(11), KeyModifiers::NONE);
+        assert_eq!(disabled.action(f11), None);
+        let source = "[experimental]\ninput_composer = true\n[keys]\ncompose_input = \"F12\"";
+        let enabled = Settings::from_file(toml::from_str(source).unwrap(), Path::new("")).unwrap();
+        assert_eq!(enabled.action(f11), None);
+        assert_eq!(
+            enabled.action(KeyEvent::new(KeyCode::F(12), KeyModifiers::NONE)),
+            Some(Action::ComposeInput)
+        );
+        let duplicate = source.replace("F12", "F10");
+        assert!(Settings::from_file(toml::from_str(&duplicate).unwrap(), Path::new("")).is_err());
+        let disabled_duplicate = duplicate.replace("true", "false");
+        assert!(
+            Settings::from_file(toml::from_str(&disabled_duplicate).unwrap(), Path::new(""))
+                .is_ok()
+        );
+    }
+
+    #[test]
     fn editor_seeds_missing_settings_and_preserves_an_existing_file() {
         let fixture = Fixture::new();
         let path = fixture.0.join("nested/settings.toml");
@@ -457,7 +491,8 @@ pub mod tests {
         let settings = Settings::from_file(file, Path::new("")).unwrap();
         assert_eq!(settings.theme, "terminal");
         for (action, key) in DEFAULT_KEYS {
-            assert_eq!(settings.shortcut(action), Some(key));
+            let expected = (action != Action::ComposeInput).then_some(key);
+            assert_eq!(settings.shortcut(action), expected);
         }
     }
 

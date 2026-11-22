@@ -1,9 +1,11 @@
 mod close;
+mod composer;
 mod settings;
 mod ui;
 
 use anyhow::{Context, Result, bail};
 use close::{CloseDialog, CloseTarget};
+use composer::{Composer, Edit};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use serde_json::{Value, json};
 use settings::{Action, Settings, StartupFocus};
@@ -314,6 +316,9 @@ fn run(
         let changed = update.is_some() || message.is_some();
         if let Some(update) = update {
             state = update;
+            if let Some(composer) = &mut screen.composer {
+                composer.observe(&state);
+            }
             if focus_terminal_on_attach && state["terminal"]["connected"] == true {
                 screen.sidebar = false;
                 focus_terminal_on_attach = false;
@@ -376,6 +381,7 @@ fn run(
             }
             if !screen.sidebar
                 && !screen.settings_open
+                && screen.composer.is_none()
                 && state["terminal"]["connected"] == true
                 && state["terminal"]["owner"] != true
             {
@@ -405,6 +411,28 @@ fn run(
             continue;
         }
         let input = event::read()?;
+        if let Some(composer) = &mut screen.composer {
+            match input {
+                Event::Key(key) => {
+                    consume_modal_key(&mut modal_keys, key, true);
+                    // A new target snapshot can arrive while waiting for input.
+                    if let Some(update) = backend.inbox.lock().unwrap().state.as_ref() {
+                        composer.observe(update);
+                    }
+                    match composer.key(&state, key, Composer::visible(terminal.size()?)) {
+                        Edit::Continue => {}
+                        Edit::Cancel => screen.composer = None,
+                        // Keep the modal open after paste so terminals that report a held Enter
+                        // as repeated Press events cannot submit the pasted line to the shell.
+                        Edit::Send(request) => backend.send(request)?,
+                    }
+                }
+                Event::Paste(paste) => composer.insert(&paste),
+                _ => {}
+            }
+            screen.dirty = true;
+            continue;
+        }
         if let Event::Key(key) = &input {
             let swallowed = consume_modal_key(&mut modal_keys, *key, close_dialog.is_some());
             if let Some(dialog) = &mut close_dialog {
@@ -498,6 +526,19 @@ fn run(
                     ) => {
                         if let Some(request) = resize_split(&state, action, key.kind) {
                             backend.send(request)?;
+                        }
+                    }
+                    Some(Action::ComposeInput) => {
+                        if key.kind == KeyEventKind::Press {
+                            match Composer::open(&state) {
+                                Ok(composer) => {
+                                    screen.composer = Some(composer);
+                                    modal_keys.insert(key.code);
+                                    problem.clear();
+                                }
+                                Err(message) => problem = message.into(),
+                            }
+                            screen.dirty = true;
                         }
                     }
                     Some(Action::Settings) => {
