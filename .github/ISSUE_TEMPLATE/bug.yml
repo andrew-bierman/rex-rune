@@ -1,0 +1,34 @@
+name: Bug report
+description: Report a problem with rex-tui, its Arch package, or the Qt frontend in this fork.
+body:
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - rex-tui
+        - Arch package
+        - Qt frontend
+        - Unsure
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include the release or commit, your OS, terminal emulator if applicable, and whether the Rex server is local or remote. Include the server version if known.
+      placeholder: On Arch, run pacman -Q rex-tui for the installed package version.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce and what happened
+      description: Include the smallest set of steps that shows the bug, the result you expected, and what you saw instead.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Settings, logs, or screenshots
+      description: Share any relevant settings or error excerpts. Remove credentials, private host details, and unrelated terminal content.
