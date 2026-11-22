@@ -432,6 +432,15 @@ fn run(
                 request["text"] = json!(paste);
                 backend.send(request)?;
             }
+            Event::Paste(_) => {
+                problem = if screen.sidebar {
+                    "Press F6 to focus the shell before pasting"
+                } else {
+                    "Wait for the shell to connect before pasting"
+                }
+                .into();
+                screen.dirty = true;
+            }
             Event::Key(key) => {
                 let down = key.kind != KeyEventKind::Release;
                 let action = screen.settings.action(key);

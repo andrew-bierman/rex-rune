@@ -61,6 +61,10 @@ confirm, or Enter or Esc to cancel.
 Resizing Foot updates visible panes owned by this client, including while the
 sidebar has focus. The terminal renders text snapshots from the backend.
 
+In Foot, select text and use its clipboard copy shortcut (Ctrl+Shift+C by
+default). Press F6 to focus the shell before using Foot's paste shortcut
+(Ctrl+Shift+V by default).
+
 ## Appearance
 
 The sidebar, tab strip, and status lines use your terminal's default colors
