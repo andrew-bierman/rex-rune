@@ -3,7 +3,7 @@ pkgver=0.1.0
 pkgrel=8
 pkgdesc='Terminal interface for Rex servers'
 arch=('x86_64')
-url='https://github.com/andrew-bierman/rex-rune'
+url='https://github.com/andrew-bierman/rex-tui'
 license=('MIT')
 depends=('bash' 'ca-certificates' 'coreutils' 'glibc' 'libgcc')
 # Rust's bundled linker cannot read GCC's Arch-default LTO objects in ring.

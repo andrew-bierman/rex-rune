@@ -1,6 +1,6 @@
 # Keeping Qt downstream of Rex Rune
 
-The user settled this architecture on 2026-11-15: consume Rex Rune improvements through an upstream-tracking fork, keeping Qt additive and optional. `origin` is `https://github.com/andrew-bierman/rex-rune.git`; `upstream` is `https://github.com/shuv1337/rex-rune.git`. Never publish branches or PRs against upstream, and never merge the delivery PR automatically.
+The fork takes core improvements from Rex Rune and keeps Qt additive and optional. Use `https://github.com/andrew-bierman/rex-tui.git` for `origin` and `https://github.com/shuv1337/rex-rune.git` for `upstream`. Publish sync branches and PRs to the fork.
 
 ## Boundary and diff audit
 
@@ -19,9 +19,10 @@ Prefer merge on already-published downstream branches, avoiding force pushes. Re
 ```sh
 git status --short
 git remote -v
+git fetch origin master
 git fetch upstream master
-git log --oneline HEAD..upstream/master
-git worktree add -b maintenance/upstream-candidate ../rex-rune-qt-upstream-candidate HEAD
+git log --oneline origin/master..upstream/master
+git worktree add -b maintenance/upstream-candidate ../rex-rune-qt-upstream-candidate origin/master
 cd ../rex-rune-qt-upstream-candidate
 git merge --no-edit upstream/master
 # Resolve conflicts here; retain upstream core behavior and adapt Qt to it.
@@ -45,7 +46,7 @@ python3 scripts/qt-private.py
 python3 scripts/qt-wayland-private.py --cage /path/to/cage
 ```
 
-Use the repository-required Rust/Zig versions and installed Qt requirements from `qt/README.md`. Qt acceptance needs Rex, Neovim and an owned disposable server; never substitute the personal endpoint. The native smoke needs an available Wayland compositor. Without one, run the offscreen checks and record native verification as missing. Task-local toolchains/caches are not tracked and must be configured explicitly in a new worktree. After checking logs and reviewing the candidate diff, publish only to an owned-fork branch/PR; do not merge automatically. Remove only this disposable worktree when finished.
+Use the repository-required Rust/Zig versions and the Qt requirements from `qt/README.md`. Qt acceptance needs Rex, Neovim and a disposable server. The native smoke needs a private Wayland compositor. Without one, run the offscreen checks and record native verification as missing. Configure the build tools and caches for the candidate worktree. Run the [TUI checks](../tui/README.md#releases-and-upstream-sync) on the same candidate, then review the diff and open a PR in the fork. Remove only the disposable candidate worktree when finished.
 
 ## Tested rehearsal and practical limits
 
@@ -57,7 +58,7 @@ Private offscreen acceptance passed. Rune and Qt also attached concurrently to d
 
 Likely hotspots: the additive Cargo binary list; public `HostCommand`, `HostModel`, terminal sender and Ghostty frame fields consumed in `qt/backend/`; renamed core APIs; terminal ownership/key semantics; upstream vendored versions and their toolchain requirements. Preserve upstream lockfile/vendor updates rather than pinning stale dependencies to hide incompatibilities. README and `.gitignore` additions may have trivial textual conflicts. Public core APIs have no stable downstream compatibility promise.
 
-Rust 1.100 adds a Clippy warning in an unchanged upstream activity UI test. Prefer upstream's supported toolchain when enforcing its gate; do not edit unrelated Rune tests merely for local toolchain drift. GitHub Actions on the owned fork currently has zero registered workflows/runs despite source definitions, so remote CI is unavailable evidence; registration is optional and does not block local development or use.
+Rust 1.100 added a Clippy warning in an unchanged upstream activity UI test during this rehearsal. Use upstream's supported toolchain for its checks. GitHub Actions was unavailable in the fork during the rehearsal. The fork now has a separate [Arch package workflow](../.github/workflows/tui-package.yml).
 
 ## Isolated core patch: live theme defaults
 

@@ -88,6 +88,11 @@ private Foot. Run the [Qt verification driver](../qt/README.md#verification-driv
 with the same backend revision. Develop Qt performance changes separately
 from the TUI release branch.
 
+Fetch changes from `upstream` and do the merge in a clean worktree based on
+`origin/master`. Send the result to the fork through a PR. The
+[upstream maintenance guide](../docs/qt-upstream-maintenance.md#update-procedure)
+has the worktree commands and Qt test setup.
+
 ## Settings and themes
 
 Press **F1** to open Settings. Press **E** to edit the file using `VISUAL`
