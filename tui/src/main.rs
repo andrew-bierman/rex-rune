@@ -411,6 +411,7 @@ fn run(
                 FocusStatus::Pending => {}
                 FocusStatus::Selected => {
                     pending_focus = None;
+                    screen.stop_filter();
                     screen.sidebar = false;
                     problem.clear();
                     screen.dirty = true;
@@ -619,6 +620,20 @@ fn run(
                 }
             }
             screen.dirty = true;
+            continue;
+        }
+        if screen.filtering() {
+            match input {
+                Event::Key(key) => {
+                    consume_modal_key(&mut modal_keys, key, true);
+                    if let Some(request) = screen.filter_key(&state, key) {
+                        backend.send(request)?;
+                    }
+                }
+                Event::Paste(paste) => screen.filter_paste(&state, &paste),
+                Event::Resize(..) => screen.dirty = true,
+                _ => {}
+            }
             continue;
         }
         if let Event::Key(key) = &input {
@@ -878,6 +893,13 @@ fn run(
                     Some(Action::Quit) => {
                         if down {
                             return Ok(());
+                        }
+                    }
+                    Some(Action::FilterSidebar) if screen.sidebar => {
+                        if key.kind == KeyEventKind::Press {
+                            consume_modal_key(&mut modal_keys, key, true);
+                            pointer.cancel();
+                            screen.start_filter();
                         }
                     }
                     Some(Action::ToggleFocus) => {
