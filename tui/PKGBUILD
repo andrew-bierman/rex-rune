@@ -6,7 +6,8 @@ arch=('x86_64')
 url='https://github.com/andrew-bierman/rex-rune'
 license=('MIT')
 depends=('bash' 'ca-certificates' 'coreutils' 'glibc' 'libgcc')
-options=('!debug')
+# Rust's bundled linker cannot read GCC's Arch-default LTO objects in ring.
+options=('!debug' '!lto')
 
 # Build from this checkout using the Rust and Zig versions pinned by mise.toml.
 build() {
