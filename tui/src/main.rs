@@ -1,5 +1,5 @@
 mod close;
-mod composer;
+mod input_prompt;
 mod mouse;
 mod selection;
 mod settings;
@@ -7,8 +7,8 @@ mod ui;
 
 use anyhow::{Context, Result, bail};
 use close::{CloseDialog, CloseTarget};
-use composer::{Composer, Edit};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use input_prompt::{Edit, InputPrompt, RenameTarget};
 use mouse::{Choice, Focus, FocusStatus, MenuAction, Pointer, PointerAction};
 use serde_json::{Value, json};
 use settings::{Action, Settings, StartupFocus};
@@ -25,7 +25,7 @@ use std::{
 struct Inbox {
     state: Option<Value>,
     problem: Option<String>,
-    rejected_request: Option<u64>,
+    rejected_request: Option<(u64, String)>,
     closed: bool,
 }
 
@@ -66,10 +66,11 @@ impl Backend {
                         break;
                     }
                     Some("error") => {
+                        let message = text(&value, "message").to_owned();
                         if let Some(request_id) = value["request_id"].as_u64() {
-                            slot.rejected_request = Some(request_id);
+                            slot.rejected_request = Some((request_id, message.clone()));
                         }
-                        slot.problem = Some(text(&value, "message").into());
+                        slot.problem = Some(message);
                     }
                     Some("notice") => slot.problem = Some(text(&value, "message").into()),
                     _ => {}
@@ -342,7 +343,7 @@ fn run(
     let mut pending_focus: Option<Focus> = None;
     loop {
         mouse_capture.set(screen.settings.mouse_selection)?;
-        let (update, message, rejected_request, closed) = {
+        let (update, message, rejection, closed) = {
             let mut inbox = backend.inbox.lock().unwrap();
             (
                 inbox.state.take(),
@@ -354,8 +355,8 @@ fn run(
         let changed = update.is_some() || message.is_some();
         if let Some(update) = update {
             state = update;
-            if let Some(composer) = &mut screen.composer {
-                composer.observe(&state);
+            if let Some(prompt) = &mut screen.prompt {
+                prompt.observe(&state);
             }
             if focus_terminal_on_attach && state["terminal"]["connected"] == true {
                 screen.sidebar = false;
@@ -365,6 +366,10 @@ fn run(
         if let Some(message) = message {
             problem = message;
         }
+        if let (Some((id, message)), Some(prompt)) = (&rejection, &mut screen.prompt) {
+            prompt.reject(*id, message);
+        }
+        let rejected_request = rejection.map(|(id, _)| id);
         if closed {
             bail!(
                 "{}",
@@ -393,7 +398,7 @@ fn run(
         }
         let pointer_enabled = screen.settings.mouse_actions
             && !screen.settings_open
-            && screen.composer.is_none()
+            && screen.prompt.is_none()
             && close_dialog.is_none();
         if !pointer_enabled {
             pointer.cancel();
@@ -430,7 +435,7 @@ fn run(
         }
         let selection_enabled = screen.settings.mouse_selection
             && !screen.settings_open
-            && screen.composer.is_none()
+            && screen.prompt.is_none()
             && close_dialog.is_none();
         if let Some(request) =
             screen
@@ -471,7 +476,7 @@ fn run(
             }
             if !screen.sidebar
                 && !screen.settings_open
-                && screen.composer.is_none()
+                && screen.prompt.is_none()
                 && state["terminal"]["connected"] == true
                 && state["terminal"]["owner"] != true
             {
@@ -501,23 +506,22 @@ fn run(
             continue;
         }
         let input = event::read()?;
-        if let Some(composer) = &mut screen.composer {
+        if let Some(prompt) = &mut screen.prompt {
             match input {
                 Event::Key(key) => {
                     consume_modal_key(&mut modal_keys, key, true);
                     // A new target snapshot can arrive while waiting for input.
                     if let Some(update) = backend.inbox.lock().unwrap().state.as_ref() {
-                        composer.observe(update);
+                        prompt.observe(update);
                     }
-                    match composer.key(&state, key, Composer::visible(terminal.size()?)) {
+                    match prompt.key(&state, key, InputPrompt::visible(terminal.size()?)) {
                         Edit::Continue => {}
-                        Edit::Cancel => screen.composer = None,
-                        // Keep the modal open after paste so terminals that report a held Enter
-                        // as repeated Press events cannot submit the pasted line to the shell.
+                        Edit::Cancel => screen.prompt = None,
+                        // Keep the prompt open so repeated Enter presses stay out of the shell.
                         Edit::Send(request) => backend.send(request)?,
                     }
                 }
-                Event::Paste(paste) => composer.insert(&paste),
+                Event::Paste(paste) => prompt.insert(&paste),
                 _ => {}
             }
             screen.dirty = true;
@@ -727,6 +731,27 @@ fn run(
                     focus_terminal_on_attach = false;
                 }
                 match action {
+                    Some(
+                        action @ (Action::RenameSession | Action::RenameTab | Action::RenamePane),
+                    ) => {
+                        if key.kind == KeyEventKind::Press {
+                            request_id = request_id.wrapping_add(1);
+                            let kind = match action {
+                                Action::RenameSession => RenameTarget::Session,
+                                Action::RenameTab => RenameTarget::Tab,
+                                _ => RenameTarget::Pane,
+                            };
+                            match InputPrompt::rename(&state, kind, request_id) {
+                                Ok(prompt) => {
+                                    screen.prompt = Some(prompt);
+                                    modal_keys.insert(key.code);
+                                    problem.clear();
+                                }
+                                Err(message) => problem = message.into(),
+                            }
+                            screen.dirty = true;
+                        }
+                    }
                     Some(action @ (Action::CloseSession | Action::CloseTab)) => {
                         if key.kind == KeyEventKind::Press {
                             request_id = request_id.wrapping_add(1);
@@ -774,9 +799,9 @@ fn run(
                     }
                     Some(Action::ComposeInput) => {
                         if key.kind == KeyEventKind::Press {
-                            match Composer::open(&state) {
-                                Ok(composer) => {
-                                    screen.composer = Some(composer);
+                            match InputPrompt::compose(&state) {
+                                Ok(prompt) => {
+                                    screen.prompt = Some(prompt);
                                     modal_keys.insert(key.code);
                                     problem.clear();
                                 }

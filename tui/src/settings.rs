@@ -27,6 +27,9 @@ pub enum Action {
     SplitDown,
     CloseSession,
     CloseTab,
+    RenameSession,
+    RenameTab,
+    RenamePane,
     ResizeLeft,
     ResizeRight,
     ResizeUp,
@@ -38,7 +41,7 @@ pub enum Action {
     Quit,
 }
 
-const DEFAULT_KEYS: [(Action, &str); 20] = [
+const DEFAULT_KEYS: [(Action, &str); 23] = [
     (Action::Settings, "F1"),
     (Action::NewSession, "F2"),
     (Action::PreviousTab, "F3"),
@@ -59,6 +62,9 @@ const DEFAULT_KEYS: [(Action, &str); 20] = [
     (Action::CopySelection, "F12"),
     (Action::ScrollUp, "Alt+PageUp"),
     (Action::ScrollDown, "Alt+PageDown"),
+    (Action::RenameSession, "Shift+F6"),
+    (Action::RenameTab, "Shift+F7"),
+    (Action::RenamePane, "Shift+F8"),
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -362,8 +368,15 @@ impl Settings {
                 continue;
             }
             let binding = file.keys.remove(&action);
-            let default_scroll =
-                binding.is_none() && matches!(action, Action::ScrollUp | Action::ScrollDown);
+            let optional_default = binding.is_none()
+                && matches!(
+                    action,
+                    Action::ScrollUp
+                        | Action::ScrollDown
+                        | Action::RenameSession
+                        | Action::RenameTab
+                        | Action::RenamePane
+                );
             let label = binding.unwrap_or_else(|| fallback.into());
             if label.eq_ignore_ascii_case("none") {
                 continue;
@@ -371,8 +384,8 @@ impl Settings {
             let chord =
                 Chord::parse(&label).with_context(|| format!("Invalid {action:?} binding"))?;
             if keys.values().any(|binding| binding.chord == chord) {
-                // A new scrollback default must not invalidate older custom bindings.
-                if default_scroll {
+                // New defaults must not invalidate older custom bindings.
+                if optional_default {
                     continue;
                 }
                 bail!("Duplicate shortcut {label}");
@@ -471,6 +484,17 @@ pub mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn rename_defaults_leave_existing_custom_shortcuts_in_place() {
+        let file =
+            toml::from_str("[keys]\ntoggle_focus = \"Shift+F6\"\nrename_tab = \"F14\"").unwrap();
+        let settings = Settings::from_file(file, Path::new("")).unwrap();
+        assert_eq!(settings.shortcut(Action::ToggleFocus), Some("Shift+F6"));
+        assert_eq!(settings.shortcut(Action::RenameSession), None);
+        assert_eq!(settings.shortcut(Action::RenameTab), Some("F14"));
+        assert_eq!(settings.shortcut(Action::RenamePane), Some("Shift+F8"));
     }
 
     #[test]

@@ -1,5 +1,5 @@
 use crate::{
-    composer::Composer,
+    input_prompt::InputPrompt,
     items,
     mouse::Menu,
     selection::{Grid, Selection},
@@ -129,7 +129,7 @@ pub struct Screen {
     pub sidebar: bool,
     pub settings: Settings,
     pub settings_open: bool,
-    pub composer: Option<Composer>,
+    pub prompt: Option<InputPrompt>,
     pub dirty: bool,
     pub pane_sizes: Vec<(String, u16, u16)>,
     pub pane_grids: Vec<Grid>,
@@ -150,7 +150,7 @@ impl Default for Screen {
             sidebar: true,
             settings: Settings::default(),
             settings_open: false,
-            composer: None,
+            prompt: None,
             dirty: true,
             pane_sizes: Vec::new(),
             pane_grids: Vec::new(),
@@ -460,7 +460,7 @@ impl Screen {
                 active
                     && !self.sidebar
                     && !self.settings_open
-                    && self.composer.is_none()
+                    && self.prompt.is_none()
                     && self.pane_menu.is_none(),
                 self.settings.panes,
                 self.settings.chrome,
@@ -484,8 +484,8 @@ impl Screen {
         if self.settings_open {
             self.draw_settings(frame, settings_path, problem);
         }
-        if let Some(composer) = &self.composer {
-            composer.draw(frame, self.settings.chrome);
+        if let Some(prompt) = &self.prompt {
+            prompt.draw(frame, self.settings.chrome);
         }
         if let Some(menu) = &self.pane_menu
             && menu.target.visible(state, &self.pane_grids)

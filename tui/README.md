@@ -52,6 +52,7 @@ fi
 | F3 / F4 | Switch tabs |
 | F5 | Open a shell in a new tab |
 | Shift+F5 | Ask to close the active tab |
+| Shift+F6 / Shift+F7 / Shift+F8 | Rename the active session, tab, or focused pane |
 | F6 | Switch input between the sidebar and the terminal |
 | F7 | Cycle pane focus |
 | F8 / F9 | Split the focused pane right or down |
@@ -61,6 +62,10 @@ fi
 
 Close prompts name the session or tab and explain what will stop. Press Y to
 confirm, or Enter or Esc to cancel.
+
+Rename prompts capture the active target. Edit the label or clear it with
+Ctrl+U, then press Enter to send the change. An empty tab or pane label restores
+its generated title. Press Esc to cancel a draft or return after sending it.
 
 Resizing Foot updates visible panes owned by this client, including while the
 sidebar has focus. The terminal renders text snapshots from the backend.
