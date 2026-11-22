@@ -1,7 +1,7 @@
 use crate::{
     composer::Composer,
     items,
-    mouse::Menu,
+    mouse::{Menu, Target},
     selection::{Grid, Selection},
     settings::{Action, Chrome, PaneDefaultColors, Panes, Settings, SidebarSide},
     targeted, text,
@@ -133,6 +133,7 @@ pub struct Screen {
     pub dirty: bool,
     pub pane_sizes: Vec<(String, u16, u16)>,
     pub pane_grids: Vec<Grid>,
+    pane_area: Rect,
     pub selection: Selection,
     pub pane_menu: Option<Menu>,
     selected: usize,
@@ -154,6 +155,7 @@ impl Default for Screen {
             dirty: true,
             pane_sizes: Vec::new(),
             pane_grids: Vec::new(),
+            pane_area: Rect::ZERO,
             selection: Selection::default(),
             pane_menu: None,
             selected: 0,
@@ -379,6 +381,23 @@ impl Screen {
         Some(message)
     }
 
+    pub fn directional_pane(&self, state: &Value, action: Action) -> Option<Target> {
+        let panes = items(&state["panes"]);
+        let current = panes.iter().find(|pane| pane["pane"] == state["pane"])?;
+        let source = pane_rectangle(self.pane_area, &current["rect"])?;
+        panes
+            .iter()
+            .filter(|pane| pane["pane"] != state["pane"])
+            .filter_map(|pane| {
+                let area = pane_rectangle(self.pane_area, &pane["rect"])?;
+                let rank = neighbor_rank(source, area, action)?;
+                let target = Target::for_grid(state, Grid::new(pane, area)?)?;
+                Some((rank, target))
+            })
+            .min_by_key(|(rank, _)| *rank)
+            .map(|(_, target)| target)
+    }
+
     pub fn draw(
         &mut self,
         frame: &mut Frame<'_>,
@@ -389,6 +408,7 @@ impl Screen {
         let area = frame.area();
         self.pane_sizes.clear();
         self.pane_grids.clear();
+        self.pane_area = Rect::ZERO;
         self.sidebar_inner = Rect::ZERO;
         frame.render_widget(Block::new().style(self.settings.chrome.style()), area);
         if area.width < 38 || area.height < 8 {
@@ -425,6 +445,7 @@ impl Screen {
         self.draw_sidebar(frame, sidebar, state);
         let [tabs, terminal] =
             Layout::vertical([Constraint::Length(3), Constraint::Min(0)]).areas(work);
+        self.pane_area = terminal;
         draw_tabs(frame, tabs, state, self.settings.chrome);
         let panes = items(&state["panes"]);
         if panes.is_empty() {
@@ -787,6 +808,44 @@ fn pane_rectangle(area: Rect, value: &Value) -> Option<Rect> {
     (width >= 3 && height >= 3).then_some(Rect::new(area.x + left, area.y + top, width, height))
 }
 
+fn neighbor_rank(
+    source: Rect,
+    candidate: Rect,
+    action: Action,
+) -> Option<(u16, u32, std::cmp::Reverse<u16>)> {
+    let (gap, from, to) = match action {
+        Action::FocusLeft => (
+            source.left().checked_sub(candidate.right())?,
+            (source.top(), source.bottom()),
+            (candidate.top(), candidate.bottom()),
+        ),
+        Action::FocusRight => (
+            candidate.left().checked_sub(source.right())?,
+            (source.top(), source.bottom()),
+            (candidate.top(), candidate.bottom()),
+        ),
+        Action::FocusUp => (
+            source.top().checked_sub(candidate.bottom())?,
+            (source.left(), source.right()),
+            (candidate.left(), candidate.right()),
+        ),
+        Action::FocusDown => (
+            candidate.top().checked_sub(source.bottom())?,
+            (source.left(), source.right()),
+            (candidate.left(), candidate.right()),
+        ),
+        _ => return None,
+    };
+    let overlap = from.1.min(to.1).checked_sub(from.0.max(to.0))?;
+    if overlap == 0 {
+        return None;
+    }
+    // Compare doubled centers to keep half-cell positions exact.
+    let center_distance =
+        (u32::from(from.0) + u32::from(from.1)).abs_diff(u32::from(to.0) + u32::from(to.1));
+    Some((gap, center_distance, std::cmp::Reverse(overlap)))
+}
+
 fn rgb(value: &Value, fallback: Color) -> Color {
     value.as_u64().map_or(fallback, |n| {
         Color::Rgb((n >> 16) as u8, (n >> 8) as u8, n as u8)
@@ -973,6 +1032,72 @@ mod tests {
             row,
             modifiers: crossterm::event::KeyModifiers::NONE,
         }
+    }
+
+    #[test]
+    fn directional_focus_uses_visible_nested_split_neighbors_and_does_not_wrap() {
+        let mut state = json!({
+            "host":"h","epoch":1,"session":"s","window":"w","pane":"bottom","connected":true,
+            "panes":[
+                {"pane":"left","rect":[0,0,0.5,1],"terminal":{"connected":true,"generation":1},"frame":{"cols":30,"rows":20}},
+                {"pane":"top","rect":[0.5,0,0.5,0.4],"terminal":{"connected":true,"generation":1},"frame":{"cols":30,"rows":8}},
+                {"pane":"bottom","rect":[0.5,0.4,0.5,0.6],"terminal":{"connected":true,"generation":1},"frame":{"cols":30,"rows":12}}
+            ]
+        });
+        let screen = Screen {
+            pane_area: Rect::new(20, 3, 61, 25),
+            ..Screen::default()
+        };
+        assert_eq!(
+            screen
+                .directional_pane(&state, Action::FocusLeft)
+                .unwrap()
+                .id(),
+            "left"
+        );
+        assert_eq!(
+            screen
+                .directional_pane(&state, Action::FocusUp)
+                .unwrap()
+                .id(),
+            "top"
+        );
+        assert!(
+            screen
+                .directional_pane(&state, Action::FocusRight)
+                .is_none()
+        );
+        assert!(screen.directional_pane(&state, Action::FocusDown).is_none());
+        state["pane"] = json!("left");
+        assert_eq!(
+            screen
+                .directional_pane(&state, Action::FocusRight)
+                .unwrap()
+                .id(),
+            "bottom"
+        );
+        state["panes"][2]["terminal"]["connected"] = json!(false);
+        assert_eq!(
+            screen
+                .directional_pane(&state, Action::FocusRight)
+                .unwrap()
+                .id(),
+            "top"
+        );
+        state["hosts"]["pending"] = json!(true);
+        assert!(
+            screen
+                .directional_pane(&state, Action::FocusRight)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_touching_corner_is_not_a_directional_neighbor() {
+        let current = Rect::new(0, 0, 10, 10);
+        let diagonal = Rect::new(10, 10, 10, 10);
+        assert!(neighbor_rank(current, diagonal, Action::FocusRight).is_none());
+        assert!(neighbor_rank(current, diagonal, Action::FocusDown).is_none());
     }
 
     #[test]

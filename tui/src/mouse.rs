@@ -19,6 +19,10 @@ pub(crate) struct Target {
 impl Target {
     fn at(state: &Value, grids: &[Grid], at: Position) -> Option<Self> {
         let grid = grids.iter().find(|grid| grid.area.contains(at))?.clone();
+        Self::for_grid(state, grid)
+    }
+
+    pub fn for_grid(state: &Value, grid: Grid) -> Option<Self> {
         let mut scope = targeted(state, "select_pane");
         scope["pane"] = json!(grid.pane);
         let target = Self { grid, scope };

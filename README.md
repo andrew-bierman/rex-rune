@@ -42,6 +42,7 @@ examples](tui/README.md#settings-and-themes).
 ### Available in the Arch preview
 
 - Browse and fold hosts and sessions, open tabs, and switch focus between the sidebar and a shell.
+- Move focus between split panes with Ctrl+Alt+Arrow, or cycle them with F7.
 - Create sessions and shell tabs, split panes right or down, resize dividers with the keyboard, and confirm before closing a tab or ending a session.
 - Type and paste into the focused pane, resize panes when the terminal changes size, and leave sessions running when the client exits.
 - Enable pane-only mouse selection and copy while keeping Foot's native Shift-drag selection.
@@ -65,7 +66,7 @@ such as notifications and opening links.
 | Mouse and clipboard | Add mouse divider resizing, tab actions in the context menu, and mouse forwarding for programs that request it. |
 | Scrollback and search | Find within a pane, jump between prompts, and add keyboard copy mode with character, line, and block selection. |
 | Navigation | Add a searchable command palette, a global switcher for sessions and tabs, sidebar filtering, and recent-tab history. |
-| Tabs and panes | Add rename and reorder, directional focus and movement, pane zoom and balancing, close-pane and close-others actions, and support for floating panes as the shared backend gains it. |
+| Tabs and panes | Add rename and reorder, directional pane movement, pane zoom and balancing, close-pane and close-others actions, and support for floating panes as the shared backend gains it. |
 | Activity | Show program status on tabs, group work by session or priority, and add opt-in desktop notifications and sounds. |
 | Hosts and files | Manage hosts from the TUI, guide SSH setup and device pairing, and add remote path browsing, file insertion, and link opening. |
 | Terminal settings | Add a theme picker and theme imports, surface configurable key sequences and modes, and support the remaining terminal display preferences where Foot can express them. |

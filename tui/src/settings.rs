@@ -35,10 +35,14 @@ pub enum Action {
     CopySelection,
     ScrollUp,
     ScrollDown,
+    FocusLeft,
+    FocusRight,
+    FocusUp,
+    FocusDown,
     Quit,
 }
 
-const DEFAULT_KEYS: [(Action, &str); 20] = [
+const DEFAULT_KEYS: [(Action, &str); 24] = [
     (Action::Settings, "F1"),
     (Action::NewSession, "F2"),
     (Action::PreviousTab, "F3"),
@@ -59,6 +63,10 @@ const DEFAULT_KEYS: [(Action, &str); 20] = [
     (Action::CopySelection, "F12"),
     (Action::ScrollUp, "Alt+PageUp"),
     (Action::ScrollDown, "Alt+PageDown"),
+    (Action::FocusLeft, "Ctrl+Alt+Left"),
+    (Action::FocusRight, "Ctrl+Alt+Right"),
+    (Action::FocusUp, "Ctrl+Alt+Up"),
+    (Action::FocusDown, "Ctrl+Alt+Down"),
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -362,8 +370,16 @@ impl Settings {
                 continue;
             }
             let binding = file.keys.remove(&action);
-            let default_scroll =
-                binding.is_none() && matches!(action, Action::ScrollUp | Action::ScrollDown);
+            let new_default = binding.is_none()
+                && matches!(
+                    action,
+                    Action::ScrollUp
+                        | Action::ScrollDown
+                        | Action::FocusLeft
+                        | Action::FocusRight
+                        | Action::FocusUp
+                        | Action::FocusDown
+                );
             let label = binding.unwrap_or_else(|| fallback.into());
             if label.eq_ignore_ascii_case("none") {
                 continue;
@@ -371,8 +387,8 @@ impl Settings {
             let chord =
                 Chord::parse(&label).with_context(|| format!("Invalid {action:?} binding"))?;
             if keys.values().any(|binding| binding.chord == chord) {
-                // A new scrollback default must not invalidate older custom bindings.
-                if default_scroll {
+                // New default shortcuts must not invalidate older custom bindings.
+                if new_default {
                     continue;
                 }
                 bail!("Duplicate shortcut {label}");
@@ -471,6 +487,24 @@ pub mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn directional_focus_defaults_allow_existing_overrides_and_custom_chords() {
+        let file = toml::from_str("[keys]\nprevious_tab = \"Ctrl+Alt+Left\"\nfocus_up = \"Alt+u\"")
+            .unwrap();
+        let settings = Settings::from_file(file, Path::new("")).unwrap();
+        assert_eq!(settings.shortcut(Action::FocusLeft), None);
+        assert_eq!(
+            settings.shortcut(Action::PreviousTab),
+            Some("Ctrl+Alt+Left")
+        );
+        assert_eq!(settings.shortcut(Action::FocusUp), Some("Alt+u"));
+        assert_eq!(
+            settings.shortcut(Action::FocusRight),
+            Some("Ctrl+Alt+Right")
+        );
+        assert_eq!(settings.shortcut(Action::NextPane), Some("F7"));
     }
 
     #[test]
