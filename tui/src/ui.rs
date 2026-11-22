@@ -243,7 +243,8 @@ impl Screen {
             frame.render_widget(Paragraph::new("Enlarge the terminal to use rex-tui."), area);
             return;
         }
-        let footer_lines = self.footer(state, problem, area.width);
+        let footer_problem = if self.settings_open { "" } else { problem };
+        let footer_lines = self.footer(state, footer_problem, area.width);
         let [body, footer] = Layout::vertical([
             Constraint::Min(0),
             Constraint::Length(footer_lines.len() as u16),
@@ -431,10 +432,13 @@ impl Screen {
         );
         let separator = Span::raw("  ");
         if focus.width() + actions.width() + separator.width() <= usize::from(width) {
-            focus
-                .spans
-                .extend([separator.clone(), actions, separator, status]);
+            if problem.is_empty() {
+                focus.spans.extend([separator.clone(), actions]);
+            }
+            focus.spans.extend([separator, status]);
             vec![focus]
+        } else if !problem.is_empty() {
+            vec![focus, Line::from(status)]
         } else {
             vec![focus, Line::from(vec![actions, separator, status])]
         }
