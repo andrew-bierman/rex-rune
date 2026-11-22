@@ -773,18 +773,21 @@ fn run(
                             screen.dirty = true;
                         }
                     }
-                    Some(action @ (Action::CloseSession | Action::CloseTab)) => {
+                    Some(
+                        action @ (Action::CloseSession | Action::CloseTab | Action::ClosePane),
+                    ) => {
                         if key.kind == KeyEventKind::Press {
                             request_id = request_id.wrapping_add(1);
-                            let kind = if action == Action::CloseSession {
-                                CloseTarget::Session
-                            } else {
-                                CloseTarget::Tab
+                            let kind = match action {
+                                Action::CloseSession => CloseTarget::Session,
+                                Action::CloseTab => CloseTarget::Tab,
+                                _ => CloseTarget::FocusedPane,
                             };
                             match CloseDialog::start(&state, kind, request_id) {
                                 Ok((dialog, request)) => {
                                     backend.send(request)?;
                                     close_dialog = Some(dialog);
+                                    modal_keys.insert(key.code);
                                     problem.clear();
                                 }
                                 Err(message) => problem = message.into(),

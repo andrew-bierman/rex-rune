@@ -14,11 +14,12 @@ const TARGET_FIELDS: [&str; 5] = ["host", "epoch", "session", "window", "pane"];
 pub(crate) enum CloseTarget {
     Session,
     Tab,
+    FocusedPane,
 }
 
 pub(crate) struct CloseDialog {
     target: Value,
-    title: String,
+    title: Option<String>,
     request_id: u64,
     previous_question: Value,
     cancel_requested: bool,
@@ -34,30 +35,37 @@ impl CloseDialog {
         if state["hosts"]["pending"] == true || state["connected"] != true {
             return Err("Open a connected workspace first");
         }
-        let (action, kind, rows, field, missing) = match kind {
+        let (action, label_source, field, missing) = match kind {
             CloseTarget::Session => (
                 "session.close",
-                "session",
-                "sessions",
+                Some(("session", "sessions")),
                 "session",
                 "Open the session you want to close",
             ),
             CloseTarget::Tab => (
                 "client.tab.close",
-                "tab",
-                "windows",
+                Some(("tab", "windows")),
                 "window",
                 "Open the tab you want to close",
             ),
+            // Rex chooses whether closing the focused pane means closing its tab.
+            CloseTarget::FocusedPane => (
+                "client.close",
+                None,
+                "pane",
+                "Focus the pane you want to close",
+            ),
         };
         let id = state[field].as_str().ok_or(missing)?;
-        let name = items(&state[rows])
-            .iter()
-            .find(|row| row["id"] == id)
-            .map(|row| text(row, "label"))
-            .filter(|label| !label.trim().is_empty())
-            .unwrap_or(id);
-        let title = format!("Close {kind} {name}?");
+        let title = label_source.map(|(kind, rows)| {
+            let name = items(&state[rows])
+                .iter()
+                .find(|row| row["id"] == id)
+                .map(|row| text(row, "label"))
+                .filter(|label| !label.trim().is_empty())
+                .unwrap_or(id);
+            format!("Close {kind} {name}?")
+        });
         let target = targeted(state, "workspace");
         let mut request = target.clone();
         request["action"] = json!(action);
@@ -152,7 +160,14 @@ impl CloseDialog {
             vec![Line::raw("Finishing close request…")]
         } else if let Some((question, _)) = self.question(state) {
             vec![
-                Line::styled(safe_text(&self.title), Style::new().bold()),
+                Line::styled(
+                    safe_text(
+                        self.title
+                            .as_deref()
+                            .unwrap_or_else(|| text(question, "title")),
+                    ),
+                    Style::new().bold(),
+                ),
                 Line::raw("Enter / Esc Cancel    Y Confirm"),
                 Line::raw(""),
                 Line::raw(safe_text(text(question, "description"))),
@@ -242,8 +257,49 @@ mod tests {
     }
 
     #[test]
+    fn pane_close_shows_the_backend_scope_and_requires_confirmation() {
+        use ratatui::{Terminal, backend::TestBackend};
+
+        for title in ["Close split shell in Work?", "Close Work?"] {
+            let mut state = state();
+            let (mut dialog, request) =
+                CloseDialog::start(&state, CloseTarget::FocusedPane, 21).unwrap();
+            assert_eq!(request["action"], "client.close");
+            assert_eq!(request["pane"], "shell");
+            assert_eq!(request["window"], "tab");
+            assert_eq!(request["request_id"], 21);
+
+            let accept = KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE);
+            assert!(dialog.key(&state, accept, true).is_none());
+            state["workspace"] = question(&state, 6);
+            state["workspace"]["title"] = json!(title);
+            let mut terminal = Terminal::new(TestBackend::new(90, 24)).unwrap();
+            terminal.draw(|frame| dialog.draw(frame, &state)).unwrap();
+            let screen: String = terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect();
+            assert!(screen.contains(title));
+
+            let mut changed = state.clone();
+            changed["pane"] = json!("other pane");
+            assert!(dialog.key(&changed, accept, true).is_none());
+            assert!(!dialog.active(&changed, None));
+            let reply = dialog.key(&state, accept, true).unwrap();
+            assert_eq!(reply["action"], "confirm.accept");
+            assert_eq!(reply["pane"], "shell");
+            assert_eq!(reply["args"]["id"], 6);
+        }
+    }
+
+    #[test]
     fn close_requires_the_active_target() {
         let mut state = state();
+        state["pane"] = Value::Null;
+        assert!(CloseDialog::start(&state, CloseTarget::FocusedPane, 21).is_err());
         state["window"] = Value::Null;
         assert!(CloseDialog::start(&state, CloseTarget::Tab, 21).is_err());
         assert!(CloseDialog::start(&state, CloseTarget::Session, 21).is_ok());

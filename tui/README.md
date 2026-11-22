@@ -53,6 +53,7 @@ fi
 | Alt+Shift+Left / Right | Move the active tab one place left or right |
 | F5 | Open a shell in a new tab |
 | Shift+F5 | Ask to close the active tab |
+| Shift+F9 | Ask to close the focused pane or its tab if it has only one pane |
 | Shift+F6 / Shift+F7 / Shift+F8 | Rename the active session, tab, or focused pane |
 | F6 | Switch input between the sidebar and the terminal |
 | F7 | Cycle pane focus |
@@ -68,8 +69,8 @@ Directional focus stops at the edge of the split layout. Remap it with
 Tab moves keep the same tab active and stop at the ends of the tab strip.
 Remap them with `move_tab_left` and `move_tab_right` in `[keys]`.
 
-Close prompts name the session or tab and explain what will stop. Press Y to
-confirm, or Enter or Esc to cancel.
+Close prompts name the pane, tab, or session and explain what will stop. Press Y
+to confirm, or Enter or Esc to cancel. Remap Shift+F9 with `close_pane` in `[keys]`.
 
 Rename prompts capture the active target. Edit the label or clear it with
 Ctrl+U, then press Enter to send the change. An empty tab or pane label restores
