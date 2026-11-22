@@ -13,6 +13,9 @@ From the repository root, use mise for the pinned Rust and Zig versions and
 mkdir -p "$PWD/dist"
 (
   export PKGDEST="$PWD/dist"
+  BUILDDIR=$(mktemp -d)
+  export BUILDDIR
+  trap 'rm -rf -- "$BUILDDIR"' EXIT
   cd tui
   mise exec -- makepkg --clean
 )
@@ -84,6 +87,11 @@ sessions. Run the TUI tests and check navigation, typing, resize, and exit in
 private Foot. Run the [Qt verification driver](../qt/README.md#verification-driver)
 with the same backend revision. Develop Qt performance changes separately
 from the TUI release branch.
+
+Fetch changes from `upstream` and do the merge in a clean worktree based on
+`origin/master`. Send the result to the fork through a PR. The
+[upstream maintenance guide](../docs/qt-upstream-maintenance.md#update-procedure)
+has the worktree commands and Qt test setup.
 
 ## Settings and themes
 
