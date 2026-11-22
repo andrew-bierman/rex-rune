@@ -19,7 +19,7 @@ mkdir -p "$PWD/dist"
   cd tui
   mise exec -- makepkg --clean
 )
-sudo pacman -U dist/rex-tui-0.1.0-12-x86_64.pkg.tar.zst
+sudo pacman -U dist/rex-tui-0.1.0-13-x86_64.pkg.tar.zst
 rex-tui
 ```
 
@@ -55,10 +55,14 @@ fi
 | Shift+F6 / Shift+F7 / Shift+F8 | Rename the active session, tab, or focused pane |
 | F6 | Switch input between the sidebar and the terminal |
 | F7 | Cycle pane focus |
+| Ctrl+Alt+Arrow | Focus the adjacent pane in that direction |
 | F8 / F9 | Split the focused pane right or down |
 | Ctrl+Shift+Arrow | Move a divider next to the focused pane |
 | F10 | Exit while leaving server sessions running |
 | Alt+PageUp / Alt+PageDown | Scroll the active pane back or forward |
+
+Directional focus stops at the edge of the split layout. Remap it with
+`focus_left`, `focus_right`, `focus_up`, and `focus_down` in `[keys]`.
 
 Close prompts name the session or tab and explain what will stop. Press Y to
 confirm, or Enter or Esc to cancel.
@@ -239,6 +243,11 @@ A mouse-tracking application in the selected pane receives wheel events.
 Use **Alt+PageUp** or **Alt+PageDown** for local scrollback in the active
 pane, including with mouse capture off. Typing returns to live output.
 Remap these shortcuts with `scroll_up` and `scroll_down` in `[keys]`.
+
+With mouse capture off, Foot can translate the wheel into Up and Down,
+which may step through shell or chat history. For pane wheel scrolling
+with click-to-focus and menus disabled, set `[selection] mouse = true`
+and leave `[experimental] mouse_actions = false`.
 
 ### Experimental mouse focus and pane menu
 

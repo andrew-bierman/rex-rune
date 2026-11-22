@@ -304,7 +304,7 @@ fn reload_settings(screen: &mut ui::Screen, path: &Path) -> String {
     }
 }
 
-fn focus_clicked_pane(
+fn focus_pane(
     state: &Value,
     screen: &mut ui::Screen,
     backend: &mut Backend,
@@ -391,7 +391,7 @@ fn run(
                 }
                 FocusStatus::Rejected => {
                     pending_focus = None;
-                    problem = "The clicked pane could not be focused".into();
+                    problem = "The pane could not be focused".into();
                     screen.dirty = true;
                 }
             }
@@ -562,7 +562,7 @@ fn run(
                     if let Some(menu) = screen.pane_menu.take() {
                         match choice {
                             Choice::Focus => {
-                                pending_focus = focus_clicked_pane(
+                                pending_focus = focus_pane(
                                     &state,
                                     &mut screen,
                                     backend,
@@ -668,13 +668,8 @@ fn run(
                         {
                             backend.send(request)?;
                         }
-                        pending_focus = focus_clicked_pane(
-                            &state,
-                            &mut screen,
-                            backend,
-                            &mut request_id,
-                            target,
-                        )?;
+                        pending_focus =
+                            focus_pane(&state, &mut screen, backend, &mut request_id, target)?;
                     }
                     PointerAction::Menu(menu) => screen.pane_menu = Some(menu),
                 }
@@ -779,6 +774,20 @@ fn run(
                     ) => {
                         if let Some(request) = resize_split(&state, action, key.kind) {
                             backend.send(request)?;
+                        }
+                    }
+                    Some(
+                        action @ (Action::FocusLeft
+                        | Action::FocusRight
+                        | Action::FocusUp
+                        | Action::FocusDown),
+                    ) => {
+                        if key.kind == KeyEventKind::Press
+                            && let Some(target) = screen.directional_pane(&state, action)
+                        {
+                            pending_focus =
+                                focus_pane(&state, &mut screen, backend, &mut request_id, target)?;
+                            screen.dirty = true;
                         }
                     }
                     Some(action @ (Action::ScrollUp | Action::ScrollDown)) => {

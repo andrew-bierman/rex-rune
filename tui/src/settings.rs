@@ -38,10 +38,14 @@ pub enum Action {
     CopySelection,
     ScrollUp,
     ScrollDown,
+    FocusLeft,
+    FocusRight,
+    FocusUp,
+    FocusDown,
     Quit,
 }
 
-const DEFAULT_KEYS: [(Action, &str); 23] = [
+const DEFAULT_KEYS: [(Action, &str); 27] = [
     (Action::Settings, "F1"),
     (Action::NewSession, "F2"),
     (Action::PreviousTab, "F3"),
@@ -65,6 +69,10 @@ const DEFAULT_KEYS: [(Action, &str); 23] = [
     (Action::RenameSession, "Shift+F6"),
     (Action::RenameTab, "Shift+F7"),
     (Action::RenamePane, "Shift+F8"),
+    (Action::FocusLeft, "Ctrl+Alt+Left"),
+    (Action::FocusRight, "Ctrl+Alt+Right"),
+    (Action::FocusUp, "Ctrl+Alt+Up"),
+    (Action::FocusDown, "Ctrl+Alt+Down"),
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -376,6 +384,10 @@ impl Settings {
                         | Action::RenameSession
                         | Action::RenameTab
                         | Action::RenamePane
+                        | Action::FocusLeft
+                        | Action::FocusRight
+                        | Action::FocusUp
+                        | Action::FocusDown
                 );
             let label = binding.unwrap_or_else(|| fallback.into());
             if label.eq_ignore_ascii_case("none") {
@@ -495,6 +507,24 @@ pub mod tests {
         assert_eq!(settings.shortcut(Action::RenameSession), None);
         assert_eq!(settings.shortcut(Action::RenameTab), Some("F14"));
         assert_eq!(settings.shortcut(Action::RenamePane), Some("Shift+F8"));
+    }
+
+    #[test]
+    fn directional_focus_defaults_allow_existing_overrides_and_custom_chords() {
+        let file = toml::from_str("[keys]\nprevious_tab = \"Ctrl+Alt+Left\"\nfocus_up = \"Alt+u\"")
+            .unwrap();
+        let settings = Settings::from_file(file, Path::new("")).unwrap();
+        assert_eq!(settings.shortcut(Action::FocusLeft), None);
+        assert_eq!(
+            settings.shortcut(Action::PreviousTab),
+            Some("Ctrl+Alt+Left")
+        );
+        assert_eq!(settings.shortcut(Action::FocusUp), Some("Alt+u"));
+        assert_eq!(
+            settings.shortcut(Action::FocusRight),
+            Some("Ctrl+Alt+Right")
+        );
+        assert_eq!(settings.shortcut(Action::NextPane), Some("F7"));
     }
 
     #[test]
