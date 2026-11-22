@@ -68,10 +68,23 @@ fn pair_address(model: &HostModel) -> Option<String> {
         .filter(|s| s.starts_with("https://"))
         .map(|s| s.trim_end_matches('/').to_owned())
 }
+
+fn setup_target(model: &HostModel, endpoint: &str) -> Option<ssh::Target> {
+    if model.connected {
+        return None;
+    }
+    let problem = model.ssh_problem.as_ref()?;
+    let target = ssh::Target::parse(endpoint).ok().flatten()?;
+    (target.setup_offer(problem) == Some(ssh::SetupOffer::Start)).then_some(target)
+}
+
 impl Server {
     pub fn observe(&mut self, host: &str, model: &HostModel, endpoint: &str) {
         if self.pending.as_ref().is_some_and(|p| {
-            p.host != host || p.epoch != model.connection_epoch || p.endpoint != endpoint
+            p.host != host
+                || p.epoch != model.connection_epoch
+                || p.endpoint != endpoint
+                || (p.setup && setup_target(model, endpoint).is_none())
         }) {
             self.pending = None;
         }
@@ -111,11 +124,9 @@ impl Server {
             _ => anyhow::bail!("unknown server operation"),
         };
         let command = if setup {
-            ensure!(
-                model.ssh_server_missing && !model.connected,
-                "SSH setup is available only after a missing-server report"
-            );
-            let target = ssh::Target::parse(endpoint)?.context("SSH setup requires an SSH host")?;
+            let target = setup_target(model, endpoint).context(
+                "Start requires a missing default server on a trusted SSH host with Rex installed",
+            )?;
             ssh::setup::command_preview(&target)?
         } else {
             ensure!(
@@ -156,7 +167,7 @@ impl Server {
         );
         if pending.setup {
             ensure!(
-                model.ssh_server_missing && !model.connected,
+                setup_target(model, endpoint).is_some(),
                 "setup target changed"
             );
             Ok(Effect::Setup {
@@ -201,6 +212,88 @@ impl Server {
             .map(|d| d.as_secs());
         let listeners: Vec<Value> = process.into_iter().flat_map(|p| &p.listeners).map(|l| json!({"transport":l.transport,"address":address(&l.endpoint),"primary":l.primary})).collect();
         let pair = self.pair.clone().unwrap_or(Value::Null);
-        json!({"host":host,"epoch":model.connection_epoch,"connected":model.connected,"status":if model.connected {"Reported on this connection"} else {"Disconnected · last reported"},"version":info.rex_version(),"platform":build.and_then(|b| b.platform.as_deref()),"commit":build.and_then(|b| b.commit.as_deref()),"built_at":build.and_then(|b| b.built_at.as_deref()),"dirty":build.and_then(|b| b.dirty),"api":info.api_revisions,"pid":process.and_then(|p| p.pid),"instance_id":process.and_then(|p| p.instance_id.as_deref()),"host_id":process.and_then(|p| p.host_id.as_deref()),"tailscale_state":process.and_then(|p| p.tailscale.as_ref()).map(|t| t.state.as_str()),"started_at":process.and_then(|p| p.started_at.as_deref()),"sessions":process.and_then(|p| p.session_count),"uptime_seconds":uptime,"listeners":listeners,"can_pair":pair_address(model).is_some(),"can_stop":model.connected && (endpoint.starts_with("unix://") || endpoint.starts_with("ssh://")),"can_setup":model.ssh_server_missing && !model.connected && ssh::Target::parse(endpoint).ok().flatten().is_some_and(|t| ssh::setup::start_args(&t).is_ok()),"pair":pair,"stop_result":model.server_stop_result})
+        json!({"host":host,"epoch":model.connection_epoch,"connected":model.connected,"status":if model.connected {"Reported on this connection"} else {"Disconnected · last reported"},"version":info.rex_version(),"platform":build.and_then(|b| b.platform.as_deref()),"commit":build.and_then(|b| b.commit.as_deref()),"built_at":build.and_then(|b| b.built_at.as_deref()),"dirty":build.and_then(|b| b.dirty),"api":info.api_revisions,"pid":process.and_then(|p| p.pid),"instance_id":process.and_then(|p| p.instance_id.as_deref()),"host_id":process.and_then(|p| p.host_id.as_deref()),"tailscale_state":process.and_then(|p| p.tailscale.as_ref()).map(|t| t.state.as_str()),"started_at":process.and_then(|p| p.started_at.as_deref()),"sessions":process.and_then(|p| p.session_count),"uptime_seconds":uptime,"listeners":listeners,"can_pair":pair_address(model).is_some(),"can_stop":model.connected && (endpoint.starts_with("unix://") || endpoint.starts_with("ssh://")),"can_setup":setup_target(model, endpoint).is_some(),"pair":pair,"stop_result":model.server_stop_result})
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn missing_server(rex: bool) -> ssh::Problem {
+        ssh::Problem::NoServer(ssh::Facts {
+            user: "fixture".into(),
+            os: "Linux".into(),
+            uid: Some(1000),
+            rex,
+        })
+    }
+
+    #[test]
+    fn qt_setup_offers_only_personal_start_for_trusted_hosts_with_rex() {
+        let endpoint = "ssh://fixture";
+        let mut server = Server::default();
+        for problem in [
+            None,
+            Some(ssh::Problem::UnknownKey),
+            Some(ssh::Problem::ChangedKey),
+            Some(missing_server(false)),
+        ] {
+            let model = HostModel {
+                ssh_problem: problem,
+                ..HostModel::default()
+            };
+            assert_eq!(
+                server.snapshot("host", &model, endpoint)["can_setup"],
+                false
+            );
+            assert!(
+                server
+                    .prepare("setup", "host", &model, endpoint, 1)
+                    .is_err()
+            );
+        }
+
+        let mut model = HostModel {
+            ssh_problem: Some(missing_server(true)),
+            ..HostModel::default()
+        };
+        for custom in ["unix:///private/server.sock", "ssh://fixture/custom.sock"] {
+            assert_eq!(server.snapshot("host", &model, custom)["can_setup"], false);
+            assert!(server.prepare("setup", "host", &model, custom, 1).is_err());
+        }
+        assert_eq!(server.snapshot("host", &model, endpoint)["can_setup"], true);
+        assert!(server.prepare("setup", "host", &model, endpoint, 1).is_ok());
+        assert_eq!(
+            server.confirm("host", &model, endpoint, 1).unwrap(),
+            Effect::Setup {
+                endpoint: endpoint.into()
+            }
+        );
+
+        model.connected = true;
+        assert_eq!(
+            server.snapshot("host", &model, endpoint)["can_setup"],
+            false
+        );
+    }
+
+    #[test]
+    fn qt_setup_confirmation_expires_when_ssh_facts_change() {
+        let mut server = Server::default();
+        let endpoint = "ssh://fixture";
+        let mut model = HostModel {
+            ssh_problem: Some(missing_server(true)),
+            ..HostModel::default()
+        };
+        assert!(server.prepare("setup", "host", &model, endpoint, 1).is_ok());
+        model.ssh_problem = Some(missing_server(false));
+        assert!(server.confirm("host", &model, endpoint, 1).is_err());
+        model.ssh_problem = Some(missing_server(true));
+        assert!(server.prepare("setup", "host", &model, endpoint, 2).is_ok());
+        model.ssh_problem = Some(ssh::Problem::ChangedKey);
+        server.observe("host", &model, endpoint);
+        assert!(!server.confirmation_valid(2));
+        assert!(server.confirm("host", &model, endpoint, 2).is_err());
     }
 }

@@ -228,7 +228,7 @@ fn observed_active_host_round_trips_the_last_host_preference() {
 
 #[test]
 fn upstream_connection_failures_and_missing_ssh_fact_remain_visible_without_starting_workers() {
-    use rex_rune::connection::HostModel;
+    use rex_rune::{connection::HostModel, ssh};
     let settings = settings();
     let mut hosts = Hosts::new(&settings);
     assert!(hosts.slots.iter().all(|slot| slot.connection.is_none()));
@@ -239,18 +239,38 @@ fn upstream_connection_failures_and_missing_ssh_fact_remain_visible_without_star
         rex_rune::transport::MIN_API_REVISION,
         rex_rune::transport::API_REVISION
     );
-    for (status, ssh_server_missing) in [
-        ("Disconnected · Connection refused (os error 111)", false),
+    for (status, ssh_problem, ssh_server_missing) in [
+        (
+            "Disconnected · Connection refused (os error 111)",
+            None,
+            false,
+        ),
         (
             "Disconnected · No Rex server found on fixture: attachment never starts a server",
+            Some(ssh::Problem::NoServer(ssh::Facts {
+                user: "fixture".into(),
+                os: "Linux".into(),
+                uid: Some(1000),
+                rex: true,
+            })),
             true,
         ),
-        (unsupported.as_str(), false),
+        (
+            "Disconnected · Unknown SSH host key",
+            Some(ssh::Problem::UnknownKey),
+            false,
+        ),
+        (
+            "Disconnected · Changed SSH host key",
+            Some(ssh::Problem::ChangedKey),
+            false,
+        ),
+        (unsupported.as_str(), None, false),
     ] {
         hosts.slots[0].model = HostModel {
             connected: false,
             status: status.into(),
-            ssh_server_missing,
+            ssh_problem,
             ..Default::default()
         };
         let projection = hosts.state(&settings);

@@ -1,7 +1,7 @@
 #[path = "../qt/backend/server.rs"]
 #[allow(dead_code)]
 mod server;
-use rex_rune::connection::HostModel;
+use rex_rune::{connection::HostModel, ssh};
 use server::{Effect, Server};
 #[test]
 fn confirmation_is_captured_consumed_and_cancelled() {
@@ -67,7 +67,12 @@ fn stale_connection_and_ordinary_attachment_cannot_start() {
             .prepare("setup", "one", &model, "ssh://fixture", 1)
             .is_err()
     );
-    model.ssh_server_missing = true;
+    model.ssh_problem = Some(ssh::Problem::NoServer(ssh::Facts {
+        user: "fixture".into(),
+        os: "Linux".into(),
+        uid: Some(1000),
+        rex: true,
+    }));
     let preview = state
         .prepare("setup", "one", &model, "ssh://fixture", 2)
         .unwrap();
