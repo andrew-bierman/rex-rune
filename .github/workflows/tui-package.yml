@@ -1,0 +1,59 @@
+name: rex-tui Arch package
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/tui-package.yml
+      - Cargo.lock
+      - Cargo.toml
+      - build.rs
+      - mise.toml
+      - qt/backend/**
+      - src/**
+      - tui/**
+      - vendor/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  arch-package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build and install in a clean Arch container
+        run: |
+          mkdir -p dist
+          docker run --rm \
+            --mount "type=bind,src=$PWD,dst=/source,readonly" \
+            --mount "type=bind,src=$PWD/dist,dst=/out" \
+            archlinux:base-devel bash -euc '
+              pacman -Syu --noconfirm --needed git mise
+              useradd --create-home builder
+              mkdir /build
+              cp -a /source/. /build/
+              chown -R builder:builder /build
+              runuser -u builder -- bash -euc "
+                cd /build
+                mise trust
+                mise install
+                mise exec -- cargo test --locked --manifest-path tui/Cargo.toml
+                cd tui
+                PKGDEST=/build/dist mise exec -- makepkg --clean
+              "
+              packages=(/build/dist/rex-tui-*.pkg.tar.zst)
+              test "${#packages[@]}" -eq 1
+              pacman -U --noconfirm "${packages[0]}"
+              rex-tui --help
+              /usr/lib/rex-tui/rex-qt-backend --version
+              install -m644 "${packages[0]}" /out/
+            '
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rex-tui-arch-x86_64
+          path: dist/rex-tui-*.pkg.tar.zst
+          if-no-files-found: error
