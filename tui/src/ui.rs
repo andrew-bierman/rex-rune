@@ -120,9 +120,6 @@ impl Screen {
             KeyCode::Home => self.selected = 0,
             KeyCode::End => self.selected = last,
             KeyCode::Enter => {
-                if state["hosts"]["pending"] == true {
-                    return None;
-                }
                 let row = rows.get(self.selected)?;
                 let (action, args) = match row.session {
                     Some(session) => (
@@ -171,11 +168,7 @@ impl Screen {
         let area = frame.area();
         self.pane_sizes.clear();
         if area.width < 38 || area.height < 8 {
-            frame.render_widget(
-                Paragraph::new("Enlarge the terminal to use rex-tui.")
-                    .style(Style::new().fg(MUTED)),
-                area,
-            );
+            frame.render_widget(Paragraph::new("Enlarge the terminal to use rex-tui."), area);
             return;
         }
         let [body, footer] =
@@ -202,7 +195,7 @@ impl Screen {
                 Paragraph::new(vec![
                     Line::raw(""),
                     Line::styled(empty, Style::new().bold()),
-                    Line::styled(help, Style::new().fg(MUTED)),
+                    Line::raw(help),
                 ])
                 .centered(),
                 terminal,
@@ -234,16 +227,28 @@ impl Screen {
             Paragraph::new(vec![
                 Line::from(vec![
                     Span::styled(
-                        if self.sidebar { " NAV  " } else { " TERM " },
+                        if self.sidebar {
+                            " Sidebar  "
+                        } else {
+                            " Terminal  "
+                        },
                         Style::new().fg(ACCENT).bold(),
                     ),
-                    Span::raw("F6 Focus  F3/4 Tabs  F7 Pane  F10 Exit"),
+                    Span::raw(if self.sidebar {
+                        "↑/↓ Move  Enter Open  F6 Type"
+                    } else {
+                        "F6 Browse  F3/4 Tabs  F7 Pane"
+                    }),
                 ]),
                 Line::from(vec![
-                    Span::raw(" F2 Session  F5 Tab  F8/9 Split  "),
+                    Span::raw(" F2 Session  F5 Tab  F8/9 Split  F10 Exit  "),
                     Span::styled(
                         status,
-                        Style::new().fg(if problem.is_empty() { MUTED } else { WARNING }),
+                        if problem.is_empty() {
+                            Style::new()
+                        } else {
+                            Style::new().fg(WARNING)
+                        },
                     ),
                 ]),
             ]),
@@ -331,7 +336,7 @@ fn draw_tabs(frame: &mut Frame<'_>, area: Rect, state: &Value) {
         .find(|host| host["active"] == true);
     let title = active.map(label).unwrap_or_else(|| "Workspace".into());
     let block = Block::default()
-        .title(Line::styled(format!(" {title} "), Style::new().fg(MUTED)))
+        .title(Line::raw(format!(" {title} ")))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::new().fg(MUTED));
@@ -339,7 +344,7 @@ fn draw_tabs(frame: &mut Frame<'_>, area: Rect, state: &Value) {
     frame.render_widget(block, area);
     let windows = items(&state["windows"]);
     let tabs = if windows.is_empty() {
-        vec![Span::styled("  No tab selected", Style::new().fg(MUTED))]
+        vec![Span::raw("  No tab selected")]
     } else {
         let selected = windows
             .iter()
@@ -411,22 +416,23 @@ fn draw_pane(frame: &mut Frame<'_>, area: Rect, pane: &Value, focused: bool) -> 
     let block = Block::default()
         .title(Line::styled(
             format!(" {} {} ", if focused { "▸" } else { "·" }, label(pane)),
-            Style::new().fg(if focused { ACCENT } else { MUTED }),
+            if focused {
+                Style::new().fg(ACCENT).bold()
+            } else {
+                Style::new()
+            },
         ))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(if focused { ACCENT } else { MUTED }))
-        .style(Style::new().bg(background));
+        .border_style(Style::new().fg(if focused { ACCENT } else { MUTED }));
     let inner = block.inner(area);
     frame.render_widget(block, area);
     if !snapshot.is_object() {
-        frame.render_widget(
-            Paragraph::new("  Waiting for terminal…").style(Style::new().fg(MUTED)),
-            inner,
-        );
+        frame.render_widget(Paragraph::new("  Waiting for terminal…"), inner);
         return inner;
     }
     let buffer = frame.buffer_mut();
+    buffer.set_style(inner, Style::new().bg(background));
     for (y, row) in items(&snapshot["cells"])
         .iter()
         .take(inner.height.into())
@@ -491,7 +497,7 @@ mod tests {
     #[test]
     fn sidebar_cursor_tracks_tab_identity_across_inventory_updates() {
         let mut state = json!({
-            "session": "s", "window": "b", "hosts": {"rows": [{
+            "session": "s", "window": "a", "hosts": {"pending": true, "rows": [{
                 "id": "h", "epoch": 4, "active": true, "sessions": [{
                     "id": "s", "opened": true, "tabs": [{"id": "a"}, {"id": "b"}]
                 }]
@@ -506,8 +512,8 @@ mod tests {
         assert_eq!(request["host"], "h");
         assert_eq!(request["args"], json!({"session": "s", "window": "b"}));
         let rows = rows(&state);
-        assert!(!rows[3].active(&state));
-        assert!(rows[4].active(&state));
+        assert!(rows[3].active(&state));
+        assert!(!rows[4].active(&state));
     }
 
     #[test]
