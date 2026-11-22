@@ -391,7 +391,7 @@ impl Screen {
             ),
             Span::raw(if self.sidebar {
                 format!(
-                    "↑/↓ Move  ←/→ Fold  Enter Open  {}",
+                    "↑↓ Move  ←→ Fold  ↵ Open  {}",
                     self.hint(Action::ToggleFocus, "Type")
                 )
             } else {
@@ -419,7 +419,7 @@ impl Screen {
             .into_iter()
             .filter(|hint| !hint.is_empty())
             .collect::<Vec<_>>()
-            .join("  "),
+            .join(" "),
         );
         let status = Span::styled(
             status,
