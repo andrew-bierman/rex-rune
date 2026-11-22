@@ -1,83 +1,73 @@
 # rex-tui
 
-A terminal workspace client for [Rex](https://www.superlogical.com/rex), built
-with [Ratatui](https://ratatui.rs/). Browse hosts, sessions, and tabs in a
-keyboard-driven sidebar. Open shells, split and resize panes, and reattach
-from another client while programs keep running on the Rex server.
+An open-source, keyboard-first terminal client for [Rex](https://www.superlogical.com/rex), built with [Ratatui](https://ratatui.rs/). Browse hosts, sessions, and tabs from a sidebar, then work in split panes. Rex keeps your sessions running when you detach.
 
-![rex-tui in Foot with a host and session tree, three tabs, and split panes for a build shell, service log, and change notes](docs/images/rex-tui-demo.png)
+[Install](#install) · [Quick start](#quick-start) · [User guide](tui/README.md) · [Roadmap](#roadmap) · [Contributing](CONTRIBUTING.md)
 
-Fictional workspace shown in Foot. [Reproduce the screenshot](tui/README.md#capture-the-demo).
+![rex-tui in Foot with a host and session sidebar, three tabs, and a split workspace showing a build shell, service log, and change notes](docs/images/rex-tui-demo.png)
 
-`rex-tui` is the main frontend in this fork. The [Qt Quick frontend](qt/README.md)
-is super alpha, with its performance work tracked separately.
+A fictional workspace rendered by rex-tui in Foot. [Reproduce the screenshots](tui/README.md#capture-the-demo).
 
-## Get started
+## Install
 
-On Arch Linux or Omarchy, download the x86_64 `.pkg.tar.zst` from
-[releases](https://github.com/andrew-bierman/rex-tui/releases) and install it
-with `sudo pacman -U <downloaded-package>`. The package includes the client
-and its matching backend. See the [build and install guide](tui/README.md)
-to build it from source.
+**Arch Linux and Omarchy (x86_64).** Download the `.pkg.tar.zst` from the newest [preview release](https://github.com/andrew-bierman/rex-tui/releases). In the directory containing just the downloaded package, run:
 
-Launch `rex-tui` in Foot or another terminal. It uses your local Rex server
-by default. Open a host with **Enter**, press **F2** to create a session with
-a shell, then press **F6** to type. The [TUI guide](tui/README.md) covers
-remote hosts, keyboard controls, and alternate profiles.
+```sh
+sudo pacman -U ./rex-tui-*.pkg.tar.zst
+```
 
-A [personal Rex server started over SSH](docs/hosts.md#ssh-setup) runs until
-it is stopped or the host restarts. On Linux with systemd, logging out also
-ends that server and its sessions unless lingering is enabled for the login.
+The package includes rex-tui and its matching backend. For a source build, follow the [build and install guide](tui/README.md#install-on-arch-linux-and-omarchy).
 
-## Customize
+## Quick start
 
-Press **F1** to edit or reload `settings.toml`. Set the sidebar size and
-position, change pane borders and headers, remap shortcuts, and choose a
-theme. The chrome and default pane colors follow Foot's palette, including
-the active Omarchy theme. The TUI guide includes [configuration and theme
-examples](tui/README.md#settings-and-themes).
+1. Start your local Rex server or have the remote endpoint ready. The Linux install instructions require a Discord sign-in. [Rex server setup on Linux](https://www.superlogical.com/rex/docs/linux/installation).
+2. Run `rex-tui` in Foot or another terminal. It connects to your local Rex server by default. See the [remote hosts and profiles guide](tui/README.md#hosts-and-profiles) for other servers.
+3. Press **F2** to create a session on the active host. Use the sidebar arrows and **Enter** to open an existing session or tab.
+
+![rex-tui first-run screen with a connected Local Rex host and F2 shown as the shortcut to create the first session](docs/images/rex-tui-first-run.png)
+
+| Key | Action |
+| --- | --- |
+| **F6** | Switch between the sidebar and shell input |
+| **F3 / F4** | Switch tabs |
+| **F5** | Open a shell in a new tab |
+| **F8 / F9** | Split the focused pane right or down |
+| **Ctrl+Alt+Arrow** | Focus a neighboring pane |
+| **F10** | Detach and leave sessions running |
+
+[See all shortcuts](tui/README.md#controls).
+
+## What works now
+
+- **Workspaces.** Browse and fold the host tree, create and rename sessions, open and reorder shell tabs, and confirm before closing a tab or session.
+- **Panes.** Split and resize panes with the keyboard, move focus by direction, rename a pane, and scroll its history with **Alt+PageUp / Alt+PageDown**. The client also resizes visible panes it owns when the terminal window changes size.
+- **Input and clipboard.** Type and paste into a focused shell. Foot can copy text from its native selection. Opt in to pane selection, click-to-focus, a pane context menu, or the local input composer.
+- **Appearance and keys.** Open **F1** to edit or reload settings. Remap shortcuts, position the sidebar, change pane borders and headers, and select a named theme. Chrome and default pane colors follow the terminal palette. [ANSI palette inheritance](tui/README.md#ansi-palette) is opt-in.
+
+A [personal Rex server started over SSH](docs/hosts.md#ssh-setup) runs until stopped or the host restarts. On systemd hosts, logging out ends the server and its sessions unless lingering is enabled.
 
 ## Roadmap
 
-### Available in the Arch preview
+The roadmap takes its cues from the official [Rex for Mac actions](https://www.superlogical.com/rex/docs/reference/mac-actions) and [settings](https://www.superlogical.com/rex/docs/reference/mac-settings). Keyboard workflows come first. Changes to the published preview are verified in private Foot against disposable Rex sessions.
 
-- Browse and fold hosts and sessions, open tabs, and switch focus between the sidebar and a shell.
-- Rename sessions, tabs, and panes or reorder tabs with remappable keyboard shortcuts.
-- Move focus between split panes with Ctrl+Alt+Arrow, or cycle them with F7.
-- Create sessions and shell tabs, split panes right or down, resize dividers with the keyboard, and confirm before closing a tab or ending a session.
-- Type and paste into the focused pane, resize panes when the terminal changes size, and leave sessions running when the client exits.
-- Enable pane-only mouse selection and copy while keeping Foot's native Shift-drag selection.
-- Try opt-in click-to-focus and a right-click menu for pane focus, copy, and splits.
-- Edit and reload TOML settings, choose named themes, inherit terminal colors, customize the sidebar and pane chrome, and remap shortcuts.
-- Try an opt-in input composer that edits a command locally and pastes it into the selected shell.
-- Install the TUI and its matching backend from one x86_64 Arch package. The package builds in clean Arch CI and is exercised in private Foot against disposable Rex sessions.
-
-### Toward parity with Rex for Mac
-
-Keyboard access comes first for everyday Rex workflows. Mouse actions are
-optional and experimental. Use the
-[Mac action reference](https://www.superlogical.com/rex/docs/reference/mac-actions)
-and the [Mac settings reference](https://www.superlogical.com/rex/docs/reference/mac-settings)
-as the comparison. Track each workflow through a private TUI test before
-marking it available. Terminal and Linux equivalents cover desktop features
-such as notifications and opening links.
-
-| Area | Remaining TUI work |
+| Area | What’s planned |
 | --- | --- |
-| Mouse and clipboard | Add mouse divider resizing, tab actions in the context menu, and mouse forwarding for programs that request it. |
-| Scrollback and search | Find within a pane, jump between prompts, and add keyboard copy mode with character, line, and block selection. |
-| Navigation | Add a searchable command palette, a global switcher for sessions and tabs, sidebar filtering, and recent-tab history. |
-| Tabs and panes | Add directional pane movement, pane zoom and balancing, close-pane and close-others actions, and support for floating panes as the shared backend gains it. |
-| Activity | Show program status on tabs, group work by session or priority, and add opt-in desktop notifications and sounds. |
-| Hosts and files | Manage hosts from the TUI, guide SSH setup and device pairing, and add remote path browsing, file insertion, and link opening. |
-| Terminal settings | Add a theme picker and theme imports, surface configurable key sequences and modes, and support the remaining terminal display preferences where Foot can express them. |
+| Navigation | Searchable command palette, global session and tab switcher, sidebar filtering, and recent-tab history |
+| Workspace controls | Move, zoom, balance, and close panes, plus close-others and floating panes |
+| Scrollback | Search within a pane, prompt jumps, and keyboard copy mode |
+| Activity | Tab indicators, work grouped by session or priority, and opt-in desktop notifications |
+| Hosts and files | Host management, SSH setup guidance, device pairing, paths, file insertion, and links |
+| Mouse | Divider resizing, tab context actions, and forwarding for terminal programs that request it |
+| Settings | Theme picking and import, key sequences and modes, and terminal display preferences |
 
-The input composer and opt-in terminal preloading are lower priorities than
-keyboard parity.
+After the keyboard workflows, the roadmap includes a richer input composer and optional terminal preloading.
 
-## Upstream
+## Contribute
 
-This is a fork of [Rex Rune](https://github.com/shuv1337/rex-rune) with its
-own rex-tui releases. The [upstream README](https://github.com/shuv1337/rex-rune#readme)
-covers the Rune frontend. The [upstream sync checklist](tui/README.md#releases-and-upstream-sync)
-covers verification of the two fork frontends.
+See the [contribution guide](CONTRIBUTING.md) for reporting bugs, proposing changes, and sharing tested patches. The [Arch package workflow](.github/workflows/tui-package.yml) builds and installs the package in clean CI.
+
+## Upstream and license
+
+rex-tui is an independent fork of [Rex Rune](https://github.com/shuv1337/rex-rune). The upstream project maintains the [Rune frontend](https://github.com/shuv1337/rex-rune#readme). This fork also includes an [alpha Qt Quick frontend](qt/README.md). The [upstream sync guide](tui/README.md#releases-and-upstream-sync) documents how the fork takes shared core updates and tests both frontends.
+
+Project code is released under the [MIT License](LICENSE). See the [vendored dependency notes](docs/building.md#vendored-dependencies) and [icon notices](resources/icons/README.md) for licenses and attribution.
