@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify pane-only mouse selection through a packaged rex-tui and disposable Rex."""
+"""Verify rex-tui mouse interactions through a packaged launcher and disposable Rex."""
 
 import argparse
 import base64
@@ -21,7 +21,7 @@ CAPTURE_OFF = b"\x1b[?1006l\x1b[?1002l"
 SETTINGS_TITLE = "┌ Settings ".encode()
 
 
-def exercise(launcher, root, env, api):
+def exercise(launcher, root, env, api, mouse_actions):
     settings = root / "config" / "rex-tui" / "settings.toml"
     settings.write_text("[sidebar]\nwidth = 20\n")
     master, slave = pty.openpty()
@@ -70,8 +70,9 @@ def exercise(launcher, root, env, api):
         )
         sid = api("session.list")["sessions"][0]["session_id"]
         for pane, marker in zip(blocks(api, sid), ("LEFT_PANE_ONLY", "RIGHT_PANE_ONLY"), strict=True):
+            command = f"export TEST_PANE={marker}; printf '\\033[2J\\033[H{marker}\\n'"
             api("block.event", session_id=sid, block_id=pane,
-                event={"type": "paste", "payload": {"text": f"printf '\\033[2J\\033[H{marker}'; sleep 30"}})
+                event={"type": "paste", "payload": {"text": command}})
             api("block.event", session_id=sid, block_id=pane,
                 event={"type": "key", "payload": {"key": "enter", "action": "press", "mods": ""}})
         wait_for(lambda: b"LEFT_PANE_ONLY" in output and b"RIGHT_PANE_ONLY" in output, "both pane markers")
@@ -106,6 +107,51 @@ def exercise(launcher, root, env, api):
         send(b"\x1b[24~")
         pump()
         assert len(clipboard()) == copy_count, "modal leaked copy shortcut"
+        if mouse_actions:
+            settings.write_text("[sidebar]\nwidth = 20\n[selection]\nmouse = true\n"
+                                "[experimental]\nmouse_actions = true\n")
+            send(b"r\x1b")
+            time.sleep(.15)
+
+            def proof(name, expected):
+                path = root / name
+                command = f"""printf '%s' "$TEST_PANE" > '{path}'""".encode()
+                send(b"\x1b[200~" + command + b"\x1b[201~\r")
+                wait_for(lambda: path.exists() and bool(path.read_text()), name)
+                assert path.read_text() == expected, (name, path.read_text())
+
+            # Click the left pane without dragging; input reaches the acknowledged
+            # pane. Dragging in the right pane keeps the left pane's input focus.
+            send(b"\x1b[<0;24;5M\x1b[<0;24;5m")
+            wait_for(lambda: b"Terminal" in output, "focus left pane by click")
+            proof("after-click", "LEFT_PANE_ONLY")
+            count = len(clipboard())
+            send(b"\x1b[<0;52;5M\x1b[<32;76;5M\x1b[<0;76;5m\x1b[24~")
+            wait_for(lambda: len(clipboard()) == count + 1, "copy right-pane drag")
+            assert clipboard()[-1] == b"RIGHT_PANE_ONLY"
+            proof("after-drag", "LEFT_PANE_ONLY")
+
+            # An unfocused pane's menu exposes Focus but disables Split until
+            # selection has been acknowledged. Opening the menu is nonmutating.
+            start = len(output)
+            send(b"\x1b[<2;60;5M\x1b[<2;60;5m")
+            wait_for(lambda: b"Split right (unavailable)" in output[start:], "inactive pane menu")
+            send(b"\x1b[<0;62;8M\x1b[<0;62;8m")
+            pump()
+            assert len(blocks(api, sid)) == 2
+            send(b"\x1b[<0;62;6M\x1b[<0;62;6m")
+            time.sleep(.2)
+            proof("after-menu-focus", "RIGHT_PANE_ONLY")
+
+            start = len(output)
+            send(b"\x1b[<2;60;5M\x1b[<2;60;5m")
+            wait_for(lambda: b"Esc Dismiss" in output[start:], "open focused pane menu")
+            send(b"\x1b[<0;62;9M\x1b[<0;62;9m")
+            wait_for(lambda: len(blocks(api, sid)) == 3, "split down through pane menu")
+
+            start = len(output)
+            send(b"\x1bOP")
+            wait_for(lambda: SETTINGS_TITLE in output[start:], "reopen Settings after mouse actions")
         settings.write_text("[sidebar]\nwidth = 20\n")
         send(b"r")
         wait_for(lambda: CAPTURE_OFF in output, "disable mouse capture on reload")
@@ -115,6 +161,8 @@ def exercise(launcher, root, env, api):
         assert app.wait(timeout=4) == 0
         pump()
         print("Pane-only selection copied exact left-pane text across sidebar and split boundaries.")
+        if mouse_actions:
+            print("Pane clicks, drag stability, scoped menu focus, and safe split passed.")
     finally:
         if app.poll() is None:
             app.kill()
@@ -131,6 +179,7 @@ def blocks(api, session):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("launcher", type=Path, help="Path to the packaged rex-tui launcher")
+    parser.add_argument("--mouse-actions", action="store_true", help="Also check opt-in focus and menu")
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="rex-tui-selection-") as temp:
         root = Path(temp)
@@ -161,7 +210,7 @@ def main():
                     if server.poll() is not None or time.monotonic() >= deadline:
                         raise RuntimeError("Disposable Rex socket did not open")
                     time.sleep(.05)
-                exercise(args.launcher.resolve(), root, env, api)
+                exercise(args.launcher.resolve(), root, env, api, args.mouse_actions)
             finally:
                 server.terminate()
                 server.wait(timeout=5)

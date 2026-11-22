@@ -1,6 +1,7 @@
 use crate::{
     composer::Composer,
     items,
+    mouse::Menu,
     selection::{Grid, Selection},
     settings::{Action, Chrome, PaneDefaultColors, Panes, Settings, SidebarSide},
     targeted, text,
@@ -104,6 +105,7 @@ pub struct Screen {
     pub pane_sizes: Vec<(String, u16, u16)>,
     pub pane_grids: Vec<Grid>,
     pub selection: Selection,
+    pub pane_menu: Option<Menu>,
     selected: usize,
     selected_id: Option<(String, String, String)>,
     sidebar_offset: usize,
@@ -121,6 +123,7 @@ impl Default for Screen {
             pane_sizes: Vec::new(),
             pane_grids: Vec::new(),
             selection: Selection::default(),
+            pane_menu: None,
             selected: 0,
             selected_id: None,
             sidebar_offset: 0,
@@ -314,12 +317,16 @@ impl Screen {
                 frame,
                 rect,
                 pane,
-                active && !self.sidebar && !self.settings_open && self.composer.is_none(),
+                active
+                    && !self.sidebar
+                    && !self.settings_open
+                    && self.composer.is_none()
+                    && self.pane_menu.is_none(),
                 self.settings.panes,
                 self.settings.chrome,
                 self.settings.mouse_selection && self.selection.highlights(state, pane),
             );
-            if self.settings.mouse_selection
+            if (self.settings.mouse_selection || self.settings.mouse_actions)
                 && let Some(grid) = Grid::new(pane, inner)
             {
                 self.pane_grids.push(grid);
@@ -339,6 +346,16 @@ impl Screen {
         }
         if let Some(composer) = &self.composer {
             composer.draw(frame, self.settings.chrome);
+        }
+        if let Some(menu) = &self.pane_menu
+            && menu.target.visible(state, &self.pane_grids)
+        {
+            menu.draw(
+                frame,
+                state,
+                self.settings.chrome,
+                self.selection.can_copy(menu.target.id()),
+            );
         }
     }
 

@@ -211,3 +211,19 @@ Copy uses OSC 52 to write to your terminal emulator's clipboard. Foot
 enables this by default. Hold **Shift** while selecting to use Foot's native
 selection instead, including its usual copy shortcut. Mouse selection and
 its copy shortcut are off by default.
+
+### Experimental mouse focus and pane menu
+
+Enable mouse actions independently of pane-only selection:
+
+```toml
+[experimental]
+mouse_actions = true
+```
+
+Click inside a pane to focus it for typing. Dragging leaves focus alone.
+Right-click inside a pane for **Focus pane**, **Copy selection**, **Split
+right**, or **Split down**. Copy is available when you have selected text in
+that pane. Focus the pane before splitting it. Click outside the menu or
+press **Esc** to dismiss. Hold **Shift** to use Foot's native selection.
+Mouse actions are off by default.

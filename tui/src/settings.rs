@@ -256,6 +256,7 @@ fn optional_color<'de, D: serde::Deserializer<'de>>(input: D) -> Result<Option<C
 #[serde(default, deny_unknown_fields)]
 struct Experimental {
     input_composer: bool,
+    mouse_actions: bool,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -298,6 +299,7 @@ pub struct Settings {
     pub sidebar: Sidebar,
     pub panes: Panes,
     pub mouse_selection: bool,
+    pub mouse_actions: bool,
     keys: BTreeMap<Action, Binding>,
 }
 
@@ -373,6 +375,7 @@ impl Settings {
             sidebar: file.sidebar,
             panes: file.panes,
             mouse_selection: file.selection.mouse,
+            mouse_actions: file.experimental.mouse_actions,
             keys,
         })
     }
