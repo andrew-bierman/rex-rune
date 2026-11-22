@@ -1,6 +1,6 @@
 # rex-tui
 
-An open-source, keyboard-first terminal client for [Rex](https://www.superlogical.com/rex), built with [Ratatui](https://ratatui.rs/). Browse hosts, sessions, and tabs from a sidebar, then work in split panes. Rex keeps your sessions running when you detach.
+A keyboard-first terminal workspace for [Rex](https://www.superlogical.com/rex). Browse local and remote sessions, work in split panes, and pick up where you left off from another client. Your shells keep running when you detach.
 
 [Install](#install) · [Quick start](#quick-start) · [User guide](tui/README.md) · [Roadmap](#roadmap) · [Contributing](CONTRIBUTING.md)
 
@@ -10,13 +10,15 @@ A fictional workspace rendered by rex-tui in Foot. [Reproduce the screenshots](t
 
 ## Install
 
-**Arch Linux and Omarchy (x86_64).** Download the `.pkg.tar.zst` from the newest [preview release](https://github.com/andrew-bierman/rex-tui/releases). In the directory containing just the downloaded package, run:
+**Arch Linux and Omarchy (x86_64).** Copy this into your terminal to install the current preview:
 
 ```sh
-sudo pacman -U ./rex-tui-*.pkg.tar.zst
+package=rex-tui-0.1.0-16-x86_64.pkg.tar.zst
+curl -fLO "https://github.com/andrew-bierman/rex-tui/releases/download/rex-tui-v0.1.0-16/$package" &&
+  sudo pacman -U "./$package"
 ```
 
-The package includes rex-tui and its matching backend. For a source build, follow the [build and install guide](tui/README.md#install-on-arch-linux-and-omarchy).
+The package includes rex-tui and its matching backend. [Browse preview downloads](https://github.com/andrew-bierman/rex-tui/releases). For a source build, follow the [build and install guide](tui/README.md#install-on-arch-linux-and-omarchy).
 
 ## Quick start
 
@@ -66,8 +68,8 @@ After the keyboard workflows, the roadmap includes a richer input composer and o
 
 See the [contribution guide](CONTRIBUTING.md) for reporting bugs, proposing changes, and sharing tested patches. The [Arch package workflow](.github/workflows/tui-package.yml) builds and installs the package in clean CI.
 
-## Upstream and license
+## License and acknowledgments
 
-rex-tui is an independent fork of [Rex Rune](https://github.com/shuv1337/rex-rune). The upstream project maintains the [Rune frontend](https://github.com/shuv1337/rex-rune#readme). This fork also includes an [alpha Qt Quick frontend](qt/README.md). The [upstream sync guide](tui/README.md#releases-and-upstream-sync) documents how the fork takes shared core updates and tests both frontends.
+Built with [Ratatui](https://ratatui.rs/) and forked from [Rex Rune](https://github.com/shuv1337/rex-rune). The [upstream sync guide](tui/README.md#releases-and-upstream-sync) covers shared core updates. The repository also hosts an [alpha Qt Quick client](qt/README.md).
 
 Project code is released under the [MIT License](LICENSE). See the [vendored dependency notes](docs/building.md#vendored-dependencies) and [icon notices](resources/icons/README.md) for licenses and attribution.

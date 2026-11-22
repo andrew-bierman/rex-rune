@@ -108,7 +108,7 @@ palette. To inherit the 16 ANSI colors inside panes too, enable
 
 ## Capture the demo
 
-Install Foot, labwc, grim, and wtype, then pass the underlying rex-tui executable
+Install Foot, labwc, grim, wtype, ImageMagick, and Liberation Mono. Pass the underlying rex-tui executable
 from the package or your build. The capture script renders fictional state in a
 private headless compositor. It uses a fixture backend and a disposable profile.
 
@@ -119,7 +119,7 @@ python3 scripts/tui-demo-capture.py --binary /usr/lib/rex-tui/rex-tui --scene fi
 
 Run these commands from the repository root. The images are written to
 `docs/images/rex-tui-demo.png` and `docs/images/rex-tui-first-run.png`.
-Use `--output` for another destination,
+Use `--raw` to omit the presentation frame or `--output` for another destination,
 `--font` to select a Foot font, or `--compositor` and `--library-path`
 for a separate labwc build.
 
