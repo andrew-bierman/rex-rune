@@ -24,10 +24,26 @@ rex-tui
 ```
 
 The package installs the TUI and the matching backend from the same checkout.
+
+## Hosts and profiles
+
 Run `rex-tui` in Foot or another terminal. It uses
 `${XDG_CONFIG_HOME:-$HOME/.config}/rex-tui/workspace.json` and defaults to the
 local Rex server if the profile is absent. Use `rex-tui --config PATH` to select
 a profile explicitly.
+
+To connect to a remote server, add its endpoint to that profile. For example:
+
+```json
+{
+  "hosts": [
+    {"label": "Workshop", "endpoint": "ssh://you@workshop.example"}
+  ]
+}
+```
+
+For a new SSH host, verify and trust its key using OpenSSH. See the
+[host guide](../docs/hosts.md#check-the-host-key) for setup and endpoint details.
 
 To seed a new TUI profile with your existing Qt hosts, run the following once.
 It preserves a TUI profile that already exists.
@@ -92,17 +108,18 @@ palette. To inherit the 16 ANSI colors inside panes too, enable
 
 ## Capture the demo
 
-Install Foot, labwc, and grim, then pass the underlying rex-tui executable
-from the package or your build. The script renders a fixed fictional workspace
-in a private headless compositor. It does not read your Rex profiles or contact
-a Rex server.
+Install Foot, labwc, grim, and wtype, then pass the underlying rex-tui executable
+from the package or your build. The capture script renders fictional state in a
+private headless compositor. It uses a fixture backend and a disposable profile.
 
 ```sh
 python3 scripts/tui-demo-capture.py --binary /usr/lib/rex-tui/rex-tui
+python3 scripts/tui-demo-capture.py --binary /usr/lib/rex-tui/rex-tui --scene first-run
 ```
 
-Run the command from the repository root. It writes
-`docs/images/rex-tui-demo.png`. Use `--output` for another destination,
+Run these commands from the repository root. The images are written to
+`docs/images/rex-tui-demo.png` and `docs/images/rex-tui-first-run.png`.
+Use `--output` for another destination,
 `--font` to select a Foot font, or `--compositor` and `--library-path`
 for a separate labwc build.
 

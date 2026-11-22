@@ -125,15 +125,31 @@ def scene():
     }
 
 
+def first_run():
+    return {
+        "type": "state", "version": 3, "connected": True, "status": "Connected",
+        "host": "local", "epoch": 1, "sessions": [], "windows": [], "panes": [],
+        "hosts": {
+            "active": "local", "pending": False,
+            "rows": [{"id": "local", "label": "Local Rex", "connected": True, "active": True,
+                      "sessions": []}],
+        },
+    }
+
+
 def serve():
     # Only the capture runner can select this backend mode. The fixture has
     # no Rex endpoint, never opens a workspace profile, and makes no network calls.
     ready = Path(os.environ["REX_TUI_DEMO_READY"])
     print(json.dumps({"type": "hello", "version": 3}), flush=True)
-    print(json.dumps(scene()), flush=True)
+    capture_start = os.environ["REX_TUI_DEMO_SCENE"] == "first-run"
+    print(json.dumps(first_run() if capture_start else scene()), flush=True)
+    ready.with_name("state-sent").touch()
     for line in sys.stdin:
         request = json.loads(line)
-        if request.get("op") == "resize":
+        if request.get("op") == "resize" or (
+            capture_start and request.get("action") == "session.new"
+        ):
             ready.touch()
         if request.get("op") == "shutdown":
             return
@@ -151,10 +167,13 @@ def wait_for(predicate, compositor, description):
 
 def capture(args):
     binary = args.binary.resolve(strict=True)
-    output = args.output.resolve()
+    filename = "rex-tui-first-run.png" if args.scene == "first-run" else "rex-tui-demo.png"
+    output = (args.output or ROOT / "docs" / "images" / filename).resolve()
     labwc = shutil.which(args.compositor)
     if not labwc or not all(shutil.which(command) for command in ("foot", "grim")):
         raise RuntimeError("Install labwc, Foot and grim or supply --compositor")
+    if args.scene == "first-run" and not shutil.which("wtype"):
+        raise RuntimeError("Install wtype to verify the first-run screen received fixture state")
     with tempfile.TemporaryDirectory(prefix="rex-tui-demo-") as directory:
         work = Path(directory)
         for folder in ("home", "config", "cache", "state", "runtime"):
@@ -172,6 +191,7 @@ def capture(args):
             "WLR_RENDERER": "pixman",
             "WLR_HEADLESS_OUTPUTS": "1",
             "REX_TUI_DEMO_READY": str(work / "ready"),
+            "REX_TUI_DEMO_SCENE": args.scene,
         }
         if args.library_path:
             env["LD_LIBRARY_PATH"] = str(args.library_path.resolve(strict=True))
@@ -199,7 +219,20 @@ def capture(args):
                 compositor, "the private Wayland socket",
             )
             env["WAYLAND_DISPLAY"] = socket.name
-            wait_for(lambda: (work / "ready").is_file(), compositor, "the first rendered panes")
+            ready = work / "ready"
+            if args.scene == "first-run":
+                wait_for((work / "state-sent").is_file, compositor, "the fixture's first state")
+
+                def probe():
+                    if not ready.is_file():
+                        # The fixture acknowledges the action without creating a session.
+                        subprocess.run(["wtype", "-s", "125", "-k", "F2"], env=env,
+                                       check=True, timeout=4)
+                    return ready.is_file()
+
+                wait_for(probe, compositor, "the connected empty-session screen")
+            else:
+                wait_for(ready.is_file, compositor, "the first rendered panes")
             time.sleep(0.2)
             draft = work / "workspace.png"
             subprocess.run(["grim", str(draft)], env=env, check=True, timeout=5)
@@ -224,7 +257,8 @@ def main():
     cli.add_argument("--compositor", default="labwc", help="labwc command or path")
     cli.add_argument("--library-path", type=Path, help="runtime libraries for a private labwc build")
     cli.add_argument("--font", default="monospace:size=12", help="Foot font descriptor")
-    cli.add_argument("--output", type=Path, default=ROOT / "docs" / "images" / "rex-tui-demo.png")
+    cli.add_argument("--scene", choices=("workspace", "first-run"), default="workspace")
+    cli.add_argument("--output", type=Path, help="output PNG path (defaults to docs/images)")
     capture(cli.parse_args())
 
 
