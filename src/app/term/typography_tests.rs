@@ -161,6 +161,7 @@ fn drawn(text: &str, font: Typography, px: f32) -> Vec<[f32; 4]> {
             spacer_tail: false,
             fg: 0xffffff,
             bg: 0,
+            default_colors: [false; 2],
             underline_color: None,
             style: Default::default(),
             link: None,

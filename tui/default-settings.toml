@@ -9,6 +9,7 @@ side = "left"
 [panes]
 borders = true
 headers = true
+default_colors = "terminal" # Set "server" to use the Rex terminal defaults.
 
 [experimental]
 input_composer = false
