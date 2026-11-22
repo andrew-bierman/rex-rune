@@ -19,7 +19,7 @@ mkdir -p "$PWD/dist"
   cd tui
   mise exec -- makepkg --clean
 )
-sudo pacman -U dist/rex-tui-0.1.0-14-x86_64.pkg.tar.zst
+sudo pacman -U dist/rex-tui-0.1.0-15-x86_64.pkg.tar.zst
 rex-tui
 ```
 
@@ -50,6 +50,7 @@ fi
 | F2 | Create a session on the active host |
 | Shift+F2 | Ask to close the active session |
 | F3 / F4 | Switch tabs |
+| Alt+Shift+Left / Right | Move the active tab one place left or right |
 | F5 | Open a shell in a new tab |
 | Shift+F5 | Ask to close the active tab |
 | Shift+F6 / Shift+F7 / Shift+F8 | Rename the active session, tab, or focused pane |
@@ -63,6 +64,9 @@ fi
 
 Directional focus stops at the edge of the split layout. Remap it with
 `focus_left`, `focus_right`, `focus_up`, and `focus_down` in `[keys]`.
+
+Tab moves keep the same tab active and stop at the ends of the tab strip.
+Remap them with `move_tab_left` and `move_tab_right` in `[keys]`.
 
 Close prompts name the session or tab and explain what will stop. Press Y to
 confirm, or Enter or Esc to cancel.

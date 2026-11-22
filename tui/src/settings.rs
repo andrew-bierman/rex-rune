@@ -42,10 +42,12 @@ pub enum Action {
     FocusRight,
     FocusUp,
     FocusDown,
+    MoveTabLeft,
+    MoveTabRight,
     Quit,
 }
 
-const DEFAULT_KEYS: [(Action, &str); 27] = [
+const DEFAULT_KEYS: [(Action, &str); 29] = [
     (Action::Settings, "F1"),
     (Action::NewSession, "F2"),
     (Action::PreviousTab, "F3"),
@@ -73,6 +75,8 @@ const DEFAULT_KEYS: [(Action, &str); 27] = [
     (Action::FocusRight, "Ctrl+Alt+Right"),
     (Action::FocusUp, "Ctrl+Alt+Up"),
     (Action::FocusDown, "Ctrl+Alt+Down"),
+    (Action::MoveTabLeft, "Alt+Shift+Left"),
+    (Action::MoveTabRight, "Alt+Shift+Right"),
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -380,6 +384,8 @@ impl Settings {
                     | Action::FocusRight
                     | Action::FocusUp
                     | Action::FocusDown
+                    | Action::MoveTabLeft
+                    | Action::MoveTabRight
             )
         };
         let mut defaults = DEFAULT_KEYS;
@@ -503,6 +509,22 @@ pub mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn tab_move_shortcuts_are_remappable_and_do_not_replace_existing_bindings() {
+        let defaults = Settings::default();
+        assert_eq!(
+            defaults.shortcut(Action::MoveTabLeft),
+            Some("Alt+Shift+Left")
+        );
+        let file =
+            toml::from_str("[keys]\nnext_tab = \"Alt+Shift+Left\"\nmove_tab_right = \"Alt+r\"")
+                .unwrap();
+        let configured = Settings::from_file(file, Path::new("")).unwrap();
+        assert_eq!(configured.shortcut(Action::NextTab), Some("Alt+Shift+Left"));
+        assert_eq!(configured.shortcut(Action::MoveTabLeft), None);
+        assert_eq!(configured.shortcut(Action::MoveTabRight), Some("Alt+r"));
     }
 
     #[test]
