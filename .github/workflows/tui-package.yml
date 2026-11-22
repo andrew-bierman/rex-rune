@@ -49,6 +49,8 @@ jobs:
               test "${#packages[@]}" -eq 1
               pacman -U --noconfirm "${packages[0]}"
               rex-tui --help
+              rex-tui --print-default-settings > /tmp/rex-tui-settings.toml
+              rex-tui --check-settings --settings /tmp/rex-tui-settings.toml
               /usr/lib/rex-tui/rex-qt-backend --version
               install -m644 "${packages[0]}" /out/
             '
