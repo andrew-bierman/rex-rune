@@ -169,6 +169,36 @@ def exercise(launcher, root, env, api, mouse_actions):
             send(b"\x1bOF\r")  # End, Enter.
             wait_for(lambda: active_window() == second, "open second tab by keyboard")
 
+            # The second tab's recent output supplies a known live tail and
+            # older lines missing from the visible grid. Test real wheel events
+            # and modified keyboard shortcuts against those marker transitions.
+            send(b"\x1b[17~")
+            time.sleep(.2)
+            command = b"i=1; while [ \"$i\" -le 59 ]; do if [ \"$i\" -le 35 ]; then printf '%s\\n' EARLY'ZZZ'; else printf '%s\\n' BBBB'BBBB'; fi; i=$((i+1)); done; printf '%s\\n' LIVE'TAIL'"
+            send(b"\x1b[200~" + command + b"\x1b[201~\r")
+            wait_for(lambda: b"LIVETAIL" in output, "scrollback live tail")
+            older = b"EARLYZZZ"
+            wheel_up = b"\x1b[<64;24;5M"
+            wheel_down = b"\x1b[<65;24;5M"
+            start = len(output)
+            send(wheel_up * 10)
+            wait_for(lambda: older in output[start:], "pane wheel reveals older output")
+            start = len(output)
+            send(wheel_down * 10)
+            wait_for(lambda: b"LIVETAIL" in output[start:], "pane wheel returns to live tail")
+            start = len(output)
+            send(b"\x1b[5;3~" * 10)
+            wait_for(lambda: older in output[start:], "Alt+PageUp scrolls the terminal")
+            start = len(output)
+            send(b"\x1b[6;3~" * 10)
+            wait_for(lambda: b"LIVETAIL" in output[start:], "Alt+PageDown scrolls the terminal")
+            start = len(output)
+            send(wheel_up * 10)
+            wait_for(lambda: older in output[start:], "scroll before the next shell key")
+            start = len(output)
+            send(b"x")
+            wait_for(lambda: b"LIVETAIL" in output[start:], "typing returns to the live tail")
+
             start = len(output)
             send(b"\x1bOP")
             wait_for(lambda: SETTINGS_TITLE in output[start:], "reopen Settings after mouse actions")

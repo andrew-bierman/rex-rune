@@ -55,6 +55,35 @@ impl Target {
     }
 }
 
+pub(crate) fn wheel(state: &Value, grids: &[Grid], event: MouseEvent) -> Option<Value> {
+    if !event.modifiers.is_empty() {
+        return None;
+    }
+    let direction = match event.kind {
+        MouseEventKind::ScrollUp => -1,
+        MouseEventKind::ScrollDown => 1,
+        _ => return None,
+    };
+    let at = Position::new(event.column, event.row);
+    let target = Target::at(state, grids, at)?;
+    let pane = target.pane(state)?;
+    let mut request = target.scope;
+    if pane["frame"]["mouse_tracking"] == true && state["pane"] == request["pane"] {
+        // The shared backend accepts remote wheel input only for its selected pane.
+        request["op"] = json!("wheel");
+        request["payload"] = json!({
+            "x": at.x - target.grid.area.x,
+            "y": at.y - target.grid.area.y,
+            "delta_x": 0,
+            "delta_y": direction,
+        });
+    } else {
+        request["op"] = json!("scroll");
+        request["lines"] = json!(3 * direction);
+    }
+    Some(request)
+}
+
 pub(crate) struct Focus {
     target: Target,
     request_id: u64,
@@ -375,6 +404,32 @@ mod tests {
             row,
             modifiers: crossterm::event::KeyModifiers::NONE,
         }
+    }
+
+    #[test]
+    fn wheel_is_pane_scoped_and_only_selected_tracking_apps_receive_remote_ticks() {
+        let (mut state, grids) = fixture();
+        let up = mouse(MouseEventKind::ScrollUp, 37, 6);
+        let request = wheel(&state, &grids, up).unwrap();
+        assert_eq!(request["op"], "scroll");
+        assert_eq!(request["lines"], -3);
+        assert_eq!(request["pane"], "right");
+        state["panes"][1]["frame"]["mouse_tracking"] = json!(true);
+        assert_eq!(wheel(&state, &grids, up).unwrap()["op"], "scroll");
+        state["pane"] = json!("right");
+        let down = mouse(MouseEventKind::ScrollDown, 37, 6);
+        let request = wheel(&state, &grids, down).unwrap();
+        assert_eq!(request["op"], "wheel");
+        assert_eq!(
+            request["payload"],
+            json!({"x":2,"y":2,"delta_x":0,"delta_y":1})
+        );
+        let mut shift = up;
+        shift.modifiers = crossterm::event::KeyModifiers::SHIFT;
+        assert!(wheel(&state, &grids, shift).is_none());
+        assert!(wheel(&state, &grids, mouse(MouseEventKind::ScrollUp, 2, 6)).is_none());
+        state["hosts"]["pending"] = json!(true);
+        assert!(wheel(&state, &grids, up).is_none());
     }
 
     #[test]

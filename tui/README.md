@@ -57,6 +57,7 @@ fi
 | F8 / F9 | Split the focused pane right or down |
 | Ctrl+Shift+Arrow | Move a divider next to the focused pane |
 | F10 | Exit while leaving server sessions running |
+| Alt+PageUp / Alt+PageDown | Scroll the active pane back or forward |
 
 Close prompts name the session or tab and explain what will stop. Press Y to
 confirm, or Enter or Esc to cancel.
@@ -227,6 +228,12 @@ Copy uses OSC 52 to write to your terminal emulator's clipboard. Foot
 enables this by default. Hold **Shift** while selecting to use Foot's native
 selection instead, including its usual copy shortcut. Mouse selection and
 its copy shortcut are off by default.
+
+When mouse capture is enabled, the wheel scrolls the pane under the pointer.
+A mouse-tracking application in the selected pane receives wheel events.
+Use **Alt+PageUp** or **Alt+PageDown** for local scrollback in the active
+pane, including with mouse capture off. Typing returns to live output.
+Remap these shortcuts with `scroll_up` and `scroll_down` in `[keys]`.
 
 ### Experimental mouse focus and pane menu
 

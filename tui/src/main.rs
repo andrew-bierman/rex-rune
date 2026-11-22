@@ -140,6 +140,19 @@ fn create_workspace_item(state: &Value, action: Action) -> Result<Value, &'stati
     Ok(request)
 }
 
+fn scroll_active_pane(state: &Value, action: Action) -> Option<Value> {
+    if state["connected"] != true
+        || state["hosts"]["pending"] == true
+        || state["terminal"]["connected"] != true
+        || !state["pane"].is_string()
+    {
+        return None;
+    }
+    let mut request = targeted(state, "scroll");
+    request["lines"] = json!(if action == Action::ScrollUp { -3 } else { 3 });
+    Some(request)
+}
+
 fn resize_split(state: &Value, action: Action, kind: KeyEventKind) -> Option<Value> {
     if kind == KeyEventKind::Release
         || state["connected"] != true
@@ -594,8 +607,10 @@ fn run(
         }
         match input {
             Event::Resize(..) => screen.dirty = true,
-            Event::Mouse(event) if pointer_enabled => {
-                if let ui::SidebarMouse::Handled(request) = screen.sidebar_mouse(&state, event) {
+            Event::Mouse(event) if selection_enabled => {
+                if pointer_enabled
+                    && let ui::SidebarMouse::Handled(request) = screen.sidebar_mouse(&state, event)
+                {
                     if matches!(
                         event.kind,
                         event::MouseEventKind::Down(event::MouseButton::Left)
@@ -605,6 +620,18 @@ fn run(
                     }
                     if let Some(request) = request {
                         backend.send(request)?;
+                    }
+                    continue;
+                }
+                if let Some(request) = mouse::wheel(&state, &screen.pane_grids, event) {
+                    backend.send(request)?;
+                    continue;
+                }
+                if !pointer_enabled {
+                    if let Some(request) = screen.selection.mouse(&state, &screen.pane_grids, event)
+                    {
+                        backend.send(request)?;
+                        screen.dirty = true;
                     }
                     continue;
                 }
@@ -648,12 +675,6 @@ fn run(
                     PointerAction::Menu(menu) => screen.pane_menu = Some(menu),
                 }
                 screen.dirty = true;
-            }
-            Event::Mouse(mouse) if selection_enabled => {
-                if let Some(request) = screen.selection.mouse(&state, &screen.pane_grids, mouse) {
-                    backend.send(request)?;
-                    screen.dirty = true;
-                }
             }
             Event::Paste(paste)
                 if close_dialog.is_none()
@@ -732,6 +753,11 @@ fn run(
                         | Action::ResizeDown),
                     ) => {
                         if let Some(request) = resize_split(&state, action, key.kind) {
+                            backend.send(request)?;
+                        }
+                    }
+                    Some(action @ (Action::ScrollUp | Action::ScrollDown)) => {
+                        if down && let Some(request) = scroll_active_pane(&state, action) {
                             backend.send(request)?;
                         }
                     }
@@ -885,6 +911,24 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keyboard_scrollback_uses_local_scroll_on_the_active_pane() {
+        let mut state = json!({"host":"host","epoch":7,"session":"s","window":"w","pane":"p",
+            "connected":true,"terminal":{"connected":true}});
+        let request = scroll_active_pane(&state, Action::ScrollUp).unwrap();
+        assert_eq!(
+            request,
+            json!({"op":"scroll","host":"host","epoch":7,"session":"s",
+            "window":"w","pane":"p","lines":-3})
+        );
+        assert_eq!(
+            scroll_active_pane(&state, Action::ScrollDown).unwrap()["lines"],
+            3
+        );
+        state["terminal"]["connected"] = json!(false);
+        assert!(scroll_active_pane(&state, Action::ScrollUp).is_none());
+    }
 
     #[test]
     fn reload_applies_settings_together_and_preserves_last_good_on_error() {
