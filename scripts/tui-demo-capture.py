@@ -165,6 +165,31 @@ def wait_for(predicate, compositor, description):
     raise RuntimeError(f"Timed out waiting for {description}")
 
 
+def frame_capture(source, destination):
+    """Place the unscaled terminal capture in a presentation frame."""
+    width, height = map(int, subprocess.check_output(
+        ["magick", "identify", "-format", "%w %h", str(source)], text=True, timeout=5,
+    ).split())
+    left, top = 48, 43
+    right, bottom = left + width + 15, top + 41 + height + 15
+    artwork = [
+        f"fill '#0a101c' roundrectangle 42,51 {right + 6},{bottom + 10} 20,20",
+        f"fill '#101922' stroke '#486179' stroke-width 1 roundrectangle 42,29 {right + 6},{bottom} 18,18",
+        f"stroke '#26394c' line 43,71 {right + 5},71",
+        "stroke none fill '#f08392' circle 63,51 67,51",
+        "fill '#e8bb7f' circle 80,51 84,51",
+        "fill '#80d5b2' circle 97,51 101,51",
+    ]
+    subprocess.run([
+        "magick", "-size", f"{right + 49}x{bottom + 41}", "gradient:#263754-#101728",
+        "-draw", " ".join(artwork),
+        "-font", "Liberation-Mono", "-pointsize", "14", "-fill", "#c4d5e2",
+        "-gravity", "north", "-annotate", "+0+40", "rex-tui",
+        "-gravity", "northwest", str(source), "-geometry", f"+{left + 10}+{top + 35}",
+        "-composite", "-strip", str(destination),
+    ], check=True, timeout=10)
+
+
 def capture(args):
     binary = args.binary.resolve(strict=True)
     filename = "rex-tui-first-run.png" if args.scene == "first-run" else "rex-tui-demo.png"
@@ -172,6 +197,8 @@ def capture(args):
     labwc = shutil.which(args.compositor)
     if not labwc or not all(shutil.which(command) for command in ("foot", "grim")):
         raise RuntimeError("Install labwc, Foot and grim or supply --compositor")
+    if not args.raw and not shutil.which("magick"):
+        raise RuntimeError("Install ImageMagick or use --raw")
     if args.scene == "first-run" and not shutil.which("wtype"):
         raise RuntimeError("Install wtype to verify the first-run screen received fixture state")
     with tempfile.TemporaryDirectory(prefix="rex-tui-demo-") as directory:
@@ -237,7 +264,10 @@ def capture(args):
             draft = work / "workspace.png"
             subprocess.run(["grim", str(draft)], env=env, check=True, timeout=5)
             output.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(draft, output)
+            if args.raw:
+                shutil.copyfile(draft, output)
+            else:
+                frame_capture(draft, output)
         except (RuntimeError, subprocess.SubprocessError):
             print(log.read_text(), file=sys.stderr)
             raise
@@ -258,6 +288,7 @@ def main():
     cli.add_argument("--library-path", type=Path, help="runtime libraries for a private labwc build")
     cli.add_argument("--font", default="monospace:size=12", help="Foot font descriptor")
     cli.add_argument("--scene", choices=("workspace", "first-run"), default="workspace")
+    cli.add_argument("--raw", action="store_true", help="omit the presentation frame")
     cli.add_argument("--output", type=Path, help="output PNG path (defaults to docs/images)")
     capture(cli.parse_args())
 
