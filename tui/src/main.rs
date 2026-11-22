@@ -328,7 +328,7 @@ fn run(
     let mut pointer = Pointer::default();
     let mut pending_focus: Option<Focus> = None;
     loop {
-        mouse_capture.set(screen.settings.mouse_selection || screen.settings.mouse_actions)?;
+        mouse_capture.set(screen.settings.mouse_selection)?;
         let (update, message, rejected_request, closed) = {
             let mut inbox = backend.inbox.lock().unwrap();
             (
@@ -384,6 +384,7 @@ fn run(
             && close_dialog.is_none();
         if !pointer_enabled {
             pointer.cancel();
+            screen.cancel_sidebar_mouse();
         }
         if close_dialog
             .as_ref()
@@ -594,6 +595,19 @@ fn run(
         match input {
             Event::Resize(..) => screen.dirty = true,
             Event::Mouse(event) if pointer_enabled => {
+                if let ui::SidebarMouse::Handled(request) = screen.sidebar_mouse(&state, event) {
+                    if matches!(
+                        event.kind,
+                        event::MouseEventKind::Down(event::MouseButton::Left)
+                    ) {
+                        pointer.cancel();
+                        focus_terminal_on_attach = false;
+                    }
+                    if let Some(request) = request {
+                        backend.send(request)?;
+                    }
+                    continue;
+                }
                 match pointer.event(&state, &screen.pane_grids, event) {
                     PointerAction::None => {}
                     PointerAction::Selection(event) => {

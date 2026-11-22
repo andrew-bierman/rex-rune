@@ -348,12 +348,13 @@ impl Settings {
                 .with_context(|| format!("Parse theme {}", path.display()))?
                 .chrome
         };
+        let mouse_selection = file.selection.mouse || file.experimental.mouse_actions;
         let mut keys = BTreeMap::<Action, Binding>::new();
         for (action, fallback) in DEFAULT_KEYS {
             if action == Action::ComposeInput && !file.experimental.input_composer {
                 continue;
             }
-            if action == Action::CopySelection && !file.selection.mouse {
+            if action == Action::CopySelection && !mouse_selection {
                 continue;
             }
             let label = file.keys.remove(&action).unwrap_or_else(|| fallback.into());
@@ -374,7 +375,7 @@ impl Settings {
             startup_focus: file.startup_focus,
             sidebar: file.sidebar,
             panes: file.panes,
-            mouse_selection: file.selection.mouse,
+            mouse_selection,
             mouse_actions: file.experimental.mouse_actions,
             keys,
         })
@@ -459,6 +460,29 @@ pub mod tests {
     impl Drop for Fixture {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn copying_is_enabled_in_either_mouse_mode() {
+        let configs = [
+            ("", false, false),
+            ("[selection]\nmouse = true", true, false),
+            (
+                "[selection]\nmouse = false\n[experimental]\nmouse_actions = true",
+                true,
+                true,
+            ),
+        ];
+        for (source, selection, actions) in configs {
+            let settings =
+                Settings::from_file(toml::from_str(source).unwrap(), Path::new("")).unwrap();
+            assert_eq!(settings.mouse_selection, selection);
+            assert_eq!(settings.mouse_actions, actions);
+            assert_eq!(
+                settings.shortcut(Action::CopySelection),
+                selection.then_some("F12")
+            );
         }
     }
 

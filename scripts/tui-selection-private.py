@@ -108,7 +108,7 @@ def exercise(launcher, root, env, api, mouse_actions):
         pump()
         assert len(clipboard()) == copy_count, "modal leaked copy shortcut"
         if mouse_actions:
-            settings.write_text("[sidebar]\nwidth = 20\n[selection]\nmouse = true\n"
+            settings.write_text("[sidebar]\nwidth = 20\n[selection]\nmouse = false\n"
                                 "[experimental]\nmouse_actions = true\n")
             send(b"r\x1b")
             time.sleep(.15)
@@ -149,6 +149,26 @@ def exercise(launcher, root, env, api, mouse_actions):
             send(b"\x1b[<0;62;9M\x1b[<0;62;9m")
             wait_for(lambda: len(blocks(api, sid)) == 3, "split down through pane menu")
 
+            # Sidebar mouse navigation and keyboard share row identity and
+            # folding state. Opening a tab changes the server's active window.
+            def active_window():
+                return api("session.view", session_id=sid)["active_window_id"]
+
+            first = active_window()
+            send(b"\x1b[15~")
+            wait_for(lambda: active_window() != first, "create second tab")
+            second = active_window()
+            time.sleep(.2)
+            send(b"\x1b[<0;4;2M\x1b[<0;4;2m")  # Host disclosure.
+            send(b"\x1b[<0;12;4M\x1b[<0;12;4m")  # Hidden first tab.
+            time.sleep(.2)
+            assert active_window() == second
+            send(b"\x1b[<0;4;2M\x1b[<0;4;2m")
+            send(b"\x1b[<0;12;4M\x1b[<0;12;4m")
+            wait_for(lambda: active_window() == first, "open first tab by sidebar click")
+            send(b"\x1bOF\r")  # End, Enter.
+            wait_for(lambda: active_window() == second, "open second tab by keyboard")
+
             start = len(output)
             send(b"\x1bOP")
             wait_for(lambda: SETTINGS_TITLE in output[start:], "reopen Settings after mouse actions")
@@ -162,7 +182,7 @@ def exercise(launcher, root, env, api, mouse_actions):
         pump()
         print("Pane-only selection copied exact left-pane text across sidebar and split boundaries.")
         if mouse_actions:
-            print("Pane clicks, drag stability, scoped menu focus, and safe split passed.")
+            print("Pane clicks, drag and copy, pane menu, and sidebar mouse/keyboard passed.")
     finally:
         if app.poll() is None:
             app.kill()

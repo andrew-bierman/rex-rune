@@ -214,7 +214,7 @@ its copy shortcut are off by default.
 
 ### Experimental mouse focus and pane menu
 
-Enable mouse actions independently of pane-only selection:
+Enable pane and sidebar mouse actions:
 
 ```toml
 [experimental]
@@ -226,4 +226,11 @@ Right-click inside a pane for **Focus pane**, **Copy selection**, **Split
 right**, or **Split down**. Copy is available when you have selected text in
 that pane. Focus the pane before splitting it. Click outside the menu or
 press **Esc** to dismiss. Hold **Shift** to use Foot's native selection.
-Mouse actions are off by default.
+Mouse actions also enable pane selection and its copy shortcut, even if
+`[selection] mouse = false`. Use `[selection] mouse = true` by itself for
+selection and copy without click-to-focus or menus.
+
+Click a sidebar row to open it, click its disclosure arrow to fold or
+expand it, and use the wheel to scroll the list. The wheel leaves typing
+focus unchanged. Use F6 to browse with the keyboard, then arrows,
+PageUp/PageDown, and Enter. Mouse actions and selection are off by default.
