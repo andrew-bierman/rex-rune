@@ -125,6 +125,7 @@ rexrs = { path = "vendor/rexrs" }
 # The pinned C image iterator exposed through a safe Rust render wrapper.
 [patch.crates-io]
 ghostty-vt = { path = "vendor/ghostty-vt" }
+ghostty-vt-sys = { path = "vendor/ghostty-vt-sys" }
 
 [[example]]
 name = "chrome_spike"

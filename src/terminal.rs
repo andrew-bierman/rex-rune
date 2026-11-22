@@ -3,6 +3,7 @@ use anyhow::{Result, ensure};
 use ghostty_vt::{
     RenderState, Terminal,
     render::{CellIterator, CursorVisualStyle, RowIterator},
+    screen::{Cell as RawCell, CellContentTag},
     style::{RgbColor, StyleColor},
     terminal::{Mode, Point, PointCoordinate},
 };
@@ -288,6 +289,8 @@ pub struct Frame {
     pub bg: u32,
     /// Whether the foreground and background can inherit another terminal's defaults.
     pub inherit_colors: [bool; 2],
+    /// Optional logical ANSI foreground/background indexes, two ASCII bytes per cell.
+    pub ansi_rows: Option<Vec<String>>,
     pub cursor: Option<(u16, u16)>,
     /// An explicit prompt jump anchors a cropped pane at the viewport top. Ordinary
     /// scrolling keeps its usual bottom/cursor crop. Set by the data worker, not decoding.
@@ -416,6 +419,7 @@ pub struct Renderer {
     cells: CellIterator,
     images: graphics::Images,
     copy_buffer: Vec<u8>,
+    ansi_palette: bool,
 }
 impl Renderer {
     pub fn new() -> Result<Self> {
@@ -425,8 +429,14 @@ impl Renderer {
             cells: CellIterator::new()?,
             images: graphics::Images::new()?,
             copy_buffer: Vec::new(),
+            ansi_palette: false,
         })
     }
+    pub fn with_ansi_palette(mut self, enabled: bool) -> Self {
+        self.ansi_palette = enabled;
+        self
+    }
+
     pub fn frame(&mut self, terminal: &Terminal) -> Result<Frame> {
         let (selection_text, selection_error) =
             match selection::text(terminal, &mut self.copy_buffer) {
@@ -439,13 +449,19 @@ impl Renderer {
         let bg = rgb(colors.background);
         // DEC screen reversal already swaps the snapshot defaults. Preserve
         // that complete server palette rather than dropping the swap.
-        let inherit_colors = if terminal.mode(Mode::REVERSE_COLORS)? {
+        let screen_reversed = terminal.mode(Mode::REVERSE_COLORS)?;
+        let inherit_colors = if screen_reversed {
             [false; 2]
         } else {
             [
                 terminal.fg_color()? == terminal.default_fg_color()?,
                 terminal.bg_color()? == terminal.default_bg_color()?,
             ]
+        };
+        let ansi_override_mask = if self.ansi_palette && !screen_reversed {
+            Some(terminal.ansi_override_mask()?)
+        } else {
+            None
         };
         let mut frame = Frame {
             cols: snapshot.cols()?,
@@ -458,6 +474,7 @@ impl Renderer {
             fg,
             bg,
             inherit_colors,
+            ansi_rows: ansi_override_mask.map(|_| Vec::new()),
             cursor: if snapshot.cursor_visible()? {
                 snapshot.cursor_viewport()?.map(|p| (p.x, p.y))
             } else {
@@ -494,6 +511,8 @@ impl Renderer {
             let row_links = raw_row.has_hyperlink()?;
             let mut cells = self.cells.update(row)?;
             let mut line: Vec<Cell> = Vec::new();
+            let mut ansi =
+                ansi_override_mask.map(|_| String::with_capacity(usize::from(frame.cols) * 2));
             while let Some(cell) = cells.next() {
                 let mut text = String::new();
                 cell.graphemes_utf8(&mut text)?;
@@ -509,6 +528,9 @@ impl Renderer {
                     text.clear();
                 }
                 let raw = cell.raw_cell()?;
+                if let (Some(mask), Some(ansi)) = (ansi_override_mask, &mut ansi) {
+                    append_ansi_roles(ansi, raw, style.fg_color, style.bg_color, mask)?;
+                }
                 let link = if row_links && raw.has_hyperlink()? {
                     let at = (line.len() as u16, y);
                     hyperlink(terminal, at, &mut uri)?.then(|| {
@@ -538,11 +560,37 @@ impl Renderer {
                 });
             }
             frame.cells.push(line);
+            if let (Some(rows), Some(ansi)) = (&mut frame.ansi_rows, ansi) {
+                rows.push(ansi);
+            }
             y += 1;
         }
         snapshot.clean()?;
         Ok(frame)
     }
+}
+
+fn append_ansi_roles(
+    row: &mut String,
+    raw: RawCell,
+    foreground: StyleColor,
+    background: StyleColor,
+    overrides: u16,
+) -> Result<()> {
+    let index = |color| match color {
+        StyleColor::Palette(index) if index.0 < 16 && overrides & (1 << index.0) == 0 => {
+            char::from(b"0123456789abcdef"[usize::from(index.0)])
+        }
+        _ => '.',
+    };
+    let background = match raw.content_tag()? {
+        CellContentTag::BgColorPalette => StyleColor::Palette(raw.bg_color_palette()?),
+        CellContentTag::BgColorRgb => StyleColor::None,
+        _ => background,
+    };
+    row.push(index(foreground));
+    row.push(index(background));
+    Ok(())
 }
 
 /// Reads the OSC 8 target of the viewport cell `at` into `uri`; false if it has none.
@@ -567,6 +615,61 @@ fn hyperlink(terminal: &Terminal, at: (u16, u16), uri: &mut Vec<u8>) -> Result<b
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ansi_roles_track_exact_osc_palette_overrides_across_restore_and_reset() {
+        let mut terminal = Terminal::new(ghostty_vt::TerminalOptions {
+            cols: 16,
+            rows: 3,
+            ..Default::default()
+        })
+        .unwrap();
+        let red = terminal.default_color_palette().unwrap().0[1];
+        terminal.vt_write(
+            format!(
+                "\x1b[31mA\x1b[0;44m\x1b[X\x1b[C\x1b[0;38;2;{};{};{}mC\x1b[0;91;7mI",
+                red.r, red.g, red.b
+            )
+            .as_bytes(),
+        );
+        let erased = terminal
+            .grid_ref(Point::Viewport(PointCoordinate { x: 1, y: 0 }))
+            .unwrap()
+            .cell()
+            .unwrap();
+        assert_eq!(
+            erased.content_tag().unwrap(),
+            CellContentTag::BgColorPalette
+        );
+        let mut dormant = Renderer::new().unwrap();
+        assert!(dormant.frame(&terminal).unwrap().ansi_rows.is_none());
+
+        let mut renderer = Renderer::new().unwrap().with_ansi_palette(true);
+        let frame = renderer.frame(&terminal).unwrap();
+        assert_eq!(&frame.ansi_rows.unwrap()[0][..8], "1..4..9.");
+        assert_eq!(frame.cells[0][0].fg, frame.cells[0][2].fg);
+
+        terminal.vt_write(
+            format!(
+                "\x1b]4;1;rgb:{:02x}/{:02x}/{:02x}\x1b\\",
+                red.r, red.g, red.b
+            )
+            .as_bytes(),
+        );
+        assert_eq!(terminal.ansi_override_mask().unwrap(), 1 << 1);
+        let bytes = ghostty_vt::snapshot::encode(&terminal).unwrap();
+        let mut restored = ghostty_vt::snapshot::Decoder::from_slice(&bytes)
+            .decode()
+            .unwrap();
+        for terminal in [&terminal, &restored] {
+            let frame = renderer.frame(terminal).unwrap();
+            assert_eq!(&frame.ansi_rows.unwrap()[0][..8], "...4..9.");
+        }
+        restored.vt_write(b"\x1b]104;1\x1b\\");
+        assert_eq!(restored.ansi_override_mask().unwrap(), 0);
+        let frame = renderer.frame(&restored).unwrap();
+        assert_eq!(&frame.ansi_rows.unwrap()[0][..8], "1..4..9.");
+    }
 
     #[test]
     fn terminal_colors_keep_explicit_defaults_and_inverse_roles_distinct() {

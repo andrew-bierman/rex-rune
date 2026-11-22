@@ -128,6 +128,7 @@ fn rows<'a>(state: &'a Value, folded: &HashMap<String, HashSet<String>>) -> Vec<
 pub struct Screen {
     pub sidebar: bool,
     pub settings: Settings,
+    pub ansi_palette_started: bool,
     pub settings_open: bool,
     pub prompt: Option<InputPrompt>,
     pub dirty: bool,
@@ -150,6 +151,7 @@ impl Default for Screen {
         Self {
             sidebar: true,
             settings: Settings::default(),
+            ansi_palette_started: false,
             settings_open: false,
             prompt: None,
             dirty: true,
@@ -552,6 +554,13 @@ impl Screen {
                 self.settings.sidebar.side
             )),
             Line::from(format!("Startup focus  {:?}", self.settings.startup_focus)),
+            Line::from(match self.settings.panes.ansi_palette {
+                PaneDefaultColors::Server => "ANSI palette  Server",
+                PaneDefaultColors::Terminal if self.ansi_palette_started => {
+                    "ANSI palette  Terminal"
+                }
+                PaneDefaultColors::Terminal => "ANSI palette  Terminal (restart required)",
+            }),
             Line::raw(""),
         ];
         if !problem.is_empty() {
@@ -852,6 +861,11 @@ fn rgb(value: &Value, fallback: Color) -> Color {
     })
 }
 
+fn ansi_color(code: Option<&u8>) -> Option<Color> {
+    let index = char::from(*code?).to_digit(16)?;
+    Some(Color::Indexed(index as u8))
+}
+
 fn draw_pane(
     frame: &mut Frame<'_>,
     area: Rect,
@@ -874,7 +888,12 @@ fn draw_pane(
     } else {
         rgb(&snapshot["bg"], DEFAULT_COLOR)
     };
-    let role_rows = if use_terminal_colors {
+    let ansi_rows = if options.ansi_palette == PaneDefaultColors::Terminal {
+        items(&roles["ansi_rows"])
+    } else {
+        &[]
+    };
+    let role_rows = if use_terminal_colors || !ansi_rows.is_empty() {
         items(&roles["rows"])
     } else {
         &[]
@@ -910,6 +929,11 @@ fn draw_pane(
         .enumerate()
     {
         let row_roles = role_rows
+            .get(y)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .as_bytes();
+        let ansi = ansi_rows
             .get(y)
             .and_then(Value::as_str)
             .unwrap_or_default()
@@ -953,6 +977,12 @@ fn draw_pane(
                 } else {
                     rgb(bg, background)
                 });
+            if let Some(index) = ansi_color(ansi.get(2 * x)) {
+                style = style.fg(index);
+            }
+            if let Some(index) = ansi_color(ansi.get(2 * x + 1)) {
+                style = style.bg(index);
+            }
             if reversed {
                 style = style.add_modifier(Modifier::REVERSED);
             }
@@ -1031,6 +1061,72 @@ mod tests {
             column,
             row,
             modifiers: crossterm::event::KeyModifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn opt_in_ansi_preserves_rgb_and_inverse_and_supports_old_backends() {
+        let pane = json!({"label":"Shell","frame":{
+            "fg":0xaabbcc,"bg":0x112233,
+            "cells":[[
+                {"text":"A","fg":0xaa0000,"bg":0x112233,"bold":true},
+                {"text":"B","fg":0xaabbcc,"bg":0x0000aa},
+                {"text":"R","fg":0xaa0000,"bg":0x112233},
+                {"text":"I","fg":0x112233,"bg":0xff0000}
+            ]],
+            "color_roles":{"inherit":[true,true],"rows":["2104"],"ansi_rows":["1..4..9."]}
+        }});
+        let server = Panes {
+            borders: false,
+            headers: false,
+            default_colors: PaneDefaultColors::Server,
+            ..Panes::default()
+        };
+        let terminal = Panes {
+            ansi_palette: PaneDefaultColors::Terminal,
+            ..server
+        };
+        let mut old = pane.clone();
+        old["frame"]["color_roles"]
+            .as_object_mut()
+            .unwrap()
+            .remove("ansi_rows");
+        let mut screen = ratatui::Terminal::new(ratatui::backend::TestBackend::new(10, 3)).unwrap();
+        for (fixture, options, inherited) in [
+            (&pane, server, false),
+            (&old, terminal, false),
+            (&pane, terminal, true),
+        ] {
+            let drawn = screen
+                .draw(|frame| {
+                    draw_pane(
+                        frame,
+                        frame.area(),
+                        fixture,
+                        false,
+                        options,
+                        Chrome::default(),
+                        false,
+                    );
+                })
+                .unwrap();
+            let cells = drawn.buffer.content();
+            let red = Color::Rgb(0xaa, 0, 0);
+            assert_eq!(cells[0].fg, if inherited { Color::Indexed(1) } else { red });
+            assert!(cells[0].modifier.contains(Modifier::BOLD));
+            assert_eq!(
+                cells[1].bg,
+                if inherited {
+                    Color::Indexed(4)
+                } else {
+                    Color::Rgb(0, 0, 0xaa)
+                }
+            );
+            assert_eq!(cells[2].fg, red);
+            assert_eq!(cells[3].modifier.contains(Modifier::REVERSED), inherited);
+            if inherited {
+                assert_eq!(cells[3].fg, Color::Indexed(9));
+            }
         }
     }
 

@@ -19,7 +19,7 @@ mkdir -p "$PWD/dist"
   cd tui
   mise exec -- makepkg --clean
 )
-sudo pacman -U dist/rex-tui-0.1.0-15-x86_64.pkg.tar.zst
+sudo pacman -U dist/rex-tui-0.1.0-16-x86_64.pkg.tar.zst
 rex-tui
 ```
 
@@ -87,7 +87,8 @@ default). Press F6 to focus the shell before using Foot's paste shortcut
 The `terminal` theme uses the colors of the terminal emulator running
 `rex-tui`. Foot loads the active Omarchy palette through its configuration.
 The sidebar, tab strip, status lines, and default pane colors follow that
-palette. Colors explicitly set by a program still render as supplied by Rex.
+palette. To inherit the 16 ANSI colors inside panes too, enable
+[ANSI palette inheritance](#ansi-palette).
 
 ## Capture the demo
 
@@ -194,8 +195,18 @@ selection_text = "#102625"
 selection_background = "#84dcc6"
 ```
 
-Theme colors apply to the interface. Shell panes display the colors supplied
-by Rex.
+Named themes style the interface. Pane color settings also control how
+terminal output uses the emulator palette.
+
+### ANSI palette
+
+To render the first 16 ANSI colors with your terminal emulator's palette,
+set `ansi_palette = "terminal"` under `[panes]` and restart rex-tui.
+In Foot on Omarchy, those colors come from the active Foot theme.
+The default, `"server"`, uses the palette supplied by Rex. Explicit
+truecolor, ANSI indices 16–255, and palette slots overridden by a shell
+program via OSC 4 retain their Rex colors. An older backend falls back
+to its existing RGB rendering.
 
 ## Experimental input composer
 

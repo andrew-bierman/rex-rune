@@ -179,6 +179,7 @@ pub struct Panes {
     pub borders: bool,
     pub headers: bool,
     pub default_colors: PaneDefaultColors,
+    pub ansi_palette: PaneDefaultColors,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
@@ -195,6 +196,7 @@ impl Default for Panes {
             borders: true,
             headers: true,
             default_colors: PaneDefaultColors::default(),
+            ansi_palette: PaneDefaultColors::Server,
         }
     }
 }

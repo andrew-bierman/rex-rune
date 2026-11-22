@@ -11,7 +11,7 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifier
 use input_prompt::{Edit, InputPrompt, RenameTarget};
 use mouse::{Choice, Focus, FocusStatus, MenuAction, Pointer, PointerAction};
 use serde_json::{Value, json};
-use settings::{Action, Settings, StartupFocus};
+use settings::{Action, PaneDefaultColors, Settings, StartupFocus};
 use std::{
     collections::{HashMap, HashSet},
     io::{BufRead, BufReader, Write},
@@ -36,9 +36,13 @@ struct Backend {
 }
 
 impl Backend {
-    fn start(executable: PathBuf, profile: PathBuf) -> Result<Self> {
+    fn start(executable: PathBuf, profile: PathBuf, ansi_palette: bool) -> Result<Self> {
         let mut child = Command::new(&executable)
             .env("REX_BACKEND_COLOR_ROLES", "1")
+            .env(
+                "REX_BACKEND_ANSI_ROLES",
+                if ansi_palette { "1" } else { "0" },
+            )
             .arg("--config")
             .arg(profile)
             .stdin(Stdio::piped())
@@ -350,6 +354,7 @@ fn run(
 ) -> Result<()> {
     let mut focus_terminal_on_attach = matches!(settings.startup_focus, StartupFocus::Terminal);
     let mut screen = ui::Screen::default();
+    screen.ansi_palette_started = settings.panes.ansi_palette == PaneDefaultColors::Terminal;
     screen.settings = settings;
     let mut state = Value::Null;
     let mut problem = String::new();
@@ -956,7 +961,11 @@ fn main() -> Result<()> {
     };
     let settings = Settings::load(&settings_path)?;
     if let Some(profile) = profile {
-        let mut backend = Backend::start(PathBuf::from(first), profile)?;
+        let mut backend = Backend::start(
+            PathBuf::from(first),
+            profile,
+            settings.panes.ansi_palette == PaneDefaultColors::Terminal,
+        )?;
         let mut terminal = ratatui::try_init()?;
         let result = crossterm::execute!(std::io::stdout(), crossterm::event::EnableBracketedPaste)
             .map_err(Into::into)
