@@ -1,0 +1,27 @@
+#!/bin/sh
+set -eu
+
+case "${1-}" in
+    -h|--help)
+        printf 'Usage: rex-tui [--config PATH]\n'
+        exit 0
+        ;;
+    --config)
+        if [ "$#" -ne 2 ] || [ -z "$2" ]; then
+            printf 'Usage: rex-tui [--config PATH]\n' >&2
+            exit 2
+        fi
+        profile=$2
+        ;;
+    '')
+        profile=${XDG_CONFIG_HOME:-"$HOME/.config"}/rex-tui/workspace.json
+        ;;
+    *)
+        printf 'Usage: rex-tui [--config PATH]\n' >&2
+        exit 2
+        ;;
+esac
+
+launcher=$(readlink -f -- "$0")
+private_dir=${launcher%/*}/../lib/rex-tui
+exec "$private_dir/rex-tui" "$private_dir/rex-qt-backend" "$profile"
