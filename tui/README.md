@@ -19,7 +19,7 @@ mkdir -p "$PWD/dist"
   cd tui
   mise exec -- makepkg --clean
 )
-sudo pacman -U dist/rex-tui-0.1.0-12-x86_64.pkg.tar.zst
+sudo pacman -U dist/rex-tui-0.1.0-13-x86_64.pkg.tar.zst
 rex-tui
 ```
 
@@ -238,6 +238,11 @@ A mouse-tracking application in the selected pane receives wheel events.
 Use **Alt+PageUp** or **Alt+PageDown** for local scrollback in the active
 pane, including with mouse capture off. Typing returns to live output.
 Remap these shortcuts with `scroll_up` and `scroll_down` in `[keys]`.
+
+With mouse capture off, Foot can translate the wheel into Up and Down,
+which may step through shell or chat history. For pane wheel scrolling
+with click-to-focus and menus disabled, set `[selection] mouse = true`
+and leave `[experimental] mouse_actions = false`.
 
 ### Experimental mouse focus and pane menu
 
