@@ -443,13 +443,24 @@ impl Settings {
     }
 }
 
-pub fn default_path() -> Result<PathBuf> {
+pub fn config_dir() -> Result<PathBuf> {
+    #[cfg(windows)]
+    let platform_config = env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute());
+    #[cfg(not(windows))]
+    let platform_config = None;
     let root = env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .filter(|path| path.is_absolute())
+        .or(platform_config)
         .or_else(|| env::home_dir().map(|home| home.join(".config")))
         .context("Could not find a configuration directory")?;
-    Ok(root.join("rex-tui/settings.toml"))
+    Ok(root.join("rex-tui"))
+}
+
+pub fn default_path() -> Result<PathBuf> {
+    Ok(config_dir()?.join("settings.toml"))
 }
 
 pub fn editor(path: &Path) -> Result<Command> {
