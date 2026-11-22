@@ -94,6 +94,7 @@ pub fn sample(key: &str, sample: &Sample<'_>, m: &Metrics, colors: &TermColors) 
                     spacer_tail: false,
                     fg: run.color.unwrap_or(sample.text),
                     bg: ground,
+                    default_colors: [false; 2],
                     underline_color: None,
                     style: ghostty_vt::style::Style {
                         bold: run.bold,

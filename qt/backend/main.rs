@@ -80,6 +80,7 @@ struct Backend {
     path: PathBuf,
     hosts: Hosts,
     adapters: HashMap<String, Adapter>,
+    color_roles: bool,
     generation: u64,
     discovery: Discovery,
     after_state: Vec<Value>,
@@ -138,6 +139,7 @@ impl Backend {
             path: options.config,
             hosts,
             adapters: HashMap::new(),
+            color_roles: matches!(std::env::var("REX_BACKEND_COLOR_ROLES").as_deref(), Ok("1")),
             generation: 1,
             discovery: Discovery::default(),
             after_state: Vec::new(),
@@ -169,7 +171,10 @@ impl Backend {
         self.activity.retain_hosts(&ids);
         for (slot, config) in self.hosts.slots.iter().zip(&self.settings.hosts) {
             let added = !self.adapters.contains_key(&slot.id);
-            let adapter = self.adapters.entry(slot.id.clone()).or_default();
+            let adapter = self
+                .adapters
+                .entry(slot.id.clone())
+                .or_insert_with(|| Adapter::with_color_roles(self.color_roles));
             adapter.settings = self.settings.clone();
             adapter.settings_path = Some(self.path.clone());
             adapter.endpoint = config.endpoint.clone();

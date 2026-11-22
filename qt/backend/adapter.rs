@@ -41,6 +41,7 @@ pub struct Adapter {
     files: crate::files::Files,
     pane: Option<String>,
     frames: HashMap<String, CachedFrame>,
+    color_roles: bool,
 }
 
 fn visible_terminals(window: &session::Window) -> impl Iterator<Item = &session::LayerBlock> {
@@ -80,6 +81,13 @@ fn pane_title(model: &HostModel, block: &session::LayerBlock, generated: bool) -
 }
 
 impl Adapter {
+    pub fn with_color_roles(color_roles: bool) -> Self {
+        Self {
+            color_roles,
+            ..Self::default()
+        }
+    }
+
     pub fn clear_captures(&mut self) {
         self.workspace.clear();
         self.files.clear();
@@ -486,17 +494,17 @@ impl Adapter {
             .entry(pane.into())
             .or_insert_with(|| CachedFrame {
                 source: frame.clone(),
-                value: frame_value(&frame),
+                value: frame_value(&frame, self.color_roles),
             });
         if !Arc::ptr_eq(&cached.source, &frame) {
-            cached.value = frame_value(&frame);
+            cached.value = frame_value(&frame, self.color_roles);
             cached.source = frame;
         }
         (state, cached.value.clone())
     }
 }
 
-fn frame_value(frame: &Frame) -> Value {
+fn frame_value(frame: &Frame, color_roles: bool) -> Value {
     let cells = frame.cells.iter().take(usize::from(frame.rows)).map(|row| row.iter().map(|c| {
         json!({"text":c.text,"spacer_tail":c.spacer_tail,"fg":c.fg,"bg":c.bg,
             "bold":c.style.bold,"italic":c.style.italic,"faint":c.style.faint,
@@ -526,7 +534,7 @@ fn frame_value(frame: &Frame) -> Value {
             "width":pixels.width,"height":pixels.height,"rgba":STANDARD.encode(&pixels.rgba)})
         })
         .collect::<Vec<_>>();
-    json!({"images":images,"cell_pixels":frame.cell_pixels,"links":links,"cols":frame.cols,"rows":frame.rows,"fg":frame.fg,"bg":frame.bg,
+    let mut value = json!({"images":images,"cell_pixels":frame.cell_pixels,"links":links,"cols":frame.cols,"rows":frame.rows,"fg":frame.fg,"bg":frame.bg,
         "cursor":frame.cursor,"cursor_color":frame.cursor_color,
         "cursor_shape":match frame.cursor_shape {
             CursorShape::Block => "block", CursorShape::Bar => "bar",
@@ -536,13 +544,61 @@ fn frame_value(frame: &Frame) -> Value {
         "selection_text":frame.selection_text.as_deref(),"selection_error":frame.selection_error,
         "selection_revision":frame.selection_revision,
         "search":frame.search.as_ref().map(|s| json!({"total":s.total,"index":s.index,"selected":s.selected.map(|m| json!({"start":m.start,"end":m.end})),
-            "matches":s.matches.iter().map(|m| json!({"start":m.start,"end":m.end})).collect::<Vec<_>>()}))})
+            "matches":s.matches.iter().map(|m| json!({"start":m.start,"end":m.end})).collect::<Vec<_>>()}))});
+    if color_roles {
+        // One ASCII digit per cell. Bits describe the logical foreground and
+        // background defaults, then inverse video in the highest bit.
+        let rows = frame
+            .cells
+            .iter()
+            .take(usize::from(frame.rows))
+            .map(|row| {
+                row.iter()
+                    .map(|cell| {
+                        let [fg, bg] = cell.default_colors;
+                        char::from(
+                            b'0' + u8::from(fg)
+                                + 2 * u8::from(bg)
+                                + 4 * u8::from(cell.style.inverse),
+                        )
+                    })
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+        value["color_roles"] = json!({"inherit": frame.inherit_colors, "rows": rows});
+    }
+    value
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use rexrs::api::session;
+
+    #[test]
+    fn color_roles_are_opt_in_and_do_not_change_legacy_frame_fields() {
+        let mut terminal = ghostty_vt::Terminal::new(ghostty_vt::TerminalOptions {
+            cols: 6,
+            rows: 2,
+            ..Default::default()
+        })
+        .unwrap();
+        terminal.vt_write(b"A\x1b[38;2;1;2;3mB\x1b[7mC\x1b[0;7mD");
+        let frame = rex_rune::terminal::Renderer::new()
+            .unwrap()
+            .frame(&terminal)
+            .unwrap();
+        let legacy = frame_value(&frame, false);
+        let mut opted_in = frame_value(&frame, true);
+        let roles = opted_in
+            .as_object_mut()
+            .unwrap()
+            .remove("color_roles")
+            .unwrap();
+        assert_eq!(opted_in, legacy);
+        assert_eq!(roles["inherit"], json!([true, true]));
+        assert_eq!(roles["rows"][0].as_str().unwrap().get(..4), Some("3267"));
+    }
 
     fn fixture() -> HostModel {
         let mut model = HostModel {
@@ -589,7 +645,7 @@ mod tests {
             .frame(&terminal)
             .unwrap();
         assert_eq!(frame.images.len(), 1);
-        let value = frame_value(&frame);
+        let value = frame_value(&frame, false);
         assert_eq!(value["images"][0]["rgba"], "/wAA/w==");
         assert_eq!(value["images"][0]["source"], json!([0, 0, 1, 1]));
         assert_eq!(value["images"][0]["size"], json!([16, 16]));
@@ -787,7 +843,7 @@ mod tests {
             .unwrap()
             .frame(&terminal)
             .unwrap();
-        let value = frame_value(&frame);
+        let value = frame_value(&frame, false);
         assert_eq!(value["cells"][0][0]["text"], "界");
         assert_eq!(value["cells"][0][0]["fg"], 0x010203);
         assert_eq!(value["cells"][0][0]["bg"], 0x040506);
@@ -809,7 +865,7 @@ mod tests {
             .unwrap()
             .frame(&terminal)
             .unwrap();
-        let value = frame_value(&frame);
+        let value = frame_value(&frame, false);
         let links = value["links"].as_array().unwrap();
         assert_eq!(links.len(), 1);
         assert_eq!(links[0]["uri"], "https://example.com/");

@@ -98,6 +98,7 @@ fn cells(text: &str) -> Vec<Cell> {
                 TEXT
             },
             bg: GROUND,
+            default_colors: [false; 2],
             underline_color: None,
             style: Default::default(),
             link: None,

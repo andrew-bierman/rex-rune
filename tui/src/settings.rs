@@ -154,6 +154,15 @@ pub struct Sidebar {
 pub struct Panes {
     pub borders: bool,
     pub headers: bool,
+    pub default_colors: PaneDefaultColors,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PaneDefaultColors {
+    #[default]
+    Terminal,
+    Server,
 }
 
 impl Default for Panes {
@@ -161,6 +170,7 @@ impl Default for Panes {
         Self {
             borders: true,
             headers: true,
+            default_colors: PaneDefaultColors::default(),
         }
     }
 }
@@ -540,6 +550,16 @@ pub mod tests {
         assert_eq!(file.chrome.background, Color::Reset);
         assert_eq!(file.chrome.warning, Color::Yellow);
         assert!(toml::from_str::<ThemeFile>("[chrome]\nwarning = \"orange-ish\"").is_err());
+    }
+
+    #[test]
+    fn pane_defaults_use_terminal_colors_unless_server_colors_are_requested() {
+        let file = toml::from_str(DEFAULT_FILE).unwrap();
+        let settings = Settings::from_file(file, Path::new("")).unwrap();
+        assert_eq!(settings.panes.default_colors, PaneDefaultColors::Terminal);
+        let file = toml::from_str("[panes]\ndefault_colors = \"server\"").unwrap();
+        let settings = Settings::from_file(file, Path::new("")).unwrap();
+        assert_eq!(settings.panes.default_colors, PaneDefaultColors::Server);
     }
 
     #[test]

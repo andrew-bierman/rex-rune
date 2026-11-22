@@ -270,6 +270,9 @@ pub struct Cell {
     pub spacer_tail: bool,
     pub fg: u32,
     pub bg: u32,
+    /// Whether the logical foreground and background use their terminal defaults.
+    /// These roles are captured before applying inverse video to the RGB values.
+    pub default_colors: [bool; 2],
     /// The SGR 58 underline colour; none draws underlines in the text colour.
     pub underline_color: Option<u32>,
     pub style: ghostty_vt::style::Style,
@@ -283,6 +286,8 @@ pub struct Frame {
     pub cells: Vec<Vec<Cell>>,
     pub fg: u32,
     pub bg: u32,
+    /// Whether the foreground and background can inherit another terminal's defaults.
+    pub inherit_colors: [bool; 2],
     pub cursor: Option<(u16, u16)>,
     /// An explicit prompt jump anchors a cropped pane at the viewport top. Ordinary
     /// scrolling keeps its usual bottom/cursor crop. Set by the data worker, not decoding.
@@ -432,6 +437,16 @@ impl Renderer {
         let colors = snapshot.colors()?;
         let fg = rgb(colors.foreground);
         let bg = rgb(colors.background);
+        // DEC screen reversal already swaps the snapshot defaults. Preserve
+        // that complete server palette rather than dropping the swap.
+        let inherit_colors = if terminal.mode(Mode::REVERSE_COLORS)? {
+            [false; 2]
+        } else {
+            [
+                terminal.fg_color()? == terminal.default_fg_color()?,
+                terminal.bg_color()? == terminal.default_bg_color()?,
+            ]
+        };
         let mut frame = Frame {
             cols: snapshot.cols()?,
             rows: snapshot.rows()?,
@@ -442,6 +457,7 @@ impl Renderer {
             selection_revision: 0,
             fg,
             bg,
+            inherit_colors,
             cursor: if snapshot.cursor_visible()? {
                 snapshot.cursor_viewport()?.map(|p| (p.x, p.y))
             } else {
@@ -482,8 +498,10 @@ impl Renderer {
                 let mut text = String::new();
                 cell.graphemes_utf8(&mut text)?;
                 let style = cell.style()?;
-                let mut fg = cell.fg_color()?.map(rgb).unwrap_or(fg);
-                let mut bg = cell.bg_color()?.map(rgb).unwrap_or(bg);
+                let cell_fg = cell.fg_color()?;
+                let cell_bg = cell.bg_color()?;
+                let mut fg = cell_fg.map(rgb).unwrap_or(fg);
+                let mut bg = cell_bg.map(rgb).unwrap_or(bg);
                 if style.inverse {
                     std::mem::swap(&mut fg, &mut bg);
                 }
@@ -513,6 +531,7 @@ impl Renderer {
                     spacer_tail: raw.wide()? == ghostty_vt::screen::CellWide::SpacerTail,
                     fg,
                     bg,
+                    default_colors: [cell_fg.is_none(), cell_bg.is_none()],
                     underline_color,
                     style,
                     link,
@@ -548,6 +567,66 @@ fn hyperlink(terminal: &Terminal, at: (u16, u16), uri: &mut Vec<u8>) -> Result<b
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn terminal_colors_keep_explicit_defaults_and_inverse_roles_distinct() {
+        let mut terminal = Terminal::new(ghostty_vt::TerminalOptions {
+            cols: 10,
+            rows: 2,
+            ..Default::default()
+        })
+        .unwrap();
+        terminal
+            .set_default_fg_color(Some(RgbColor {
+                r: 17,
+                g: 34,
+                b: 51,
+            }))
+            .unwrap()
+            .set_default_bg_color(Some(RgbColor {
+                r: 68,
+                g: 85,
+                b: 102,
+            }))
+            .unwrap();
+        terminal
+            .vt_write(b"N\x1b[38;2;17;34;51mE\x1b[0;48;2;68;85;102m \x1b[0;7mI\x1b[38;2;1;2;3mM");
+        let mut renderer = Renderer::new().unwrap();
+        let frame = renderer.frame(&terminal).unwrap();
+        let row = &frame.cells[0];
+        assert_eq!(frame.inherit_colors, [true, true]);
+        assert_eq!(row[0].default_colors, [true, true]);
+        assert_eq!(row[1].default_colors, [false, true]);
+        assert_eq!(
+            row[1].fg, row[0].fg,
+            "RGB equality must not hide an explicit color"
+        );
+        assert_eq!(row[2].default_colors, [true, false]);
+        assert_eq!(
+            row[2].bg, row[0].bg,
+            "an explicit blank background keeps its role"
+        );
+        assert_eq!(row[3].default_colors, [true, true]);
+        assert!(row[3].style.inverse);
+        assert_eq!((row[3].fg, row[3].bg), (frame.bg, frame.fg));
+        assert_eq!(row[4].default_colors, [false, true]);
+        assert_eq!((row[4].fg, row[4].bg), (frame.bg, 0x010203));
+
+        terminal.vt_write(b"\x1b]10;#010203\x07\x1b]11;#040506\x07");
+        let overridden = renderer.frame(&terminal).unwrap();
+        assert_eq!(overridden.inherit_colors, [false, false]);
+        assert_eq!((overridden.fg, overridden.bg), (0x010203, 0x040506));
+        terminal.vt_write(b"\x1b]110\x07\x1b]111\x07");
+        assert_eq!(
+            renderer.frame(&terminal).unwrap().inherit_colors,
+            [true, true]
+        );
+        terminal.vt_write(b"\x1b[?5h");
+        let reversed = renderer.frame(&terminal).unwrap();
+        assert_eq!(reversed.inherit_colors, [false, false]);
+        assert_eq!((reversed.fg, reversed.bg), (frame.bg, frame.fg));
+    }
+
     #[test]
     fn word_and_line_selection_preserve_paths_unicode_and_wide_cells() {
         let mut terminal = Terminal::new(ghostty_vt::TerminalOptions {

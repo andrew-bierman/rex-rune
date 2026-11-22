@@ -1,7 +1,7 @@
 use crate::{
     composer::Composer,
     items,
-    settings::{Action, Chrome, Panes, Settings, SidebarSide},
+    settings::{Action, Chrome, PaneDefaultColors, Panes, Settings, SidebarSide},
     targeted, text,
 };
 use crossterm::event::KeyCode;
@@ -629,8 +629,23 @@ fn draw_pane(
     chrome: Chrome,
 ) -> Rect {
     let snapshot = &pane["frame"];
-    let background = rgb(&snapshot["bg"], DEFAULT_COLOR);
-    let foreground = rgb(&snapshot["fg"], DEFAULT_COLOR);
+    let roles = &snapshot["color_roles"];
+    let use_terminal_colors = options.default_colors == PaneDefaultColors::Terminal;
+    let foreground = if use_terminal_colors && roles["inherit"][0] == true {
+        DEFAULT_COLOR
+    } else {
+        rgb(&snapshot["fg"], DEFAULT_COLOR)
+    };
+    let background = if use_terminal_colors && roles["inherit"][1] == true {
+        DEFAULT_COLOR
+    } else {
+        rgb(&snapshot["bg"], DEFAULT_COLOR)
+    };
+    let role_rows = if use_terminal_colors {
+        items(&roles["rows"])
+    } else {
+        &[]
+    };
     let mut block = Block::default().style(Style::new().bg(background));
     if options.borders {
         block = block
@@ -661,6 +676,11 @@ fn draw_pane(
         .take(inner.height.into())
         .enumerate()
     {
+        let row_roles = role_rows
+            .get(y)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .as_bytes();
         for (x, cell) in items(row).iter().take(inner.width.into()).enumerate() {
             let wide = items(row)
                 .get(x + 1)
@@ -668,9 +688,32 @@ fn draw_pane(
             if cell["spacer_tail"] == true {
                 continue;
             }
+            // The legacy RGB fields already have inverse applied. Undo that
+            // swap before asking the outer terminal to reverse logical roles.
+            let roles = row_roles
+                .get(x)
+                .filter(|byte| (b'0'..=b'7').contains(byte))
+                .map_or(0, |byte| byte - b'0');
+            let reversed = roles & 4 != 0;
+            let (fg, bg) = if reversed {
+                (&cell["bg"], &cell["fg"])
+            } else {
+                (&cell["fg"], &cell["bg"])
+            };
             let mut style = Style::new()
-                .fg(rgb(&cell["fg"], foreground))
-                .bg(rgb(&cell["bg"], background));
+                .fg(if roles & 1 != 0 {
+                    foreground
+                } else {
+                    rgb(fg, foreground)
+                })
+                .bg(if roles & 2 != 0 {
+                    background
+                } else {
+                    rgb(bg, background)
+                });
+            if reversed {
+                style = style.add_modifier(Modifier::REVERSED);
+            }
             for (property, flag) in [
                 ("bold", Modifier::BOLD),
                 ("faint", Modifier::DIM),
@@ -716,6 +759,103 @@ fn draw_pane(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pane_renders_native_colors_explicit_colors_and_inverted_cells() {
+        use ratatui::backend::TestBackend;
+        let (fg, bg) = (0x112233, 0x445566);
+        let pane = json!({"frame": {
+            "fg":fg, "bg":bg, "cells":[[
+                {"text":"D", "fg":fg, "bg":bg},
+                {"text":"E", "fg":fg, "bg":bg},
+                {"text":"I", "fg":bg, "bg":fg},
+                {"text":"M", "fg":bg, "bg":0x010203},
+                {"text":"B", "fg":fg, "bg":bg}
+            ]],
+            "color_roles":{"inherit":[true,true],"rows":["32761"]}
+        }});
+        let mut terminal = ratatui::Terminal::new(TestBackend::new(7, 3)).unwrap();
+        let options = Panes {
+            borders: false,
+            headers: false,
+            ..Panes::default()
+        };
+        let colors = |cell: &ratatui::buffer::Cell| (cell.fg, cell.bg);
+        let explicit_fg = Color::Rgb(17, 34, 51);
+        let explicit_bg = Color::Rgb(68, 85, 102);
+        let rendered = terminal
+            .draw(|frame| {
+                draw_pane(
+                    frame,
+                    frame.area(),
+                    &pane,
+                    false,
+                    options,
+                    Chrome::default(),
+                );
+            })
+            .unwrap();
+        let cells = rendered.buffer.content();
+        assert_eq!(colors(&cells[0]), (Color::Reset, Color::Reset));
+        assert_eq!(colors(&cells[1]), (explicit_fg, Color::Reset));
+        assert_eq!(colors(&cells[2]), (Color::Reset, Color::Reset));
+        assert!(cells[2].modifier.contains(Modifier::REVERSED));
+        assert_eq!(colors(&cells[3]), (Color::Rgb(1, 2, 3), Color::Reset));
+        assert!(cells[3].modifier.contains(Modifier::REVERSED));
+        assert_eq!(colors(&cells[4]), (Color::Reset, explicit_bg));
+        assert_eq!(
+            cells[6].bg,
+            Color::Reset,
+            "untouched space inherits the outer background"
+        );
+
+        let mut overridden = pane.clone();
+        overridden["frame"]["color_roles"]["inherit"][1] = json!(false);
+        let rendered = terminal
+            .draw(|frame| {
+                draw_pane(
+                    frame,
+                    frame.area(),
+                    &overridden,
+                    false,
+                    options,
+                    Chrome::default(),
+                );
+            })
+            .unwrap();
+        let cells = rendered.buffer.content();
+        assert_eq!(colors(&cells[0]), (Color::Reset, explicit_bg));
+        assert_eq!(colors(&cells[2]), (Color::Reset, explicit_bg));
+        assert!(cells[2].modifier.contains(Modifier::REVERSED));
+
+        let server = Panes {
+            default_colors: PaneDefaultColors::Server,
+            ..options
+        };
+        let mut old_backend = pane.clone();
+        old_backend["frame"]
+            .as_object_mut()
+            .unwrap()
+            .remove("color_roles");
+        for (fixture, options) in [(&pane, server), (&old_backend, options)] {
+            let rendered = terminal
+                .draw(|frame| {
+                    draw_pane(
+                        frame,
+                        frame.area(),
+                        fixture,
+                        false,
+                        options,
+                        Chrome::default(),
+                    );
+                })
+                .unwrap();
+            let cells = rendered.buffer.content();
+            assert_eq!(colors(&cells[0]), (explicit_fg, explicit_bg));
+            assert_eq!(colors(&cells[2]), (explicit_bg, explicit_fg));
+            assert!(!cells[2].modifier.contains(Modifier::REVERSED));
+        }
+    }
 
     #[test]
     fn settings_panel_shows_effective_config_and_an_error() {

@@ -35,6 +35,7 @@ struct Backend {
 impl Backend {
     fn start(executable: PathBuf, profile: PathBuf) -> Result<Self> {
         let mut child = Command::new(&executable)
+            .env("REX_BACKEND_COLOR_ROLES", "1")
             .arg("--config")
             .arg(profile)
             .stdin(Stdio::piped())
