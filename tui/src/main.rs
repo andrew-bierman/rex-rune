@@ -4,6 +4,7 @@ use anyhow::{Context, Result, bail};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use serde_json::{Value, json};
 use std::{
+    collections::HashMap,
     io::{BufRead, BufReader, Write},
     path::PathBuf,
     process::{Child, ChildStdin, Command, Stdio},
@@ -42,13 +43,17 @@ impl Backend {
                 let Ok(value) = serde_json::from_str::<Value>(&line) else {
                     continue;
                 };
+                if value["type"] == "state" {
+                    let previous = sender.lock().unwrap().state.replace(value);
+                    drop(previous);
+                    continue;
+                }
                 let mut slot = sender.lock().unwrap();
                 match value["type"].as_str() {
                     Some("hello") if value["version"] != 3 => {
                         slot.problem = Some("Unsupported Rex backend protocol".into());
                         break;
                     }
-                    Some("state") => slot.state = Some(value),
                     Some("error" | "notice") => slot.problem = Some(text(&value, "message").into()),
                     _ => {}
                 }
@@ -64,8 +69,9 @@ impl Backend {
 
     fn send(&mut self, mut message: Value) -> Result<()> {
         message["version"] = json!(3);
-        serde_json::to_writer(&mut self.input, &message)?;
-        self.input.write_all(b"\n")?;
+        let mut bytes = serde_json::to_vec(&message)?;
+        bytes.push(b'\n');
+        self.input.write_all(&bytes)?;
         Ok(())
     }
 }
@@ -90,6 +96,27 @@ fn targeted(state: &Value, op: &str) -> Value {
         "op": op, "host": state["host"], "epoch": state["epoch"],
         "session": state["session"], "window": state["window"], "pane": state["pane"]
     })
+}
+
+fn create_workspace_item(state: &Value, key: KeyCode) -> Result<Value, &'static str> {
+    if state["hosts"]["pending"] == true {
+        return Err("Wait for the workspace to open");
+    }
+    if state["connected"] != true {
+        return Err("Connect to a host first");
+    }
+    let (action, args) = match key {
+        KeyCode::F(2) => ("session.new", json!({})),
+        KeyCode::F(5) if state["session"].is_string() => ("client.tab.new", json!({})),
+        KeyCode::F(5) => return Err("Open a session before creating a tab"),
+        KeyCode::F(8) if state["pane"].is_string() => ("pane.split", json!({"direction": "right"})),
+        KeyCode::F(9) if state["pane"].is_string() => ("pane.split", json!({"direction": "down"})),
+        _ => return Err("Select a shell pane to split"),
+    };
+    let mut request = targeted(state, "workspace");
+    request["action"] = json!(action);
+    request["args"] = args;
+    Ok(request)
 }
 
 fn terminal_key(event: KeyEvent) -> Option<Value> {
@@ -167,20 +194,21 @@ fn run(terminal: &mut ratatui::DefaultTerminal, backend: &mut Backend) -> Result
     let mut screen = ui::Screen::default();
     let mut state = Value::Null;
     let mut problem = String::new();
-    let mut last_size = None;
+    let mut sizes = HashMap::new();
+    let mut resize_scope: Option<(String, Option<u64>, String, String)> = None;
     let mut last_claim = None;
     loop {
-        let (changed, closed) = {
+        let (update, message, closed) = {
             let mut inbox = backend.inbox.lock().unwrap();
-            let changed = inbox.state.is_some() || inbox.problem.is_some();
-            if let Some(update) = inbox.state.take() {
-                state = update;
-            }
-            if let Some(message) = inbox.problem.take() {
-                problem = message;
-            }
-            (changed, inbox.closed)
+            (inbox.state.take(), inbox.problem.take(), inbox.closed)
         };
+        let changed = update.is_some() || message.is_some();
+        if let Some(update) = update {
+            state = update;
+        }
+        if let Some(message) = message {
+            problem = message;
+        }
         if closed {
             bail!(
                 "{}",
@@ -195,32 +223,48 @@ fn run(terminal: &mut ratatui::DefaultTerminal, backend: &mut Backend) -> Result
             terminal.draw(|frame| screen.draw(frame, &state, &problem))?;
             screen.dirty = false;
         }
-        if !screen.sidebar
-            && state["terminal"]["connected"] == true
-            && state["hosts"]["pending"] != true
-        {
-            let claim = format!(
-                "{}:{:?}:{}",
+        if state["hosts"]["pending"] != true {
+            let scope = (
                 text(&state, "host"),
-                state["epoch"],
-                text(&state, "pane")
+                state["epoch"].as_u64(),
+                text(&state, "session"),
+                text(&state, "window"),
             );
-            if state["terminal"]["owner"] != true && last_claim.as_ref() != Some(&claim) {
-                backend.send(targeted(&state, "claim"))?;
-                last_claim = Some(claim.clone());
-                last_size = None;
+            if resize_scope
+                .as_ref()
+                .is_none_or(|old| (old.0.as_str(), old.1, old.2.as_str(), old.3.as_str()) != scope)
+            {
+                sizes.clear();
+                resize_scope = Some((
+                    scope.0.to_owned(),
+                    scope.1,
+                    scope.2.to_owned(),
+                    scope.3.to_owned(),
+                ));
             }
-            if state["terminal"]["owner"] == true {
-                let (cols, rows) = screen.terminal_size;
-                let size = (claim, cols, rows);
-                if cols > 1 && rows > 1 && last_size.as_ref() != Some(&size) {
+            if !screen.sidebar
+                && state["terminal"]["connected"] == true
+                && state["terminal"]["owner"] != true
+            {
+                let claim = (scope.0.to_owned(), scope.1, text(&state, "pane").to_owned());
+                if last_claim.as_ref() != Some(&claim) {
+                    backend.send(targeted(&state, "claim"))?;
+                    last_claim = Some(claim);
+                }
+            } else {
+                last_claim = None;
+            }
+            sizes.retain(|pane, _| screen.pane_sizes.iter().any(|(id, _, _)| id == pane));
+            for (pane, cols, rows) in &screen.pane_sizes {
+                if sizes.get(pane) != Some(&(*cols, *rows)) {
                     let mut request = targeted(&state, "resize");
+                    request["pane"] = json!(pane);
                     request["cols"] = json!(cols);
                     request["rows"] = json!(rows);
                     request["cell_width"] = json!(8);
                     request["cell_height"] = json!(16);
                     backend.send(request)?;
-                    last_size = Some(size);
+                    sizes.insert(pane.clone(), (*cols, *rows));
                 }
             }
         }
@@ -240,21 +284,34 @@ fn run(terminal: &mut ratatui::DefaultTerminal, backend: &mut Backend) -> Result
             }
             Event::Key(key) => {
                 let down = key.kind != KeyEventKind::Release;
+                let local = key.modifiers.is_empty();
                 match key.code {
-                    KeyCode::F(10) => {
+                    KeyCode::F(2 | 5 | 8 | 9) if local => {
+                        if key.kind == KeyEventKind::Press {
+                            match create_workspace_item(&state, key.code) {
+                                Ok(request) => {
+                                    backend.send(request)?;
+                                    problem.clear();
+                                }
+                                Err(message) => problem = message.into(),
+                            }
+                            screen.dirty = true;
+                        }
+                    }
+                    KeyCode::F(10) if local => {
                         if down {
                             return Ok(());
                         }
                     }
-                    KeyCode::F(6) => {
-                        if down {
+                    KeyCode::F(6) if local => {
+                        if down && (!screen.sidebar || state["pane"].is_string()) {
                             screen.sidebar = !screen.sidebar;
+                            problem.clear();
                             screen.dirty = true;
                             last_claim = None;
-                            last_size = None;
                         }
                     }
-                    KeyCode::F(3 | 4 | 7) => {
+                    KeyCode::F(3 | 4 | 7) if local => {
                         if down && let Some(request) = screen.cycle(&state, key.code) {
                             backend.send(request)?;
                         }
@@ -299,4 +356,38 @@ fn main() -> Result<()> {
     let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableBracketedPaste);
     ratatui::restore();
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_session_uses_the_connected_host_without_a_session() {
+        let state = json!({"host": "local", "epoch": 7, "connected": true});
+        let request = create_workspace_item(&state, KeyCode::F(2)).unwrap();
+        assert_eq!(
+            request,
+            json!({
+                "op": "workspace", "action": "session.new", "args": {},
+                "host": "local", "epoch": 7, "session": null, "window": null, "pane": null
+            })
+        );
+        assert!(create_workspace_item(&state, KeyCode::F(5)).is_err());
+        assert!(create_workspace_item(&state, KeyCode::F(8)).is_err());
+    }
+
+    #[test]
+    fn splits_target_the_selected_pane_and_wait_for_navigation() {
+        let mut state = json!({
+            "host": "local", "epoch": 7, "connected": true,
+            "session": "session", "window": "window", "pane": "shell"
+        });
+        let request = create_workspace_item(&state, KeyCode::F(9)).unwrap();
+        assert_eq!(request["action"], "pane.split");
+        assert_eq!(request["pane"], "shell");
+        assert_eq!(request["args"]["direction"], "down");
+        state["hosts"] = json!({"pending": true});
+        assert!(create_workspace_item(&state, KeyCode::F(9)).is_err());
+    }
 }

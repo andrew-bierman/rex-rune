@@ -8,20 +8,38 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Paragraph},
 };
 use serde_json::{Value, json};
+use unicode_width::UnicodeWidthChar;
 
-const INK: Color = Color::Rgb(213, 225, 237);
-const MUTED: Color = Color::Rgb(135, 154, 177);
-const BORDER: Color = Color::Rgb(48, 66, 88);
-const BASE: Color = Color::Rgb(12, 18, 29);
-const PANEL: Color = Color::Rgb(19, 29, 45);
-const SELECTED: Color = Color::Rgb(33, 63, 78);
-const MINT: Color = Color::Rgb(121, 232, 199);
-const GOLD: Color = Color::Rgb(246, 196, 126);
+const DEFAULT_COLOR: Color = Color::Reset;
+const MUTED: Color = Color::DarkGray;
+const ACCENT: Color = Color::Cyan;
+const WARNING: Color = Color::Yellow;
+
+#[derive(PartialEq, Eq)]
+struct RowId<'a>(&'a str, &'a str, &'a str);
 
 struct Row<'a> {
     host: &'a Value,
     session: Option<&'a Value>,
     tab: Option<&'a Value>,
+}
+
+impl Row<'_> {
+    fn id(&self) -> RowId<'_> {
+        RowId(
+            text(self.host, "id"),
+            self.session.map_or("", |session| text(session, "id")),
+            self.tab.map_or("", |tab| text(tab, "id")),
+        )
+    }
+
+    fn active(&self, state: &Value) -> bool {
+        self.host["active"] == true
+            && self
+                .session
+                .is_none_or(|session| session["id"] == state["session"])
+            && self.tab.is_none_or(|tab| tab["id"] == state["window"])
+    }
 }
 
 fn rows(state: &Value) -> Vec<Row<'_>> {
@@ -32,21 +50,20 @@ fn rows(state: &Value) -> Vec<Row<'_>> {
             session: None,
             tab: None,
         });
-        if host["active"] == true {
-            for session in items(&host["sessions"]) {
-                result.push(Row {
-                    host,
-                    session: Some(session),
-                    tab: None,
-                });
-                if session["selected"] == true {
-                    for tab in items(&state["windows"]) {
-                        result.push(Row {
-                            host,
-                            session: Some(session),
-                            tab: Some(tab),
-                        });
-                    }
+        for session in items(&host["sessions"]) {
+            result.push(Row {
+                host,
+                session: Some(session),
+                tab: None,
+            });
+            if session["opened"] == true || (host["active"] == true && session["selected"] == true)
+            {
+                for tab in items(&session["tabs"]) {
+                    result.push(Row {
+                        host,
+                        session: Some(session),
+                        tab: Some(tab),
+                    });
                 }
             }
         }
@@ -57,8 +74,10 @@ fn rows(state: &Value) -> Vec<Row<'_>> {
 pub struct Screen {
     pub sidebar: bool,
     pub dirty: bool,
-    pub terminal_size: (u16, u16),
+    pub pane_sizes: Vec<(String, u16, u16)>,
     selected: usize,
+    selected_id: Option<(String, String, String)>,
+    sidebar_offset: usize,
 }
 
 impl Default for Screen {
@@ -66,24 +85,44 @@ impl Default for Screen {
         Self {
             sidebar: true,
             dirty: true,
-            terminal_size: (0, 0),
+            pane_sizes: Vec::new(),
             selected: 0,
+            selected_id: None,
+            sidebar_offset: 0,
         }
     }
 }
 
 impl Screen {
+    fn restore_selection(&mut self, rows: &[Row<'_>]) {
+        if let Some((host, session, tab)) = &self.selected_id {
+            for id in [
+                RowId(host, session, tab),
+                RowId(host, session, ""),
+                RowId(host, "", ""),
+            ] {
+                if let Some(index) = rows.iter().position(|row| row.id() == id) {
+                    self.selected = index;
+                    return;
+                }
+            }
+        }
+        self.selected = self.selected.min(rows.len().saturating_sub(1));
+    }
+
     pub fn navigate(&mut self, state: &Value, key: KeyCode) -> Option<Value> {
         let rows = rows(state);
         let last = rows.len().saturating_sub(1);
-        self.selected = self.selected.min(last);
-        self.dirty = true;
+        self.restore_selection(&rows);
         match key {
             KeyCode::Up | KeyCode::Char('k') => self.selected = self.selected.saturating_sub(1),
             KeyCode::Down | KeyCode::Char('j') => self.selected = (self.selected + 1).min(last),
             KeyCode::Home => self.selected = 0,
             KeyCode::End => self.selected = last,
             KeyCode::Enter => {
+                if state["hosts"]["pending"] == true {
+                    return None;
+                }
                 let row = rows.get(self.selected)?;
                 let (action, args) = match row.session {
                     Some(session) => (
@@ -96,8 +135,13 @@ impl Screen {
                     json!({"op":"host", "action":action, "args":args, "host":row.host["id"], "epoch":row.host["epoch"]}),
                 );
             }
-            _ => {}
+            _ => return None,
         }
+        self.dirty = true;
+        self.selected_id = rows.get(self.selected).map(|row| {
+            let RowId(host, session, tab) = row.id();
+            (host.to_owned(), session.to_owned(), tab.to_owned())
+        });
         None
     }
 
@@ -125,17 +169,17 @@ impl Screen {
 
     pub fn draw(&mut self, frame: &mut Frame<'_>, state: &Value, problem: &str) {
         let area = frame.area();
-        frame.render_widget(Block::default().style(Style::new().bg(BASE)), area);
-        self.terminal_size = (0, 0);
+        self.pane_sizes.clear();
         if area.width < 38 || area.height < 8 {
             frame.render_widget(
-                Paragraph::new("Enlarge the terminal to use Rex.").style(Style::new().fg(MUTED)),
+                Paragraph::new("Enlarge the terminal to use rex-tui.")
+                    .style(Style::new().fg(MUTED)),
                 area,
             );
             return;
         }
         let [body, footer] =
-            Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(area);
+            Layout::vertical([Constraint::Min(0), Constraint::Length(2)]).areas(area);
         let [sidebar, work] = Layout::horizontal([
             Constraint::Length((area.width / 4).clamp(18, 33)),
             Constraint::Min(0),
@@ -147,16 +191,18 @@ impl Screen {
         draw_tabs(frame, tabs, state);
         let panes = items(&state["panes"]);
         if panes.is_empty() {
-            let empty = if state["connected"] == true {
-                "Choose a session from the sidebar"
+            let (empty, help) = if state["connected"] != true {
+                ("Waiting for Rex", "↑ ↓ Navigate  ·  Enter Open")
+            } else if items(&state["sessions"]).is_empty() {
+                ("No sessions on this host", "F2 Create session")
             } else {
-                "Waiting for Rex"
+                ("Choose a session from the sidebar", "Enter Open  ·  F2 New")
             };
             frame.render_widget(
                 Paragraph::new(vec![
                     Line::raw(""),
-                    Line::styled(empty, Style::new().fg(INK).bold()),
-                    Line::styled("↑ ↓ Navigate  ·  Enter Open", Style::new().fg(MUTED)),
+                    Line::styled(empty, Style::new().bold()),
+                    Line::styled(help, Style::new().fg(MUTED)),
                 ])
                 .centered(),
                 terminal,
@@ -168,8 +214,13 @@ impl Screen {
             };
             let active = pane["pane"] == state["pane"];
             let inner = draw_pane(frame, rect, pane, active && !self.sidebar);
-            if active {
-                self.terminal_size = (inner.width, inner.height);
+            if pane["terminal"]["owner"] == true
+                && pane["terminal"]["connected"] == true
+                && inner.width > 1
+                && inner.height > 1
+            {
+                self.pane_sizes
+                    .push((text(pane, "pane").to_owned(), inner.width, inner.height));
             }
         }
         let status = if !problem.is_empty() {
@@ -180,66 +231,61 @@ impl Screen {
             text(state, "status")
         };
         frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(
-                    if self.sidebar {
-                        "  ▸ NAVIGATION  "
-                    } else {
-                        "  ▸ TERMINAL  "
-                    },
-                    Style::new().fg(MINT).bold(),
-                ),
-                Span::styled(
-                    "F6 Focus   F3/F4 Tabs   F7 Pane   F10 Exit  ",
-                    Style::new().fg(INK),
-                ),
-                Span::styled(
-                    status,
-                    Style::new().fg(if problem.is_empty() { MUTED } else { GOLD }),
-                ),
-            ]))
-            .style(Style::new().bg(PANEL)),
+            Paragraph::new(vec![
+                Line::from(vec![
+                    Span::styled(
+                        if self.sidebar { " NAV  " } else { " TERM " },
+                        Style::new().fg(ACCENT).bold(),
+                    ),
+                    Span::raw("F6 Focus  F3/4 Tabs  F7 Pane  F10 Exit"),
+                ]),
+                Line::from(vec![
+                    Span::raw(" F2 Session  F5 Tab  F8/9 Split  "),
+                    Span::styled(
+                        status,
+                        Style::new().fg(if problem.is_empty() { MUTED } else { WARNING }),
+                    ),
+                ]),
+            ]),
             footer,
         );
     }
 
     fn draw_sidebar(&mut self, frame: &mut Frame<'_>, area: Rect, state: &Value) {
         let block = Block::default()
-            .title(Line::styled(" ◈ Rex ", Style::new().fg(MINT).bold()))
+            .title(Line::styled(" rex-tui ", Style::new().fg(ACCENT).bold()))
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::new().fg(if self.sidebar { MINT } else { BORDER }))
-            .style(Style::new().bg(PANEL));
+            .border_style(Style::new().fg(if self.sidebar { ACCENT } else { MUTED }));
         let inner = block.inner(area);
         frame.render_widget(block, area);
         let rows = rows(state);
-        self.selected = self.selected.min(rows.len().saturating_sub(1));
-        let capacity = usize::from(inner.height.saturating_sub(2));
-        let offset = self.selected.saturating_add(1).saturating_sub(capacity);
-        let mut lines = vec![
-            Line::styled("  HOSTS & SESSIONS", Style::new().fg(MUTED).bold()),
-            Line::raw(""),
-        ];
-        for (index, row) in rows.iter().enumerate().skip(offset).take(capacity) {
+        self.restore_selection(&rows);
+        let capacity = usize::from(inner.height);
+        self.sidebar_offset = self
+            .sidebar_offset
+            .min(self.selected)
+            .min(rows.len().saturating_sub(capacity))
+            .max(self.selected.saturating_add(1).saturating_sub(capacity));
+        let mut lines = Vec::with_capacity(capacity);
+        for (index, row) in rows
+            .iter()
+            .enumerate()
+            .skip(self.sidebar_offset)
+            .take(capacity)
+        {
             let cursor = self.sidebar && index == self.selected;
-            let selected = row.host["active"] == true
-                && row
-                    .session
-                    .is_none_or(|session| session["selected"] == true);
+            let selected = row.active(state);
             let row_style = if cursor {
-                Style::new().bg(MINT).fg(BASE).bold()
+                Style::new().add_modifier(Modifier::REVERSED).bold()
             } else if selected {
-                Style::new().bg(SELECTED).fg(MINT)
+                Style::new().fg(ACCENT).bold()
             } else {
-                Style::new().fg(INK)
+                Style::new()
             };
             let line = if let Some(tab) = row.tab {
                 Line::styled(
-                    format!(
-                        "      {} {}",
-                        if selected { "▰" } else { "▫" },
-                        text(tab, "label")
-                    ),
+                    format!("      {} {}", if selected { "▰" } else { "▫" }, label(tab)),
                     row_style,
                 )
             } else if let Some(session) = row.session {
@@ -247,7 +293,7 @@ impl Screen {
                     format!(
                         "    {} {}",
                         if selected { "›" } else { "┊" },
-                        text(session, "label")
+                        label(session)
                     ),
                     row_style,
                 )
@@ -263,13 +309,13 @@ impl Screen {
                             row_style
                         } else {
                             row_style.fg(if row.host["connected"] == true {
-                                MINT
+                                ACCENT
                             } else {
                                 MUTED
                             })
                         },
                     ),
-                    Span::styled(text(row.host, "label"), row_style.bold()),
+                    Span::styled(label(row.host), row_style.bold()),
                 ])
                 .style(row_style)
             };
@@ -283,15 +329,12 @@ fn draw_tabs(frame: &mut Frame<'_>, area: Rect, state: &Value) {
     let active = items(&state["hosts"]["rows"])
         .iter()
         .find(|host| host["active"] == true);
-    let label = active
-        .map(|host| text(host, "label"))
-        .unwrap_or("Workspace");
+    let title = active.map(label).unwrap_or_else(|| "Workspace".into());
     let block = Block::default()
-        .title(Line::styled(format!(" {label} "), Style::new().fg(MUTED)))
+        .title(Line::styled(format!(" {title} "), Style::new().fg(MUTED)))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(BORDER))
-        .style(Style::new().bg(PANEL));
+        .border_style(Style::new().fg(MUTED));
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let windows = items(&state["windows"]);
@@ -307,20 +350,39 @@ fn draw_tabs(frame: &mut Frame<'_>, area: Rect, state: &Value) {
             .iter()
             .skip(start)
             .map(|tab| {
-                let name: String = text(tab, "label").chars().take(23).collect();
+                let budget = usize::from(inner.width).min(28).saturating_sub(4);
+                let mut remaining = budget;
+                let name: String = label(tab)
+                    .chars()
+                    .take_while(|c| {
+                        let width = c.width().unwrap_or(0);
+                        if width > remaining {
+                            return false;
+                        }
+                        remaining -= width;
+                        true
+                    })
+                    .collect();
                 let active = tab["id"] == state["window"];
                 Span::styled(
                     format!(" {} {name} ", if active { "▰" } else { "▫" }),
                     if active {
-                        Style::new().fg(BASE).bg(MINT).bold()
+                        Style::new().add_modifier(Modifier::REVERSED).bold()
                     } else {
-                        Style::new().fg(INK)
+                        Style::new()
                     },
                 )
             })
             .collect()
     };
     frame.render_widget(Paragraph::new(Line::from(tabs)), inner);
+}
+
+fn label(value: &Value) -> String {
+    text(value, "label")
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect()
 }
 
 fn pane_rectangle(area: Rect, value: &Value) -> Option<Rect> {
@@ -344,19 +406,16 @@ fn rgb(value: &Value, fallback: Color) -> Color {
 
 fn draw_pane(frame: &mut Frame<'_>, area: Rect, pane: &Value, focused: bool) -> Rect {
     let snapshot = &pane["frame"];
-    let background = rgb(&snapshot["bg"], BASE);
+    let background = rgb(&snapshot["bg"], DEFAULT_COLOR);
+    let foreground = rgb(&snapshot["fg"], DEFAULT_COLOR);
     let block = Block::default()
         .title(Line::styled(
-            format!(
-                " {} {} ",
-                if focused { "▸" } else { "·" },
-                text(pane, "label")
-            ),
-            Style::new().fg(if focused { MINT } else { MUTED }),
+            format!(" {} {} ", if focused { "▸" } else { "·" }, label(pane)),
+            Style::new().fg(if focused { ACCENT } else { MUTED }),
         ))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(if focused { MINT } else { BORDER }))
+        .border_style(Style::new().fg(if focused { ACCENT } else { MUTED }))
         .style(Style::new().bg(background));
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -374,11 +433,14 @@ fn draw_pane(frame: &mut Frame<'_>, area: Rect, pane: &Value, focused: bool) -> 
         .enumerate()
     {
         for (x, cell) in items(row).iter().take(inner.width.into()).enumerate() {
+            let wide = items(row)
+                .get(x + 1)
+                .is_some_and(|next| next["spacer_tail"] == true);
             if cell["spacer_tail"] == true {
                 continue;
             }
             let mut style = Style::new()
-                .fg(rgb(&cell["fg"], INK))
+                .fg(rgb(&cell["fg"], foreground))
                 .bg(rgb(&cell["bg"], background));
             for (property, flag) in [
                 ("bold", Modifier::BOLD),
@@ -397,7 +459,11 @@ fn draw_pane(frame: &mut Frame<'_>, area: Rect, pane: &Value, focused: bool) -> 
                 style = style.add_modifier(Modifier::UNDERLINED);
             }
             let symbol = text(cell, "text");
-            let symbol = if cell["invisible"] == true || symbol.is_empty() {
+            let symbol = if cell["invisible"] == true
+                || symbol.is_empty()
+                || (wide && x + 1 == usize::from(inner.width))
+                || symbol.chars().any(char::is_control)
+            {
                 " "
             } else {
                 symbol
@@ -416,4 +482,40 @@ fn draw_pane(frame: &mut Frame<'_>, area: Rect, pane: &Value, focused: bool) -> 
         frame.set_cursor_position(Position::new(inner.x + x as u16, inner.y + y as u16));
     }
     inner
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sidebar_cursor_tracks_tab_identity_across_inventory_updates() {
+        let mut state = json!({
+            "session": "s", "window": "b", "hosts": {"rows": [{
+                "id": "h", "epoch": 4, "active": true, "sessions": [{
+                    "id": "s", "opened": true, "tabs": [{"id": "a"}, {"id": "b"}]
+                }]
+            }]}
+        });
+        let mut screen = Screen::default();
+        screen.navigate(&state, KeyCode::End);
+        let host_rows = state["hosts"]["rows"].as_array_mut().unwrap();
+        host_rows.insert(0, json!({"id": "new-host"}));
+        let request = screen.navigate(&state, KeyCode::Enter).unwrap();
+
+        assert_eq!(request["host"], "h");
+        assert_eq!(request["args"], json!({"session": "s", "window": "b"}));
+        let rows = rows(&state);
+        assert!(!rows[3].active(&state));
+        assert!(rows[4].active(&state));
+    }
+
+    #[test]
+    fn adjacent_splits_share_a_boundary_at_odd_sizes() {
+        let area = Rect::new(5, 2, 19, 9);
+        let left = pane_rectangle(area, &json!([0, 0, 0.5, 1])).unwrap();
+        let right = pane_rectangle(area, &json!([0.5, 0, 0.5, 1])).unwrap();
+        assert_eq!(left.right(), right.left());
+        assert_eq!(right.right(), area.right());
+    }
 }
