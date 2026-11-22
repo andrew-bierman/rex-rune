@@ -1172,11 +1172,7 @@ impl Backend {
                         action["enabled"] = json!(server_facts["can_stop"] == true);
                     }
                     Some("client.server.setup") => {
-                        action["enabled"] = json!(
-                            self.hosts
-                                .active_slot()
-                                .is_some_and(|s| s.model.ssh_server_missing && !s.model.connected)
-                        );
+                        action["enabled"] = json!(server_facts["can_setup"] == true);
                     }
                     Some("client.host.remove") => {
                         action["enabled"] = json!(self.hosts.slots.len() > 1)

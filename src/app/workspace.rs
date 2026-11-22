@@ -62,6 +62,10 @@ pub struct Workspace {
     pub options: Options,
     pub settings: Settings,
     pub settings_path: PathBuf,
+    /// Tests: the private folder this window's settings file lives in, removed with the
+    /// window. A relaunch on the same path borrows the first window's folder and owns none.
+    #[cfg(test)]
+    pub test_folder: Option<super::scratch::Folder>,
     pub hosts: Vec<HostState>,
     pub active: usize,
     pub terminals: HashMap<(HostId, String), Term>,
@@ -175,6 +179,9 @@ pub struct Workspace {
     pub notification_outbox: super::notify::Outbox,
     pub integrations: super::integrations::Integrations,
     pub ssh_setup: super::ssh_setup::Setup,
+    pub(super) ssh_install: Option<super::ssh_install::Install>,
+    pub(super) install_serial: u64,
+    pub(super) host_key: super::host_key::Check,
     /// The tailnet's machines, for Add host.
     pub discovery: super::discover::Discovery,
     /// The terminal theme this client declares, from Settings; none is Follow server.
@@ -263,6 +270,8 @@ impl Workspace {
             options,
             settings,
             settings_path: path,
+            #[cfg(test)]
+            test_folder: None,
             hosts: Vec::new(),
             active,
             terminals: HashMap::new(),
@@ -336,6 +345,9 @@ impl Workspace {
             notification_outbox: Default::default(),
             integrations: Default::default(),
             ssh_setup: Default::default(),
+            ssh_install: None,
+            install_serial: 0,
+            host_key: Default::default(),
             discovery: Default::default(),
             term_theme,
             theme_dirs,
@@ -449,6 +461,7 @@ impl Workspace {
         if self.settings.hosts.len() <= 1 || index >= self.hosts.len() {
             return;
         }
+        self.leave_install_dialog();
         self.navigation.cancel();
         let state = self.hosts.remove(index);
         self.forget_host(state);
@@ -481,6 +494,9 @@ impl Workspace {
         endpoint: String,
         shell: Option<String>,
     ) {
+        if self.settings.hosts[index].endpoint != endpoint {
+            self.stop_install_for_host(index);
+        }
         let host = &mut self.settings.hosts[index];
         host.label = label;
         host.shell = shell;
@@ -597,6 +613,10 @@ impl Workspace {
             );
         }
         self.hosts[index].model = model;
+        if index == self.active {
+            // The session, keymap revision or connection above is what a mode belongs to.
+            self.revalidate_key_modes();
+        }
         self.announce_keymap_problems(index);
         self.poll_remote_navigation(std::time::Instant::now());
         for pending in performs {
@@ -655,7 +675,9 @@ impl Workspace {
         self.ring_bells(index, bells);
         self.track_activity(index);
         self.restore_activity_selection(activity_selection);
+        self.restore_row_selection();
         self.deliver_program_notices(index, notices);
+        self.sync_layer_menu(tx);
         if self
             .panel
             .as_ref()
@@ -749,6 +771,48 @@ impl Workspace {
                 .overrides(super::recorder::layers(&self.settings)),
             overrides,
         }
+    }
+
+    /// The innermost active key mode, while it still belongs to the host, session and keymap on
+    /// screen. `input.rs` ends modes when any of those changes, and `revalidate_key_modes` does
+    /// the same where the change happens, so a mode left on another host or session never
+    /// names itself again on this one.
+    pub fn key_mode(&self) -> Option<&str> {
+        if *self.bindings.owner.as_ref()? != self.mode_owner() {
+            return None;
+        }
+        self.bindings.modes.last().map(|(name, _)| name.as_str())
+    }
+
+    /// What a mode entered now would belong to.
+    pub(super) fn mode_owner(&self) -> super::bindings::Owner {
+        let model = self.model();
+        super::bindings::Owner {
+            host: self.hosts[self.active].id,
+            session: model.selected.clone(),
+            generation: self.keymap_generation,
+            server_revision: model.keymap_revision,
+            connected: model.connected,
+        }
+    }
+
+    /// Enter a mode from an action the client accepted, by key or from a host's reply: the
+    /// stack belongs to the host, session, keymap and connection on screen from that moment,
+    /// so the name is drawn before the next key and never outlives them.
+    pub(super) fn enter_key_mode(&mut self, name: &str, once: bool) {
+        let owner = self.mode_owner();
+        self.bindings.adopt_modes(owner);
+        self.bindings.enter_mode(name, once);
+    }
+
+    /// End modes where their host, session, keymap or connection changes, rather than at the
+    /// next key: the declared ownership rule reaches the state change itself.
+    pub(super) fn revalidate_key_modes(&mut self) {
+        if self.bindings.modes.is_empty() {
+            return;
+        }
+        let owner = self.mode_owner();
+        self.bindings.adopt_modes(owner);
     }
 
     pub fn effective_keymap(&self) -> &rex_rune::keymap::Resolved {
@@ -1316,7 +1380,11 @@ impl Workspace {
         self.update_title(tx);
     }
 
+    /// Every active-host transition calls this. A key mode belongs to the host it was entered
+    /// on, so it ends here rather than at the next key: switching away and back must not bring
+    /// back a mode nobody entered again.
     pub fn update_visibility(&mut self) {
+        self.revalidate_key_modes();
         for term in self.terminals.values_mut() {
             term.end_selection();
         }
@@ -1376,7 +1444,10 @@ impl Workspace {
         if let Some(panel) = &mut self.panel {
             if !matches!(
                 action,
-                Intent::Pane(..) | Intent::MovePaneTo(_) | Intent::InsertPath(_)
+                Intent::Pane(..)
+                    | Intent::LayerMenu(_)
+                    | Intent::MovePaneTo(_)
+                    | Intent::InsertPath(_)
             ) {
                 panel.target = None;
             }
@@ -1464,9 +1535,13 @@ impl Workspace {
                 );
             }
             Intent::Pane(target, action) => self.pane_action(target, action, tx),
+            Intent::Layer(target, action) => self.layer_action(target, action),
+            Intent::LayerMenu(target) => self.layer_menu(target),
             Intent::Session(target, action) => self.session_action(target, action, tx),
             Intent::AddHost => self.open_add_host(),
             Intent::StartSsh(host) => self.preview_ssh_start(host),
+            Intent::InstallSsh(host) => self.preview_ssh_install(host),
+            Intent::HostKey(host) => self.preview_host_key(host),
             Intent::AddMachine(index) => self.add_machine(index, tx),
             Intent::MachineForm(index) => self.machine_form(index),
             Intent::AddHostManually => self.open_panel(
@@ -1516,6 +1591,7 @@ impl Workspace {
             }
             Intent::Sidebar => self.toggle_sidebar(),
             Intent::Settings => {
+                self.leave_install_dialog();
                 self.bindings.sequence.clear();
                 self.reload_shortcuts();
                 self.shortcut_filter = TextEdit::new("");
@@ -1634,15 +1710,51 @@ impl Workspace {
             })
     }
 
+    /// The floating-layer verbs for a captured pane, anchored where the pane menu was: the
+    /// second page behind the pane menu's one layer row.
+    fn layer_menu(&mut self, layer: LayerTarget) {
+        let Some(root) = self
+            .panel
+            .as_ref()
+            .filter(|p| matches!(p.kind, PanelKind::Pane))
+        else {
+            return;
+        };
+        if let Some(reason) = self.layer_root_blocked(root, &layer) {
+            self.inform(reason.sentence());
+            return;
+        }
+        let title = format!("{} · {}", layer.tab, layer.pane);
+        let anchor = root.anchor;
+        let target = root.target.clone();
+        self.open_panel(PanelKind::Layer, &title, &[]);
+        let panel = self.panel.as_mut().expect("the layer menu");
+        panel.target = target;
+        panel.layer = Some(layer);
+        panel.anchor = anchor;
+        if let Some(first) = self.entries().iter().position(|e| e.enabled) {
+            self.panel.as_mut().unwrap().selected = first;
+        }
+    }
+
     pub fn pane_menu(&mut self, block: String, anchor: Option<(f32, f32)>) {
         let anchor = anchor.map(|(x, y)| (x / self.ui_scale(), y / self.ui_scale()));
         let Some(target) = self.target(&block) else {
             return;
         };
-        let title = format!("{} · {}", target.tab, target.name);
+        let layer = if self.layer_gate().is_none() {
+            self.capture_pane_layer(&target)
+        } else {
+            None
+        };
+        let title = match &layer {
+            Some(layer) => format!("{} · {}", layer.tab, layer.pane),
+            None => format!("{} · {}", target.tab, target.name),
+        };
         self.open_panel(PanelKind::Pane, &title, &[]);
         let panel = self.panel.as_mut().unwrap();
         panel.target = Some(target);
+        panel.layer = layer;
         panel.anchor = anchor;
         // The rows' availability is the target's (Copy needs its selection), known only now.
         if let Some(first) = self.entries().iter().position(|e| e.enabled) {
@@ -1906,6 +2018,7 @@ impl Workspace {
     }
 
     pub fn open_panel(&mut self, kind: PanelKind, title: &str, fields: &[(&str, &str, &str)]) {
+        self.leave_install_dialog();
         self.bindings.sequence.clear();
         for term in self.terminals.values_mut() {
             term.end_selection();
@@ -1921,6 +2034,7 @@ impl Workspace {
                     | PanelKind::RemoveHost(_)
                     | PanelKind::AgentChange { .. }
                     | PanelKind::StartSsh { .. }
+                    | PanelKind::InstallSsh { .. }
                     | PanelKind::PairDevice(_)
                     | PanelKind::Themes
                     | PanelKind::Fonts(_)
@@ -1991,6 +2105,7 @@ impl Workspace {
     }
 
     pub fn close_panel(&mut self, tx: &mut Tx) {
+        self.leave_install_dialog();
         self.recorder = None;
         self.leave_download_dialog();
         self.bindings.sequence.clear();
@@ -2004,6 +2119,7 @@ impl Workspace {
             return;
         }
         self.leave_download_dialog();
+        self.leave_install_dialog();
         if let Some(mut back) = self.panel.as_mut().and_then(|p| p.back.take()) {
             if let Some(input) = back.inputs.first_mut() {
                 input.focused = true;
@@ -2019,6 +2135,7 @@ impl Workspace {
             return;
         }
         self.leave_download_dialog();
+        self.leave_install_dialog();
         if let Some(mut back) = self.panel.as_mut().and_then(|p| p.back.take()) {
             if let Some(input) = back.inputs.first_mut() {
                 input.focused = true;
@@ -2031,16 +2148,60 @@ impl Workspace {
 
     pub fn navigate_panel(&mut self, delta: isize) {
         let entries = self.entries();
-        if let Some(panel) = &mut self.panel {
-            let mut selected = panel.selected as isize + delta;
-            while selected >= 0 && (selected as usize) < entries.len() {
-                if entries[selected as usize].enabled {
-                    panel.selected = selected as usize;
-                    panel.reveal = true;
-                    break;
-                }
-                selected += delta.signum();
+        let Some(mut selected) = self.panel.as_ref().map(|p| p.selected as isize + delta) else {
+            return;
+        };
+        while selected >= 0 && (selected as usize) < entries.len() {
+            if entries[selected as usize].enabled {
+                self.select_row(selected as usize);
+                break;
             }
+            selected += delta.signum();
+        }
+    }
+
+    /// Point the keyboard at entry `index` and remember which row that is: a host wake that
+    /// reorders the list keeps the highlight on this row instead of on whatever moved into its
+    /// place (`restore_row_selection`), and Enter runs it (`submit`). Only the paths that move
+    /// the keyboard record it; a row chosen some other way is acted on where it is.
+    pub fn select_row(&mut self, index: usize) {
+        let row = self
+            .entries()
+            .get(index)
+            .and_then(|entry| entry.id.as_deref().map(str::to_owned));
+        if let Some(panel) = self.panel.as_mut() {
+            panel.reveal |= index != panel.selected;
+            panel.row = row.map(|row| (index, row));
+            panel.selected = index;
+        }
+    }
+
+    /// Keep the keyboard's row while a host wake rebuilds the list it points at: the row the
+    /// keyboard left its highlight on is followed to its new position, and one that is gone
+    /// leaves the highlight alone and runs nothing (`submit`). A selection made some other way
+    /// — a pointer hover, a row with no identity — is left exactly as it was.
+    pub fn restore_row_selection(&mut self) {
+        let Some(panel) = self.panel.as_ref() else {
+            return;
+        };
+        let selected = panel.selected;
+        let Some((index, row)) = panel.row.clone() else {
+            return;
+        };
+        if index != selected {
+            return;
+        }
+        let entries = self.entries();
+        // Found: follow the row. Gone: the highlight stays where it is and this row is never
+        // retargeted, so `submit` refuses it until the keyboard picks another row.
+        if let Some(found) = entries
+            .iter()
+            .position(|entry| entry.id.as_deref() == Some(row.as_str()))
+        {
+            let panel = self.panel.as_mut().unwrap();
+            panel.reveal |= found != panel.selected;
+            panel.selected = found;
+            panel.row = Some((found, row));
         }
     }
 
@@ -2063,8 +2224,10 @@ impl Workspace {
         }
         let first = self.entries().iter().position(|e| e.enabled).unwrap_or(0);
         if let Some(panel) = &mut self.panel {
-            panel.selected = first;
             panel.error = None;
+        }
+        self.select_row(first);
+        if let Some(panel) = &mut self.panel {
             panel.reveal = true;
         }
     }
@@ -2079,13 +2242,24 @@ impl Workspace {
             .collect();
         if panel.is_list() {
             let selected = panel.selected;
-            if let Some(entry) = self
-                .entries()
-                .into_iter()
-                .nth(selected)
-                .filter(|e| e.enabled)
-            {
-                self.perform(entry.action, tx);
+            let row = panel.row.clone();
+            let entries = self.entries();
+            // A row with an identity runs by it: a list the server reordered under the
+            // keyboard must not hand Enter the row that took its place. A row that is no
+            // longer listed runs nothing.
+            let index = match &row {
+                Some((index, row)) if *index == selected => entries
+                    .iter()
+                    .position(|entry| entry.id.as_deref() == Some(row.as_str())),
+                _ => Some(selected),
+            };
+            let Some(index) = index else {
+                self.inform("That row is no longer in the list. Nothing was changed.");
+                return;
+            };
+            if let Some(entry) = entries.get(index).filter(|e| e.enabled) {
+                let action = entry.action.clone();
+                self.perform(action, tx);
             }
             return;
         }
@@ -2233,8 +2407,15 @@ impl Workspace {
                 }
                 let target = self.panel.as_ref().and_then(|p| p.target.clone());
                 let session = self.panel.as_ref().and_then(|p| p.session.clone());
+                let layer = self.panel.as_ref().and_then(|p| p.layer.clone());
                 let tab = self.panel.as_ref().and_then(|p| p.tab.clone());
                 self.close_panel(tx);
+                // A layer close names its own session and layer: it never falls back to the
+                // session on screen, and a changed layer closes nothing.
+                if let Some(layer) = layer {
+                    self.confirmed_layer_close(&layer);
+                    return;
+                }
                 if let Some(tab) = tab {
                     self.confirmed_tab_close(&tab, &method, payload);
                     return;
