@@ -70,9 +70,10 @@ default). Press F6 to focus the shell before using Foot's paste shortcut
 
 ## Appearance
 
-The sidebar, tab strip, and status lines use your terminal's default colors
-and ANSI palette. In Omarchy, Foot gets those colors from the active theme.
-The pane contents retain the colors supplied by Rex.
+The `terminal` theme uses the colors of the terminal emulator running
+`rex-tui`. Foot loads the active Omarchy palette through its configuration.
+The sidebar, tab strip, status lines, and default pane colors follow that
+palette. Colors explicitly set by a program still render as supplied by Rex.
 
 ## Releases and upstream sync
 
