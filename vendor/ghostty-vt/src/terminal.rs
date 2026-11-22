@@ -719,6 +719,14 @@ impl Terminal {
         self.get::<RawPalette>(Data::COLOR_PALETTE_DEFAULT)
             .map(Palette::from)
     }
+    /// A bit for each of the first 16 palette slots with a live OSC override.
+    ///
+    /// An explicitly assigned color may equal its original value. Only the
+    /// native override mask distinguishes that assignment from a default.
+    pub fn ansi_override_mask(&self) -> Result<u16> {
+        self.get(Data::COLOR_ANSI_OVERRIDE_MASK)
+    }
+
     /// Set the default 256-color palette.
     pub fn set_default_color_palette(&mut self, v: Option<Palette>) -> Result<&mut Self> {
         self.set_optional::<RawPalette>(Opt::COLOR_PALETTE, v.map(Into::into).as_ref())?;

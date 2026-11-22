@@ -2342,8 +2342,11 @@ async fn run_data(
     let mut prompt_anchor = false;
     let mut visible = true;
     let mut cursor_style = crate::terminal::CursorShape::Block;
+    let ansi_palette = std::env::var_os("REX_BACKEND_COLOR_ROLES")
+        .is_some_and(|value| value == "1")
+        && std::env::var_os("REX_BACKEND_ANSI_ROLES").is_some_and(|value| value == "1");
     let mut renderer = match Renderer::new() {
-        Ok(r) => r,
+        Ok(r) => r.with_ansi_palette(ansi_palette),
         Err(e) => {
             shared.status(format!("Renderer failed: {e:#}"), false);
             return;
@@ -2369,7 +2372,7 @@ async fn run_data(
                 restored.set_cursor_style(cursor_style)?;
                 stream = Some(restored); welcome = Some(fresh);
                 shared.update(|m|m.restore_generation+=1);
-                renderer = Renderer::new()?; socket = Some(next);
+                renderer = Renderer::new()?.with_ansi_palette(ansi_palette); socket = Some(next);
                 shared.status("Restoring terminal…", false);
             }
             let mut socket = socket.context("data socket")?;

@@ -566,6 +566,9 @@ fn frame_value(frame: &Frame, color_roles: bool) -> Value {
             })
             .collect::<Vec<_>>();
         value["color_roles"] = json!({"inherit": frame.inherit_colors, "rows": rows});
+        if let Some(ansi_rows) = &frame.ansi_rows {
+            value["color_roles"]["ansi_rows"] = json!(ansi_rows);
+        }
     }
     value
 }
@@ -596,8 +599,18 @@ mod tests {
             .remove("color_roles")
             .unwrap();
         assert_eq!(opted_in, legacy);
+        assert!(roles.get("ansi_rows").is_none());
         assert_eq!(roles["inherit"], json!([true, true]));
         assert_eq!(roles["rows"][0].as_str().unwrap().get(..4), Some("3267"));
+        let mut ansi_frame = frame;
+        ansi_frame.ansi_rows = Some(vec!["............".into(); 2]);
+        assert_eq!(frame_value(&ansi_frame, false), legacy);
+        let ansi_value = frame_value(&ansi_frame, true);
+        assert_eq!(ansi_value["color_roles"]["rows"], roles["rows"]);
+        assert_eq!(
+            ansi_value["color_roles"]["ansi_rows"],
+            json!(ansi_frame.ansi_rows)
+        );
     }
 
     fn fixture() -> HostModel {
