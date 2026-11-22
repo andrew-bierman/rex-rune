@@ -1,12 +1,14 @@
+mod settings;
 mod ui;
 
 use anyhow::{Context, Result, bail};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use serde_json::{Value, json};
+use settings::{Action, Settings, StartupFocus};
 use std::{
     collections::HashMap,
     io::{BufRead, BufReader, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, Stdio},
     sync::{Arc, Mutex},
     time::Duration,
@@ -98,19 +100,23 @@ fn targeted(state: &Value, op: &str) -> Value {
     })
 }
 
-fn create_workspace_item(state: &Value, key: KeyCode) -> Result<Value, &'static str> {
+fn create_workspace_item(state: &Value, action: Action) -> Result<Value, &'static str> {
     if state["hosts"]["pending"] == true {
         return Err("Wait for the workspace to open");
     }
     if state["connected"] != true {
         return Err("Connect to a host first");
     }
-    let (action, args) = match key {
-        KeyCode::F(2) => ("session.new", json!({})),
-        KeyCode::F(5) if state["session"].is_string() => ("client.tab.new", json!({})),
-        KeyCode::F(5) => return Err("Open a session before creating a tab"),
-        KeyCode::F(8) if state["pane"].is_string() => ("pane.split", json!({"direction": "right"})),
-        KeyCode::F(9) if state["pane"].is_string() => ("pane.split", json!({"direction": "down"})),
+    let (action, args) = match action {
+        Action::NewSession => ("session.new", json!({})),
+        Action::NewTab if state["session"].is_string() => ("client.tab.new", json!({})),
+        Action::NewTab => return Err("Open a session before creating a tab"),
+        Action::SplitRight if state["pane"].is_string() => {
+            ("pane.split", json!({"direction": "right"}))
+        }
+        Action::SplitDown if state["pane"].is_string() => {
+            ("pane.split", json!({"direction": "down"}))
+        }
         _ => return Err("Select a shell pane to split"),
     };
     let mut request = targeted(state, "workspace");
@@ -190,8 +196,57 @@ fn terminal_key(event: KeyEvent) -> Option<Value> {
     }))
 }
 
-fn run(terminal: &mut ratatui::DefaultTerminal, backend: &mut Backend) -> Result<()> {
+fn edit_settings(terminal: &mut ratatui::DefaultTerminal, path: &Path) -> Result<Result<()>> {
+    use crossterm::{
+        cursor::Show,
+        event::{DisableBracketedPaste, EnableBracketedPaste},
+        execute,
+        terminal::{EnterAlternateScreen, enable_raw_mode},
+    };
+
+    let mut editor = match settings::editor(path) {
+        Ok(editor) => editor,
+        Err(error) => return Ok(Err(error)),
+    };
+    execute!(std::io::stdout(), DisableBracketedPaste, Show)?;
+    ratatui::try_restore()?;
+    let result = editor
+        .status()
+        .context("Run the settings editor")
+        .and_then(|status| {
+            anyhow::ensure!(status.success(), "Settings editor exited with {status}");
+            Ok(())
+        });
+
+    enable_raw_mode()?;
+    execute!(
+        std::io::stdout(),
+        EnterAlternateScreen,
+        EnableBracketedPaste
+    )?;
+    terminal.clear()?;
+    Ok(result)
+}
+
+fn reload_settings(screen: &mut ui::Screen, path: &Path) -> String {
+    match Settings::load(path) {
+        Ok(settings) => {
+            screen.settings = settings;
+            String::new()
+        }
+        Err(error) => format!("{error:#}"),
+    }
+}
+
+fn run(
+    terminal: &mut ratatui::DefaultTerminal,
+    backend: &mut Backend,
+    settings_path: &Path,
+    settings: Settings,
+) -> Result<()> {
+    let mut focus_terminal_on_attach = matches!(settings.startup_focus, StartupFocus::Terminal);
     let mut screen = ui::Screen::default();
+    screen.settings = settings;
     let mut state = Value::Null;
     let mut problem = String::new();
     let mut sizes = HashMap::new();
@@ -205,6 +260,10 @@ fn run(terminal: &mut ratatui::DefaultTerminal, backend: &mut Backend) -> Result
         let changed = update.is_some() || message.is_some();
         if let Some(update) = update {
             state = update;
+            if focus_terminal_on_attach && state["terminal"]["connected"] == true {
+                screen.sidebar = false;
+                focus_terminal_on_attach = false;
+            }
         }
         if let Some(message) = message {
             problem = message;
@@ -220,7 +279,7 @@ fn run(terminal: &mut ratatui::DefaultTerminal, backend: &mut Backend) -> Result
             );
         }
         if changed || screen.dirty {
-            terminal.draw(|frame| screen.draw(frame, &state, &problem))?;
+            terminal.draw(|frame| screen.draw(frame, &state, &problem, settings_path))?;
             screen.dirty = false;
         }
         if state["hosts"]["pending"] != true {
@@ -243,6 +302,7 @@ fn run(terminal: &mut ratatui::DefaultTerminal, backend: &mut Backend) -> Result
                 ));
             }
             if !screen.sidebar
+                && !screen.settings_open
                 && state["terminal"]["connected"] == true
                 && state["terminal"]["owner"] != true
             {
@@ -275,6 +335,7 @@ fn run(terminal: &mut ratatui::DefaultTerminal, backend: &mut Backend) -> Result
             Event::Resize(..) => screen.dirty = true,
             Event::Paste(paste)
                 if !screen.sidebar
+                    && !screen.settings_open
                     && state["terminal"]["connected"] == true
                     && state["hosts"]["pending"] != true =>
             {
@@ -284,11 +345,46 @@ fn run(terminal: &mut ratatui::DefaultTerminal, backend: &mut Backend) -> Result
             }
             Event::Key(key) => {
                 let down = key.kind != KeyEventKind::Release;
-                let local = key.modifiers.is_empty();
-                match key.code {
-                    KeyCode::F(2 | 5 | 8 | 9) if local => {
+                let action = screen.settings.action(key);
+                if screen.settings_open {
+                    if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
+                    match (key.code, key.modifiers) {
+                        (KeyCode::Esc, KeyModifiers::NONE) => screen.settings_open = false,
+                        (KeyCode::Char('e'), KeyModifiers::NONE) => {
+                            problem = match edit_settings(terminal, settings_path)? {
+                                Ok(()) => reload_settings(&mut screen, settings_path),
+                                Err(error) => format!("{error:#}"),
+                            };
+                        }
+                        (KeyCode::Char('r'), KeyModifiers::NONE) => {
+                            problem = reload_settings(&mut screen, settings_path);
+                        }
+                        _ if action == Some(Action::Settings) => screen.settings_open = false,
+                        _ => {}
+                    }
+                    screen.dirty = true;
+                    continue;
+                }
+                if down {
+                    focus_terminal_on_attach = false;
+                }
+                match action {
+                    Some(Action::Settings) => {
                         if key.kind == KeyEventKind::Press {
-                            match create_workspace_item(&state, key.code) {
+                            screen.settings_open = true;
+                            screen.dirty = true;
+                        }
+                    }
+                    Some(
+                        action @ (Action::NewSession
+                        | Action::NewTab
+                        | Action::SplitRight
+                        | Action::SplitDown),
+                    ) => {
+                        if key.kind == KeyEventKind::Press {
+                            match create_workspace_item(&state, action) {
                                 Ok(request) => {
                                     backend.send(request)?;
                                     problem.clear();
@@ -298,13 +394,15 @@ fn run(terminal: &mut ratatui::DefaultTerminal, backend: &mut Backend) -> Result
                             screen.dirty = true;
                         }
                     }
-                    KeyCode::F(10) if local => {
+                    Some(Action::Quit) => {
                         if down {
                             return Ok(());
                         }
                     }
-                    KeyCode::F(6) if local => {
-                        if down && (!screen.sidebar || state["pane"].is_string()) {
+                    Some(Action::ToggleFocus) => {
+                        if key.kind == KeyEventKind::Press
+                            && (!screen.sidebar || state["pane"].is_string())
+                        {
                             screen.sidebar = !screen.sidebar;
                             if screen.sidebar {
                                 screen.follow_active_row();
@@ -314,8 +412,8 @@ fn run(terminal: &mut ratatui::DefaultTerminal, backend: &mut Backend) -> Result
                             last_claim = None;
                         }
                     }
-                    KeyCode::F(3 | 4 | 7) if local => {
-                        if down && let Some(request) = screen.cycle(&state, key.code) {
+                    Some(action @ (Action::PreviousTab | Action::NextTab | Action::NextPane)) => {
+                        if down && let Some(request) = screen.cycle(&state, action) {
                             backend.send(request)?;
                         }
                     }
@@ -343,22 +441,57 @@ fn run(terminal: &mut ratatui::DefaultTerminal, backend: &mut Backend) -> Result
 
 fn main() -> Result<()> {
     let mut args = std::env::args_os().skip(1);
-    let executable = args
+    let first = args
         .next()
-        .map(PathBuf::from)
-        .context("usage: rex-tui BACKEND PROFILE")?;
-    let profile = args
-        .next()
-        .map(PathBuf::from)
-        .context("usage: rex-tui BACKEND PROFILE")?;
-    let mut backend = Backend::start(executable, profile)?;
-    let mut terminal = ratatui::try_init()?;
-    let result = crossterm::execute!(std::io::stdout(), crossterm::event::EnableBracketedPaste)
-        .map_err(Into::into)
-        .and_then(|()| run(&mut terminal, &mut backend));
-    let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableBracketedPaste);
-    ratatui::restore();
-    result
+        .context("usage: rex-tui BACKEND PROFILE [--settings PATH]")?;
+    if first == "--print-default-settings" {
+        anyhow::ensure!(args.next().is_none(), "Unexpected argument");
+        print!("{}", settings::DEFAULT_FILE);
+        return Ok(());
+    }
+    let check = first == "--check-settings";
+    let profile = if check {
+        None
+    } else {
+        Some(PathBuf::from(
+            args.next().context("Expected a workspace profile")?,
+        ))
+    };
+    let explicit_path = match args.next() {
+        Some(flag) if flag == "--settings" => Some(PathBuf::from(
+            args.next().context("Expected --settings PATH")?,
+        )),
+        Some(_) => bail!("Expected --settings PATH"),
+        None => None,
+    };
+    anyhow::ensure!(args.next().is_none(), "Unexpected argument");
+    let settings_path = match explicit_path {
+        None => settings::default_path()?,
+        Some(path) => {
+            if check {
+                anyhow::ensure!(
+                    path.try_exists()?,
+                    "Settings file does not exist: {}",
+                    path.display()
+                );
+            }
+            path
+        }
+    };
+    let settings = Settings::load(&settings_path)?;
+    if let Some(profile) = profile {
+        let mut backend = Backend::start(PathBuf::from(first), profile)?;
+        let mut terminal = ratatui::try_init()?;
+        let result = crossterm::execute!(std::io::stdout(), crossterm::event::EnableBracketedPaste)
+            .map_err(Into::into)
+            .and_then(|()| run(&mut terminal, &mut backend, &settings_path, settings));
+        let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableBracketedPaste);
+        ratatui::restore();
+        result
+    } else {
+        println!("Settings valid: {}", settings_path.display());
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -366,9 +499,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn reload_applies_settings_together_and_preserves_last_good_on_error() {
+        let fixture = settings::tests::Fixture::new();
+        let path = fixture.0.join("settings.toml");
+        let mut screen = ui::Screen::default();
+        std::fs::write(&path, "[sidebar]\nwidth = 34\n[keys]\nquit = \"F12\"").unwrap();
+        assert!(reload_settings(&mut screen, &path).is_empty());
+        assert_eq!(screen.settings.sidebar.width, Some(34));
+        assert_eq!(screen.settings.shortcut(Action::Quit), Some("F12"));
+
+        std::fs::write(&path, "[sidebar]\nwidth = 40\n[keys]\nquit = \"F1\"").unwrap();
+        assert!(reload_settings(&mut screen, &path).contains("Duplicate shortcut"));
+        assert_eq!(screen.settings.sidebar.width, Some(34));
+        assert_eq!(screen.settings.shortcut(Action::Quit), Some("F12"));
+    }
+
+    #[test]
     fn new_session_uses_the_connected_host_without_a_session() {
         let state = json!({"host": "local", "epoch": 7, "connected": true});
-        let request = create_workspace_item(&state, KeyCode::F(2)).unwrap();
+        let request = create_workspace_item(&state, Action::NewSession).unwrap();
         assert_eq!(
             request,
             json!({
@@ -376,8 +525,8 @@ mod tests {
                 "host": "local", "epoch": 7, "session": null, "window": null, "pane": null
             })
         );
-        assert!(create_workspace_item(&state, KeyCode::F(5)).is_err());
-        assert!(create_workspace_item(&state, KeyCode::F(8)).is_err());
+        assert!(create_workspace_item(&state, Action::NewTab).is_err());
+        assert!(create_workspace_item(&state, Action::SplitRight).is_err());
     }
 
     #[test]
@@ -386,11 +535,11 @@ mod tests {
             "host": "local", "epoch": 7, "connected": true,
             "session": "session", "window": "window", "pane": "shell"
         });
-        let request = create_workspace_item(&state, KeyCode::F(9)).unwrap();
+        let request = create_workspace_item(&state, Action::SplitDown).unwrap();
         assert_eq!(request["action"], "pane.split");
         assert_eq!(request["pane"], "shell");
         assert_eq!(request["args"]["direction"], "down");
         state["hosts"] = json!({"pending": true});
-        assert!(create_workspace_item(&state, KeyCode::F(9)).is_err());
+        assert!(create_workspace_item(&state, Action::SplitDown).is_err());
     }
 }

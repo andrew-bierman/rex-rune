@@ -16,7 +16,7 @@ mkdir -p "$PWD/dist"
   cd tui
   mise exec -- makepkg --clean
 )
-sudo pacman -U dist/rex-tui-0.1.0-4-x86_64.pkg.tar.zst
+sudo pacman -U dist/rex-tui-0.1.0-5-x86_64.pkg.tar.zst
 rex-tui
 ```
 
@@ -74,3 +74,65 @@ sessions. Run the TUI tests and check navigation, typing, resize, and exit in
 private Foot. Run the [Qt verification driver](../qt/README.md#verification-driver)
 with the same backend revision. Develop Qt performance changes separately
 from the TUI release branch.
+
+## Settings and themes
+
+Press **F1** to open Settings. Press **E** to edit the file using `VISUAL`
+or `EDITOR`, **R** to reload changes you made elsewhere, or **Esc** to
+close the panel. Editing creates a starter file when needed and reloads it
+after the editor exits. A rejected reload leaves the current settings in use.
+
+Frontend settings live at `${XDG_CONFIG_HOME:-$HOME/.config}/rex-tui/settings.toml`.
+They are independent of `workspace.json`, which stores the backend profile.
+For alternate settings use `rex-tui --settings PATH`. Use
+`rex-tui --print-default-settings` to view all default shortcuts and
+`rex-tui --check-settings [--settings PATH]` to validate without connecting.
+
+```toml
+theme = "night"
+startup_focus = "terminal"
+
+[sidebar]
+side = "right"
+width = 28
+
+[panes]
+borders = true
+headers = false
+
+[keys]
+next_tab = "Alt+n"
+previous_tab = "Alt+p"
+split_down = "none"
+```
+
+Sidebar width is measured in columns and shrinks on narrow screens. Omit it
+for automatic sizing. The startup preference applies on the next launch, if a terminal connects
+before you interact. The sidebar accepts input while Rex is connecting.
+
+Shortcut overrides accept function keys, ASCII characters, and named keys
+such as `Enter`, `Tab`, `PageUp`, and `Escape`. Prefix modifiers with
+`Ctrl+`, `Alt+`, `Shift+` or `Super+`. Use `"none"` to disable an
+action. Shortcuts must be unique, and some chords can be reserved by the
+terminal emulator or desktop.
+
+The built-in `terminal` theme uses the terminal emulator's palette. To add
+the `night` theme above, save `themes/night.toml` next to your settings file
+and set any of these color roles. Unspecified roles inherit the built-in
+theme. Colors accept ANSI names, RGB hex values, and `"default"` for the
+terminal's default foreground or background.
+
+```toml
+[chrome]
+text = "default"
+background = "default"
+accent = "#84dcc6"
+border = "darkgray"
+muted = "gray"
+warning = "yellow"
+selection_text = "#102625"
+selection_background = "#84dcc6"
+```
+
+Theme colors apply to the interface. Shell panes display the colors supplied
+by Rex.
