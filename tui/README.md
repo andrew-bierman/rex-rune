@@ -13,6 +13,9 @@ From the repository root, use mise for the pinned Rust and Zig versions and
 mkdir -p "$PWD/dist"
 (
   export PKGDEST="$PWD/dist"
+  BUILDDIR=$(mktemp -d)
+  export BUILDDIR
+  trap 'rm -rf -- "$BUILDDIR"' EXIT
   cd tui
   mise exec -- makepkg --clean
 )
