@@ -28,7 +28,7 @@ def main():
                if not key.startswith(("REX_", "HERDR_"))}
         env.update(HOME=temp, XDG_CONFIG_HOME=str(root / "config"),
                    XDG_STATE_HOME=str(root / "state"), XDG_RUNTIME_DIR=temp,
-                   TERM="xterm-256color", SHELL="/bin/sh")
+                   TERM="xterm-256color", SHELL="/bin/sh", PS1="rex-paste-private> ")
         with (root / "server.log").open("wb") as log:
             server = subprocess.Popen(
                 [os.environ.get("REX_BIN", "rex"), "server", "run", "--listen", endpoint,
@@ -65,7 +65,10 @@ def exercise(launcher, root, env):
     try:
         wait_for(lambda: b"F2 Create session" in output, "connect to private Rex")
         os.write(master, b"\x1bOQ")
-        wait_for(lambda: b"Waiting for terminal" in output or b"$ " in output, "open session")
+        wait_for(
+            lambda: b"rex-paste-private>" in output or b"Waiting for terminal" in output,
+            "open session",
+        )
         forbidden = root / "sidebar-paste"
         paste(f"touch {shlex.quote(str(forbidden))}\n")
         wait_for(lambda: b"before pasting" in output, "explain why sidebar paste is ignored")
