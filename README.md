@@ -1,5 +1,9 @@
 # Rex Rune
 
+This fork develops [rex-tui](tui/README.md), a terminal client with its own
+package and release series. [Rex Rune](https://github.com/shuv1337/rex-rune)
+is the upstream project.
+
 Rex Rune is an unofficial, independent native client for [Rex](https://www.superlogical.com/rex),
 the terminal multiplexer from Superlogical. It attaches to an existing Rex
 server, so sessions, panes and programs stay on the server when the app closes.

@@ -16,7 +16,7 @@ mkdir -p "$PWD/dist"
   cd tui
   mise exec -- makepkg --clean
 )
-sudo pacman -U dist/rex-tui-0.1.0-2-x86_64.pkg.tar.zst
+sudo pacman -U dist/rex-tui-0.1.0-3-x86_64.pkg.tar.zst
 rex-tui
 ```
 
@@ -59,3 +59,17 @@ sidebar has focus. The terminal renders text snapshots from the backend.
 The sidebar, tab strip, and status lines use your terminal's default colors
 and ANSI palette. In Omarchy, Foot gets those colors from the active theme.
 The pane contents retain the colors supplied by Rex.
+
+## Releases and upstream sync
+
+Publish TUI releases under `rex-tui-v<version>` tags in the fork. Label test
+builds as prereleases. Attach the Arch package with the TUI and its private
+backend built from the same revision. Use the `pkgrel` in the tag for
+subsequent packages of the same version, for example `rex-tui-v0.1.0-3`.
+
+Keep shared core and backend changes small. Before merging an upstream sync,
+build the shared backend and verify both consumers against disposable Rex
+sessions. Run the TUI tests and check navigation, typing, resize, and exit in
+private Foot. Run the [Qt verification driver](../qt/README.md#verification-driver)
+with the same backend revision. Develop Qt performance changes separately
+from the TUI release branch.

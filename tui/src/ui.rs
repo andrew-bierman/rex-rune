@@ -183,8 +183,12 @@ impl Screen {
             frame.render_widget(Paragraph::new("Enlarge the terminal to use rex-tui."), area);
             return;
         }
-        let [body, footer] =
-            Layout::vertical([Constraint::Min(0), Constraint::Length(2)]).areas(area);
+        let footer_lines = self.footer(state, problem, area.width);
+        let [body, footer] = Layout::vertical([
+            Constraint::Min(0),
+            Constraint::Length(footer_lines.len() as u16),
+        ])
+        .areas(area);
         let [sidebar, work] = Layout::horizontal([
             Constraint::Length((area.width / 4).clamp(18, 33)),
             Constraint::Min(0),
@@ -228,6 +232,10 @@ impl Screen {
                     .push((text(pane, "pane").to_owned(), inner.width, inner.height));
             }
         }
+        frame.render_widget(Paragraph::new(footer_lines), footer);
+    }
+
+    fn footer<'a>(&self, state: &'a Value, problem: &'a str, width: u16) -> Vec<Line<'a>> {
         let status = if !problem.is_empty() {
             problem
         } else if state["hosts"]["pending"] == true {
@@ -235,37 +243,39 @@ impl Screen {
         } else {
             text(state, "status")
         };
-        frame.render_widget(
-            Paragraph::new(vec![
-                Line::from(vec![
-                    Span::styled(
-                        if self.sidebar {
-                            " Sidebar  "
-                        } else {
-                            " Terminal  "
-                        },
-                        Style::new().fg(ACCENT).bold(),
-                    ),
-                    Span::raw(if self.sidebar {
-                        "↑/↓ Move  Enter Open  F6 Type"
-                    } else {
-                        "F6 Browse  F3/4 Tabs  F7 Pane"
-                    }),
-                ]),
-                Line::from(vec![
-                    Span::raw(" F2 Session  F5 Tab  F8/9 Split  F10 Exit  "),
-                    Span::styled(
-                        status,
-                        if problem.is_empty() {
-                            Style::new()
-                        } else {
-                            Style::new().fg(WARNING)
-                        },
-                    ),
-                ]),
-            ]),
-            footer,
+        let mut focus = Line::from(vec![
+            Span::styled(
+                if self.sidebar {
+                    " Sidebar  "
+                } else {
+                    " Terminal  "
+                },
+                Style::new().fg(ACCENT).bold(),
+            ),
+            Span::raw(if self.sidebar {
+                "↑/↓ Move  Enter Open  F6 Type"
+            } else {
+                "F6 Browse  F3/4 Tabs  F7 Pane"
+            }),
+        ]);
+        let actions = Span::raw(" F2 Session  F5 Tab  F8/9 Split  F10 Exit");
+        let status = Span::styled(
+            status,
+            if problem.is_empty() {
+                Style::new()
+            } else {
+                Style::new().fg(WARNING)
+            },
         );
+        let separator = Span::raw("  ");
+        if focus.width() + actions.width() + separator.width() <= usize::from(width) {
+            focus
+                .spans
+                .extend([separator.clone(), actions, separator, status]);
+            vec![focus]
+        } else {
+            vec![focus, Line::from(vec![actions, separator, status])]
+        }
     }
 
     fn draw_sidebar(&mut self, frame: &mut Frame<'_>, area: Rect, state: &Value) {
@@ -300,15 +310,20 @@ impl Screen {
             } else {
                 Style::new()
             };
+            let cursor_marker = if cursor { "› " } else { "  " };
             let line = if let Some(tab) = row.tab {
                 Line::styled(
-                    format!("      {} {}", if selected { "▰" } else { "▫" }, label(tab)),
+                    format!(
+                        "{cursor_marker}    {} {}",
+                        if selected { "▰" } else { "▫" },
+                        label(tab)
+                    ),
                     row_style,
                 )
             } else if let Some(session) = row.session {
                 Line::styled(
                     format!(
-                        "    {} {}",
+                        "{cursor_marker}  {} {}",
                         if selected { "›" } else { "┊" },
                         label(session)
                     ),
@@ -316,11 +331,12 @@ impl Screen {
                 )
             } else {
                 Line::from(vec![
+                    Span::raw(cursor_marker),
                     Span::styled(
                         if row.host["connected"] == true {
-                            "  ● "
+                            "● "
                         } else {
-                            "  ○ "
+                            "○ "
                         },
                         if cursor {
                             row_style
@@ -554,5 +570,13 @@ mod tests {
         screen.follow_active_row();
         let request = screen.navigate(&state, KeyCode::Enter).unwrap();
         assert_eq!(request["args"]["window"], "a");
+    }
+
+    #[test]
+    fn footer_uses_one_row_when_the_shortcuts_fit() {
+        let screen = Screen::default();
+        let state = json!({"status": "Connected"});
+        assert_eq!(screen.footer(&state, "", 100).len(), 1);
+        assert_eq!(screen.footer(&state, "", 60).len(), 2);
     }
 }
