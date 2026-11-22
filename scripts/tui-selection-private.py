@@ -18,6 +18,7 @@ import time
 CLIPBOARD = re.compile(rb"\x1b\]52;c;([A-Za-z0-9+/=]+)\x1b\\")
 CAPTURE_ON = b"\x1b[?1002h\x1b[?1006h"
 CAPTURE_OFF = b"\x1b[?1006l\x1b[?1002l"
+SETTINGS_TITLE = "┌ Settings ".encode()
 
 
 def exercise(launcher, root, env, api):
@@ -57,7 +58,10 @@ def exercise(launcher, root, env, api):
         wait_for(lambda: b"F2 Create session" in output, "connected to private Rex")
         assert CAPTURE_ON not in output, "mouse capture was enabled by default"
         send(b"\x1bOQ")
-        wait_for(lambda: b"Waiting for terminal" in output or b"$ " in output, "opening a shell")
+        wait_for(
+            lambda: b"Waiting for terminal" in output or b"rex-selection-private>" in output,
+            "opening a shell",
+        )
         send(b"\x1b[19~")
         wait_for(
             lambda: len(api("session.list")["sessions"]) == 1
@@ -74,7 +78,7 @@ def exercise(launcher, root, env, api):
 
         settings.write_text("[sidebar]\nwidth = 20\n[selection]\nmouse = true\n")
         send(b"\x1bOP")
-        wait_for(lambda: b"Esc Close" in output, "open Settings")
+        wait_for(lambda: SETTINGS_TITLE in output, "open Settings")
         send(b"r")
         wait_for(lambda: CAPTURE_ON in output, "enable mouse capture on reload")
         send(b"\x1b")
@@ -97,7 +101,7 @@ def exercise(launcher, root, env, api):
 
         send(b"\x1bOP")
         start = len(output)
-        wait_for(lambda: b"Esc Close" in output[start:], "reopen Settings")
+        wait_for(lambda: SETTINGS_TITLE in output[start:], "reopen Settings")
         copy_count = len(clipboard())
         send(b"\x1b[24~")
         pump()
@@ -138,7 +142,7 @@ def main():
                if not key.startswith(("REX_", "HERDR_"))}
         env.update(HOME=temp, XDG_CONFIG_HOME=str(root / "config"),
                    XDG_STATE_HOME=str(root / "state"), XDG_RUNTIME_DIR=temp,
-                   TERM="xterm-256color", SHELL="/bin/sh")
+                   TERM="xterm-256color", SHELL="/bin/sh", PS1="rex-selection-private> ")
         rex = os.environ.get("REX_BIN", "rex")
 
         def api(method, **payload):
