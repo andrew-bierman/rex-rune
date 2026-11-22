@@ -2,7 +2,7 @@ use crate::{items, settings::Chrome, targeted, text};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::{
     Frame,
-    layout::{Position, Rect, Size},
+    layout::{Constraint, Layout, Position, Rect, Size},
     style::Style,
     text::Line,
     widgets::{Block, Clear, Paragraph},
@@ -25,8 +25,17 @@ pub(crate) struct InputPrompt {
 }
 
 enum Purpose {
-    Compose { generation: Value },
-    Rename { kind: RenameTarget, request_id: u64 },
+    Compose {
+        generation: Value,
+    },
+    Rename {
+        kind: RenameTarget,
+        request_id: u64,
+    },
+    Find {
+        generation: Value,
+        submitted: String,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -54,13 +63,25 @@ pub(crate) enum Edit {
 
 impl InputPrompt {
     pub(crate) fn compose(state: &Value) -> Result<Self, &'static str> {
+        Self::terminal(state, false)
+    }
+
+    pub(crate) fn find(state: &Value) -> Result<Self, &'static str> {
+        Self::terminal(state, true)
+    }
+
+    fn terminal(state: &Value, find: bool) -> Result<Self, &'static str> {
         if !connected(state)
             || state["epoch"].as_u64().is_none()
             || ["host", "session", "window", "pane"]
                 .iter()
                 .any(|field| text(state, field).is_empty())
         {
-            return Err("Select a connected shell pane to compose input");
+            return Err(if find {
+                "Select a connected shell pane to find text"
+            } else {
+                "Select a connected shell pane to compose input"
+            });
         }
         let label = items(&state["panes"])
             .iter()
@@ -68,10 +89,16 @@ impl InputPrompt {
             .map(|pane| text(pane, "label"))
             .filter(|label| !label.is_empty())
             .unwrap_or("Selected pane");
+        let generation = state["terminal"]["generation"].clone();
         Ok(Self {
-            target: targeted(state, "paste"),
-            purpose: Purpose::Compose {
-                generation: state["terminal"]["generation"].clone(),
+            target: targeted(state, if find { "search" } else { "paste" }),
+            purpose: if find {
+                Purpose::Find {
+                    generation,
+                    submitted: String::new(),
+                }
+            } else {
+                Purpose::Compose { generation }
             },
             label: single_line(label),
             draft: String::new(),
@@ -140,7 +167,7 @@ impl InputPrompt {
 
     pub(crate) fn observe(&mut self, state: &Value) {
         let unavailable = match &self.purpose {
-            Purpose::Compose { generation } => {
+            Purpose::Compose { generation } | Purpose::Find { generation, .. } => {
                 !connected(state) || *generation != state["terminal"]["generation"]
             }
             Purpose::Rename { .. } => {
@@ -203,6 +230,24 @@ impl InputPrompt {
         if self.stale || self.sent {
             return Edit::Continue;
         }
+        if let Purpose::Find { submitted, .. } = &mut self.purpose
+            && matches!(key.code, KeyCode::Enter | KeyCode::Up | KeyCode::Down)
+        {
+            if key.kind != KeyEventKind::Press || !key.modifiers.is_empty() || !visible {
+                return Edit::Continue;
+            }
+            let mut request = self.target.clone();
+            if key.code == KeyCode::Enter && *submitted != self.draft {
+                submitted.clone_from(&self.draft);
+                request["text"] = json!(submitted);
+            } else if !submitted.is_empty() && *submitted == self.draft {
+                request["op"] = json!("search_step");
+                request["older"] = json!(key.code == KeyCode::Up);
+            } else {
+                return Edit::Continue;
+            }
+            return Edit::Send(request);
+        }
         match key.code {
             KeyCode::Enter
                 if key.kind == KeyEventKind::Press && key.modifiers.is_empty() && visible =>
@@ -224,6 +269,7 @@ impl InputPrompt {
                     Purpose::Rename { .. } => {
                         request["args"] = json!({"label": self.draft.trim()});
                     }
+                    Purpose::Find { .. } => unreachable!(),
                 }
                 self.error = None;
                 self.sent = true;
@@ -231,7 +277,7 @@ impl InputPrompt {
             }
             KeyCode::Char('u')
                 if key.modifiers == KeyModifiers::CONTROL
-                    && matches!(self.purpose, Purpose::Rename { .. }) =>
+                    && !matches!(self.purpose, Purpose::Compose { .. }) =>
             {
                 self.draft.clear();
                 self.cursor = 0;
@@ -266,6 +312,78 @@ impl InputPrompt {
         area.width >= 38 && area.height >= 8
     }
 
+    pub(crate) fn is_find(&self) -> bool {
+        matches!(self.purpose, Purpose::Find { .. })
+    }
+
+    pub(crate) fn showing_matches(&self) -> bool {
+        !self.stale
+            && matches!(&self.purpose, Purpose::Find { submitted, .. }
+            if !submitted.is_empty() && *submitted == self.draft)
+    }
+
+    pub(crate) fn clear_find(&self, state: &Value) -> Option<Value> {
+        let Purpose::Find {
+            generation,
+            submitted,
+        } = &self.purpose
+        else {
+            return None;
+        };
+        if submitted.is_empty()
+            || state["connected"] != true
+            || state["hosts"]["pending"] == true
+            || TARGET_FIELDS[..4]
+                .iter()
+                .any(|key| self.target[*key] != state[*key])
+            || !items(&state["panes"]).iter().any(|pane| {
+                pane["pane"] == self.target["pane"] && pane["terminal"]["generation"] == *generation
+            })
+        {
+            return None;
+        }
+        let mut request = self.target.clone();
+        request["text"] = json!("");
+        Some(request)
+    }
+
+    pub(crate) fn draw_find(
+        &self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        state: &Value,
+        chrome: Chrome,
+    ) {
+        let search = &state["frame"]["search"];
+        let hint = if self.stale {
+            "Pane changed  Esc Close".into()
+        } else if self.showing_matches() {
+            match (search["index"].as_u64(), search["total"].as_u64()) {
+                (_, Some(0)) => "No matches  Esc Close".into(),
+                (Some(index), Some(total)) => format!("{}/{total}  ↑↓  Esc Close", index + 1),
+                _ => "Searching…  Esc Close".into(),
+            }
+        } else {
+            "Enter Find  Esc Close".into()
+        };
+        let [label, entry, status] = Layout::horizontal([
+            Constraint::Length(6),
+            Constraint::Min(1),
+            Constraint::Length(hint.width() as u16),
+        ])
+        .areas(area);
+        let (draft, column) = self.viewport(entry.width.into());
+        frame.render_widget(
+            Paragraph::new("Find: ").style(Style::new().fg(chrome.accent)),
+            label,
+        );
+        frame.render_widget(Paragraph::new(draft), entry);
+        frame.render_widget(Paragraph::new(hint), status);
+        if !self.stale {
+            frame.set_cursor_position(Position::new(entry.x + column as u16, entry.y));
+        }
+    }
+
     pub(crate) fn draw(&self, frame: &mut Frame<'_>, chrome: Chrome) {
         let area = frame.area();
         if !Self::visible(area.as_size()) {
@@ -292,6 +410,7 @@ impl InputPrompt {
                 "Workspace changed. Esc discards draft.",
                 "Enter Rename    Ctrl+U Clear    Esc Cancel",
             ),
+            Purpose::Find { .. } => unreachable!("Find is drawn in the footer"),
         };
         let block = Block::bordered()
             .title(title)
@@ -366,12 +485,69 @@ mod tests {
             "connected": true, "terminal": {"connected": true, "generation": 1},
             "sessions": [{"id": "s", "label": "Original session"}],
             "windows": [{"id": "w", "label": "Current tab", "user_label": "Current tab"}],
-            "panes": [{"pane": "p", "label": "Build shell", "user_label": null}]
+            "panes": [{"pane": "p", "label": "Build shell", "user_label": null,
+                       "terminal": {"connected": true, "generation": 1}}]
         })
     }
 
     fn press(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn find_submits_literal_queries_steps_and_clears_the_captured_pane() {
+        let original = state();
+        let mut prompt = InputPrompt::find(&original).unwrap();
+        prompt.insert("status + ready");
+        assert!(matches!(
+            prompt.key(&original, press(KeyCode::Up), true),
+            Edit::Continue
+        ));
+        let Edit::Send(find) = prompt.key(&original, press(KeyCode::Enter), true) else {
+            panic!("Find should submit the query");
+        };
+        assert_eq!(
+            find,
+            json!({"op":"search","text":"status + ready","host":"h","epoch":9,
+                   "session":"s","window":"w","pane":"p"})
+        );
+        for (key, older) in [
+            (KeyCode::Up, true),
+            (KeyCode::Down, false),
+            (KeyCode::Enter, false),
+        ] {
+            let Edit::Send(step) = prompt.key(&original, press(key), true) else {
+                panic!("Find should move through matches");
+            };
+            assert_eq!(step["op"], "search_step");
+            assert_eq!(step["pane"], "p");
+            assert_eq!(step["older"], older);
+        }
+        assert!(matches!(
+            prompt.key(&original, press(KeyCode::Esc), true),
+            Edit::Cancel
+        ));
+        let clear = prompt
+            .clear_find(&original)
+            .expect("clear the original search");
+        assert_eq!(clear["op"], "search");
+        assert_eq!(clear["text"], "");
+        assert_eq!(clear["pane"], "p");
+
+        let mut switched = original.clone();
+        switched["pane"] = json!("other");
+        prompt.observe(&switched);
+        assert!(!prompt.showing_matches());
+        assert!(matches!(
+            prompt.key(&switched, press(KeyCode::Up), true),
+            Edit::Continue
+        ));
+        assert_eq!(prompt.clear_find(&switched).unwrap()["pane"], "p");
+        switched["window"] = json!("other-window");
+        assert!(prompt.clear_find(&switched).is_none());
+        switched["window"] = original["window"].clone();
+        switched["panes"][0]["terminal"]["generation"] = json!(2);
+        assert!(prompt.clear_find(&switched).is_none());
     }
 
     #[test]

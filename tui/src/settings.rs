@@ -36,6 +36,7 @@ pub enum Action {
     ResizeDown,
     ComposeInput,
     CopySelection,
+    Find,
     ScrollUp,
     ScrollDown,
     FocusLeft,
@@ -47,7 +48,7 @@ pub enum Action {
     Quit,
 }
 
-const DEFAULT_KEYS: [(Action, &str); 29] = [
+const DEFAULT_KEYS: [(Action, &str); 30] = [
     (Action::Settings, "F1"),
     (Action::NewSession, "F2"),
     (Action::PreviousTab, "F3"),
@@ -66,6 +67,7 @@ const DEFAULT_KEYS: [(Action, &str); 29] = [
     (Action::ResizeDown, "Ctrl+Shift+Down"),
     (Action::ComposeInput, "F11"),
     (Action::CopySelection, "F12"),
+    (Action::Find, "Alt+/"),
     (Action::ScrollUp, "Alt+PageUp"),
     (Action::ScrollDown, "Alt+PageDown"),
     (Action::RenameSession, "Shift+F6"),
