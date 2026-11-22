@@ -1,0 +1,45 @@
+name: Rex Qt test driver
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/qt-driver.yml
+      - qt/**
+      - Cargo.lock
+      - Cargo.toml
+      - src/**
+      - vendor/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  arch-qt-driver:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build the Qt acceptance driver
+        run: |
+          mkdir -p dist/qt
+          docker run --rm \
+            --mount "type=bind,src=$PWD,dst=/source,readonly" \
+            --mount "type=bind,src=$PWD/dist/qt,dst=/out" \
+            archlinux:base-devel bash -euc '
+              pacman -Syu --noconfirm --needed qt6-base qt6-declarative
+              mkdir /build
+              cd /build
+              qmake6 /source/qt/rex-qt.pro CONFIG+=test_driver
+              make -j2
+              QT_QPA_PLATFORM=offscreen ./rex-qt-test-driver --version
+              install -m755 rex-qt-test-driver /out/
+            '
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rex-qt-test-driver-arch-x86_64
+          path: dist/qt/rex-qt-test-driver
+          retention-days: 7
+          if-no-files-found: error
