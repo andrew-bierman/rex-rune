@@ -275,3 +275,13 @@ Click a sidebar row to open it, click its disclosure arrow to fold or
 expand it, and use the wheel to scroll the list. The wheel leaves typing
 focus unchanged. Use F6 to browse with the keyboard, then arrows,
 PageUp/PageDown, and Enter. Mouse actions and selection are off by default.
+
+### ANSI palette
+
+To render the first 16 ANSI colors with your terminal emulator's palette,
+set `ansi_palette = "terminal"` under `[panes]` and restart rex-tui.
+In Foot on Omarchy, those colors come from the active Foot theme.
+The default, `"server"`, uses the palette supplied by Rex. Explicit
+truecolor, ANSI indices 16–255, and palette slots overridden by a shell
+program via OSC 4 retain their Rex colors. An older backend falls back
+to its existing RGB rendering.

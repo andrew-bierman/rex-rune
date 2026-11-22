@@ -10,6 +10,7 @@ side = "left"
 borders = true
 headers = true
 default_colors = "terminal" # Set "server" to use the Rex terminal defaults.
+ansi_palette = "server" # Set "terminal" to use the terminal emulator palette for ANSI 0–15.
 
 [experimental]
 input_composer = false
