@@ -44,7 +44,8 @@ examples](tui/README.md#settings-and-themes).
 
 ### Toward parity with Rex for Mac
 
-The target is parity for everyday Rex workflows in a terminal. Use the
+Keyboard access comes first for everyday Rex workflows. Mouse actions are
+optional and experimental. Use the
 [Mac action reference](https://www.superlogical.com/rex/docs/reference/mac-actions)
 and the [Mac settings reference](https://www.superlogical.com/rex/docs/reference/mac-settings)
 as the comparison. Track each workflow through a private TUI test before
@@ -60,6 +61,9 @@ such as notifications and opening links.
 | Activity | Show program status on tabs, group work by session or priority, and add opt-in desktop notifications and sounds. |
 | Hosts and files | Manage hosts from the TUI, guide SSH setup and device pairing, and add remote path browsing, file insertion, and link opening. |
 | Terminal settings | Add a theme picker and theme imports, surface configurable key sequences and modes, and support the remaining terminal display preferences where Foot can express them. |
+
+The input composer and opt-in terminal preloading are lower priorities than
+keyboard parity.
 
 ## Upstream
 
