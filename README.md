@@ -5,6 +5,10 @@ with [Ratatui](https://ratatui.rs/). Browse hosts, sessions, and tabs in a
 keyboard-driven sidebar. Open shells, split and resize panes, and reattach
 from another client while programs keep running on the Rex server.
 
+![rex-tui in Foot with a host and session tree, three tabs, and split panes for a build shell, service log, and change notes](docs/images/rex-tui-demo.png)
+
+Fictional workspace shown in Foot. [Reproduce the screenshot](tui/README.md#capture-the-demo).
+
 `rex-tui` is the main frontend in this fork. The [Qt Quick frontend](qt/README.md)
 is super alpha, with its performance work tracked separately.
 

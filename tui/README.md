@@ -75,6 +75,22 @@ The `terminal` theme uses the colors of the terminal emulator running
 The sidebar, tab strip, status lines, and default pane colors follow that
 palette. Colors explicitly set by a program still render as supplied by Rex.
 
+## Capture the demo
+
+Install Foot, labwc, and grim, then pass the underlying rex-tui executable
+from the package or your build. The script renders a fixed fictional workspace
+in a private headless compositor. It does not read your Rex profiles or contact
+a Rex server.
+
+```sh
+python3 scripts/tui-demo-capture.py --binary /usr/lib/rex-tui/rex-tui
+```
+
+Run the command from the repository root. It writes
+`docs/images/rex-tui-demo.png`. Use `--output` for another destination,
+`--font` to select a Foot font, or `--compositor` and `--library-path`
+for a separate labwc build.
+
 ## Releases and upstream sync
 
 Publish TUI releases under `rex-tui-v<version>` tags in the fork. Label test
