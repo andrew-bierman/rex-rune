@@ -54,10 +54,14 @@ fi
 | Shift+F5 | Ask to close the active tab |
 | F6 | Switch input between the sidebar and the terminal |
 | F7 | Cycle pane focus |
+| Ctrl+Alt+Arrow | Focus the adjacent pane in that direction |
 | F8 / F9 | Split the focused pane right or down |
 | Ctrl+Shift+Arrow | Move a divider next to the focused pane |
 | F10 | Exit while leaving server sessions running |
 | Alt+PageUp / Alt+PageDown | Scroll the active pane back or forward |
+
+Directional focus stops at the edge of the split layout. Remap it with
+`focus_left`, `focus_right`, `focus_up`, and `focus_down` in `[keys]`.
 
 Close prompts name the session or tab and explain what will stop. Press Y to
 confirm, or Enter or Esc to cancel.

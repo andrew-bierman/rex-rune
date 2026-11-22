@@ -37,7 +37,7 @@ def stop(process):
             process.wait(timeout=4)
 
 
-def exercise(launcher, labwc, root):
+def exercise(launcher, labwc, root, directional_focus):
     env = {key: value for key, value in os.environ.items()
            if not key.startswith(("REX_", "HERDR_", "WLR_", "AQ_"))
            and key not in ("DISPLAY", "WAYLAND_DISPLAY", "WAYLAND_SOCKET", "SWAYSOCK",
@@ -133,6 +133,50 @@ def exercise(launcher, labwc, root):
         time.sleep(.15)
         key("r", "alt")
         wait_for(lambda: ratios(.45, .5), "remapped Left ratio", compositor)
+        if directional_focus:
+            horizontal = splits()[0]
+            vertical = horizontal["after"]["split"]
+            identities = {
+                "left": horizontal["before"]["block_id"],
+                "top": vertical["before"]["block_id"],
+                "bottom": vertical["after"]["block_id"],
+            }
+            for name, pane in identities.items():
+                api("block.event", session_id=sid, block_id=pane,
+                    event={"type": "paste", "payload": {"text": f"export FOCUS_PANE={name}"}})
+                api("block.event", session_id=sid, block_id=pane,
+                    event={"type": "key", "payload": {"key": "enter", "action": "press", "mods": ""}})
+
+            def proof(label, *expected):
+                marker = root / label
+                command = f"""printf '%s' "$FOCUS_PANE" > {shlex.quote(str(marker))}"""
+                subprocess.run(["wtype", "-s", "150", command, "-k", "Return", "-s", "150"],
+                               env=env, check=True, timeout=4)
+                result = wait_for(lambda: marker.read_text() if marker.exists() else None,
+                                  label, compositor)
+                assert result in expected, (label, result, expected)
+                return result
+
+            for direction, expected in (("Up", "top"), ("Down", "bottom"), ("Left", "left")):
+                key(direction, "ctrl", "alt")
+                proof(f"focus-{direction}", expected)
+            key("Left", "ctrl", "alt")
+            proof("focus-no-wrap", "left")
+            key("Right", "ctrl", "alt")
+            focused = proof("focus-Right", "top", "bottom")
+            key("F7")
+            proof("f7-cycles-focus", "bottom" if focused == "top" else "left")
+            if focused == "bottom":
+                key("Right", "ctrl", "alt")
+                proof("restore-right-focus", "top", "bottom")
+
+            settings.write_text('[sidebar]\nwidth = 20\n[keys]\nresize_left = "Alt+r"\nfocus_left = "Alt+l"\n')
+            key("F1")
+            key("r")
+            key("Escape")
+            key("l", "alt")
+            proof("remapped-focus", "left")
+            print("Foot confirmed directional focus, no wrapping, and F7 cycling in nested splits.")
         key("F10")
         assert compositor.wait(timeout=5) == 0, "Foot session failed to exit"
         assert ratios(.45, .5), "exiting changed the session's layout"
@@ -143,11 +187,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("launcher", type=Path, help="Path to the packaged rex-tui launcher")
     parser.add_argument("--labwc", default="labwc")
+    parser.add_argument("--focus", action="store_true", help="Also verify directional pane focus")
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="rex-resize-") as temp:
         root = Path(temp)
         try:
-            exercise(args.launcher.resolve(), args.labwc, root)
+            exercise(args.launcher.resolve(), args.labwc, root, args.focus)
         except Exception as error:
             # These logs come from the fixture's empty private profile.
             for log in ("server.log", "foot.log"):
