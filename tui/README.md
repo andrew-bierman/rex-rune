@@ -16,7 +16,7 @@ mkdir -p "$PWD/dist"
   cd tui
   mise exec -- makepkg --clean
 )
-sudo pacman -U dist/rex-tui-0.1.0-3-x86_64.pkg.tar.zst
+sudo pacman -U dist/rex-tui-0.1.0-4-x86_64.pkg.tar.zst
 rex-tui
 ```
 
@@ -43,6 +43,7 @@ fi
 | Key | Action |
 | --- | --- |
 | Arrows or j/k, Enter | Move through the sidebar and open the selected row |
+| Left / Right | Collapse or expand hosts and sessions |
 | F2 | Create a session on the active host |
 | F3 / F4 | Switch tabs |
 | F5 | Open a shell in a new tab |

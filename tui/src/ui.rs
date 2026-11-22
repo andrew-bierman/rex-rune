@@ -8,6 +8,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Paragraph},
 };
 use serde_json::{Value, json};
+use std::collections::{HashMap, HashSet};
 use unicode_width::UnicodeWidthChar;
 
 const DEFAULT_COLOR: Color = Color::Reset;
@@ -22,6 +23,7 @@ struct Row<'a> {
     host: &'a Value,
     session: Option<&'a Value>,
     tab: Option<&'a Value>,
+    expanded: Option<bool>,
 }
 
 impl Row<'_> {
@@ -42,27 +44,43 @@ impl Row<'_> {
     }
 }
 
-fn rows(state: &Value) -> Vec<Row<'_>> {
+fn rows<'a>(state: &'a Value, folded: &HashMap<String, HashSet<String>>) -> Vec<Row<'a>> {
     let mut result = Vec::new();
     for host in items(&state["hosts"]["rows"]) {
+        let folded = folded.get(text(host, "id"));
+        let sessions = items(&host["sessions"]);
+        let host_expanded = !folded.is_some_and(|ids| ids.contains(""));
         result.push(Row {
             host,
             session: None,
             tab: None,
+            expanded: (!sessions.is_empty()).then_some(host_expanded),
         });
-        for session in items(&host["sessions"]) {
+        if !host_expanded {
+            continue;
+        }
+        for session in sessions {
+            let tabs = if session["opened"] == true
+                || (host["active"] == true && session["selected"] == true)
+            {
+                items(&session["tabs"])
+            } else {
+                &[]
+            };
+            let session_expanded = !folded.is_some_and(|ids| ids.contains(text(session, "id")));
             result.push(Row {
                 host,
                 session: Some(session),
                 tab: None,
+                expanded: (!tabs.is_empty()).then_some(session_expanded),
             });
-            if session["opened"] == true || (host["active"] == true && session["selected"] == true)
-            {
-                for tab in items(&session["tabs"]) {
+            if session_expanded {
+                for tab in tabs {
                     result.push(Row {
                         host,
                         session: Some(session),
                         tab: Some(tab),
+                        expanded: None,
                     });
                 }
             }
@@ -78,6 +96,7 @@ pub struct Screen {
     selected: usize,
     selected_id: Option<(String, String, String)>,
     sidebar_offset: usize,
+    folded: HashMap<String, HashSet<String>>,
 }
 
 impl Default for Screen {
@@ -89,6 +108,7 @@ impl Default for Screen {
             selected: 0,
             selected_id: None,
             sidebar_offset: 0,
+            folded: HashMap::new(),
         }
     }
 }
@@ -126,7 +146,7 @@ impl Screen {
     }
 
     pub fn navigate(&mut self, state: &Value, key: KeyCode) -> Option<Value> {
-        let rows = rows(state);
+        let rows = rows(state, &self.folded);
         let last = rows.len().saturating_sub(1);
         self.restore_selection(&rows, state);
         match key {
@@ -134,6 +154,31 @@ impl Screen {
             KeyCode::Down | KeyCode::Char('j') => self.selected = (self.selected + 1).min(last),
             KeyCode::Home => self.selected = 0,
             KeyCode::End => self.selected = last,
+            KeyCode::Left | KeyCode::Right => {
+                let row = rows.get(self.selected)?;
+                let RowId(host, session, tab) = row.id();
+                match (key, row.expanded) {
+                    (KeyCode::Left, Some(true)) => {
+                        self.folded
+                            .entry(host.into())
+                            .or_default()
+                            .insert(session.into());
+                    }
+                    (KeyCode::Right, Some(false)) => {
+                        if let Some(ids) = self.folded.get_mut(host) {
+                            ids.remove(session);
+                        }
+                    }
+                    (KeyCode::Right, Some(true)) => self.selected += 1,
+                    (KeyCode::Left, _) if !session.is_empty() => {
+                        let parent = RowId(host, if tab.is_empty() { "" } else { session }, "");
+                        if let Some(index) = rows.iter().position(|row| row.id() == parent) {
+                            self.selected = index;
+                        }
+                    }
+                    _ => return None,
+                }
+            }
             KeyCode::Enter => {
                 let row = rows.get(self.selected)?;
                 let (action, args) = match row.session {
@@ -253,7 +298,7 @@ impl Screen {
                 Style::new().fg(ACCENT).bold(),
             ),
             Span::raw(if self.sidebar {
-                "↑/↓ Move  Enter Open  F6 Type"
+                "↑/↓ Move  ←/→ Fold  Enter Open  F6 Type"
             } else {
                 "F6 Browse  F3/4 Tabs  F7 Pane"
             }),
@@ -286,7 +331,7 @@ impl Screen {
             .border_style(Style::new().fg(if self.sidebar { ACCENT } else { MUTED }));
         let inner = block.inner(area);
         frame.render_widget(block, area);
-        let rows = rows(state);
+        let rows = rows(state, &self.folded);
         self.restore_selection(&rows, state);
         let capacity = usize::from(inner.height);
         self.sidebar_offset = self
@@ -311,10 +356,15 @@ impl Screen {
                 Style::new()
             };
             let cursor_marker = if cursor { "› " } else { "  " };
+            let branch = match row.expanded {
+                Some(true) => "▾ ",
+                Some(false) => "▸ ",
+                None => "  ",
+            };
             let line = if let Some(tab) = row.tab {
                 Line::styled(
                     format!(
-                        "{cursor_marker}    {} {}",
+                        "{cursor_marker}      {} {}",
                         if selected { "▰" } else { "▫" },
                         label(tab)
                     ),
@@ -322,16 +372,13 @@ impl Screen {
                 )
             } else if let Some(session) = row.session {
                 Line::styled(
-                    format!(
-                        "{cursor_marker}  {} {}",
-                        if selected { "›" } else { "┊" },
-                        label(session)
-                    ),
+                    format!("{cursor_marker}  {branch}{}", label(session)),
                     row_style,
                 )
             } else {
                 Line::from(vec![
                     Span::raw(cursor_marker),
+                    Span::raw(branch),
                     Span::styled(
                         if row.host["connected"] == true {
                             "● "
@@ -539,7 +586,7 @@ mod tests {
 
         assert_eq!(request["host"], "h");
         assert_eq!(request["args"], json!({"session": "s", "window": "b"}));
-        let rows = rows(&state);
+        let rows = rows(&state, &screen.folded);
         assert!(rows[3].active(&state));
         assert!(!rows[4].active(&state));
     }
@@ -578,5 +625,29 @@ mod tests {
         let state = json!({"status": "Connected"});
         assert_eq!(screen.footer(&state, "", 100).len(), 1);
         assert_eq!(screen.footer(&state, "", 60).len(), 2);
+    }
+
+    #[test]
+    fn folding_keeps_navigation_on_a_visible_parent() {
+        let state = json!({
+            "session": "s", "window": "a", "hosts": {"rows": [{
+                "id": "h", "epoch": 1, "active": true, "sessions": [{
+                    "id": "s", "opened": true, "tabs": [{"id": "a"}]
+                }]
+            }]}
+        });
+        let mut screen = Screen::default();
+        assert!(screen.navigate(&state, KeyCode::Left).is_none());
+        assert_eq!(screen.selected, 1);
+        assert!(screen.navigate(&state, KeyCode::Left).is_none());
+        assert_eq!(rows(&state, &screen.folded).len(), 2);
+        screen.navigate(&state, KeyCode::Left);
+        screen.navigate(&state, KeyCode::Left);
+        assert_eq!(rows(&state, &screen.folded).len(), 1);
+        screen.navigate(&state, KeyCode::Right);
+        screen.navigate(&state, KeyCode::Right);
+        screen.navigate(&state, KeyCode::Right);
+        assert_eq!(rows(&state, &screen.folded).len(), 3);
+        assert_eq!(screen.selected, 1);
     }
 }
