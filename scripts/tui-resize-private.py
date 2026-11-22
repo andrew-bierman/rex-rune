@@ -37,7 +37,7 @@ def stop(process):
             process.wait(timeout=4)
 
 
-def exercise(launcher, labwc, root, directional_focus):
+def exercise(launcher, labwc, root, directional_focus, tab_reorder):
     env = {key: value for key, value in os.environ.items()
            if not key.startswith(("REX_", "HERDR_", "WLR_", "AQ_"))
            and key not in ("DISPLAY", "WAYLAND_DISPLAY", "WAYLAND_SOCKET", "SWAYSOCK",
@@ -177,6 +177,51 @@ def exercise(launcher, labwc, root, directional_focus):
             key("l", "alt")
             proof("remapped-focus", "left")
             print("Foot confirmed directional focus, no wrapping, and F7 cycling in nested splits.")
+        if tab_reorder:
+            def tab_state():
+                view = api("session.view", session_id=sid)
+                order = tuple(tab["window_id"] for tab in view["windows"])
+                return order, view["active_window_id"]
+
+            first = tab_state()[1]
+            key("F5")
+            second = wait_for(lambda: tab_state()[1] != first and tab_state()[1],
+                              "create second tab", compositor)
+            key("F5")
+            third = wait_for(lambda: len(tab_state()[0]) == 3 and tab_state()[1] != second
+                             and tab_state()[1], "create third tab", compositor)
+            # Server focus and order can be visible through the observer before
+            # rex-tui has received the corresponding backend snapshot.
+            def settle(expected):
+                wait_for(lambda: tab_state() == (expected, third),
+                         "server order and active tab", compositor)
+                time.sleep(.5)
+
+            def move(direction, expected):
+                key(direction, "alt", "shift")
+                settle(expected)
+
+            settle((first, second, third))
+            move("Left", (first, third, second))
+            move("Left", (third, first, second))
+            key("Left", "alt", "shift")
+            settle((third, first, second))
+            move("Right", (first, third, second))
+            move("Right", (first, second, third))
+            key("Right", "alt", "shift")
+            settle((first, second, third))
+
+            settings.write_text(settings.read_text() + 'move_tab_left = "Alt+m"\n')
+            key("F1")
+            key("r")
+            key("Escape")
+            key("m", "alt")
+            wait_for(lambda: tab_state() == ((first, third, second), third),
+                     "remapped tab move", compositor)
+            time.sleep(.5)
+            key("F3")
+            wait_for(lambda: tab_state()[1] == first, "restore original split tab", compositor)
+            print("Foot reordered tabs on the server, retained active ID, and stopped at both edges.")
         key("F10")
         assert compositor.wait(timeout=5) == 0, "Foot session failed to exit"
         assert ratios(.45, .5), "exiting changed the session's layout"
@@ -188,11 +233,12 @@ def main():
     parser.add_argument("launcher", type=Path, help="Path to the packaged rex-tui launcher")
     parser.add_argument("--labwc", default="labwc")
     parser.add_argument("--focus", action="store_true", help="Also verify directional pane focus")
+    parser.add_argument("--reorder", action="store_true", help="Also verify keyboard tab reordering")
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="rex-resize-") as temp:
         root = Path(temp)
         try:
-            exercise(args.launcher.resolve(), args.labwc, root, args.focus)
+            exercise(args.launcher.resolve(), args.labwc, root, args.focus, args.reorder)
         except Exception as error:
             # These logs come from the fixture's empty private profile.
             for log in ("server.log", "foot.log"):

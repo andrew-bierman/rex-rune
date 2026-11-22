@@ -141,6 +141,27 @@ fn create_workspace_item(state: &Value, action: Action) -> Result<Value, &'stati
     Ok(request)
 }
 
+fn move_active_tab(state: &Value, action: Action) -> Option<Value> {
+    if state["connected"] != true
+        || state["hosts"]["pending"] == true
+        || !state["session"].is_string()
+        || !state["window"].is_string()
+    {
+        return None;
+    }
+    let tabs = items(&state["windows"]);
+    let active = tabs.iter().position(|tab| tab["id"] == state["window"])?;
+    let direction = match action {
+        Action::MoveTabLeft if active > 0 => "left",
+        Action::MoveTabRight if active + 1 < tabs.len() => "right",
+        _ => return None,
+    };
+    let mut request = targeted(state, "workspace");
+    request["action"] = json!("client.tab.move");
+    request["args"] = json!({"direction": direction});
+    Some(request)
+}
+
 fn scroll_active_pane(state: &Value, action: Action) -> Option<Value> {
     if state["connected"] != true
         || state["hosts"]["pending"] == true
@@ -790,6 +811,13 @@ fn run(
                             screen.dirty = true;
                         }
                     }
+                    Some(action @ (Action::MoveTabLeft | Action::MoveTabRight)) => {
+                        if key.kind == KeyEventKind::Press
+                            && let Some(request) = move_active_tab(&state, action)
+                        {
+                            backend.send(request)?;
+                        }
+                    }
                     Some(action @ (Action::ScrollUp | Action::ScrollDown)) => {
                         if down && let Some(request) = scroll_active_pane(&state, action) {
                             backend.send(request)?;
@@ -945,6 +973,35 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tab_reordering_targets_the_active_tab_and_stops_at_the_boundaries() {
+        let mut state = json!({
+            "connected":true,"host":"h","epoch":7,"session":"s","window":"b","pane":"p",
+            "windows":[{"id":"a"},{"id":"b"},{"id":"c"}]
+        });
+        let request = move_active_tab(&state, Action::MoveTabLeft).unwrap();
+        assert_eq!(
+            request,
+            json!({
+                "op":"workspace","host":"h","epoch":7,"session":"s","window":"b","pane":"p",
+                "action":"client.tab.move","args":{"direction":"left"}
+            })
+        );
+        assert_eq!(
+            move_active_tab(&state, Action::MoveTabRight).unwrap()["args"]["direction"],
+            "right"
+        );
+        state["window"] = json!("a");
+        assert!(move_active_tab(&state, Action::MoveTabLeft).is_none());
+        state["window"] = json!("c");
+        assert!(move_active_tab(&state, Action::MoveTabRight).is_none());
+        state["window"] = json!("missing");
+        assert!(move_active_tab(&state, Action::MoveTabLeft).is_none());
+        state["window"] = json!("b");
+        state["hosts"]["pending"] = json!(true);
+        assert!(move_active_tab(&state, Action::MoveTabLeft).is_none());
+    }
 
     #[test]
     fn keyboard_scrollback_uses_local_scroll_on_the_active_pane() {
