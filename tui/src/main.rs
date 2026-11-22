@@ -1,12 +1,14 @@
+mod close;
 mod settings;
 mod ui;
 
 use anyhow::{Context, Result, bail};
+use close::{CloseDialog, CloseTarget};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use serde_json::{Value, json};
 use settings::{Action, Settings, StartupFocus};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, Stdio},
@@ -18,6 +20,7 @@ use std::{
 struct Inbox {
     state: Option<Value>,
     problem: Option<String>,
+    rejected_request: Option<u64>,
     closed: bool,
 }
 
@@ -56,7 +59,13 @@ impl Backend {
                         slot.problem = Some("Unsupported Rex backend protocol".into());
                         break;
                     }
-                    Some("error" | "notice") => slot.problem = Some(text(&value, "message").into()),
+                    Some("error") => {
+                        if let Some(request_id) = value["request_id"].as_u64() {
+                            slot.rejected_request = Some(request_id);
+                        }
+                        slot.problem = Some(text(&value, "message").into());
+                    }
+                    Some("notice") => slot.problem = Some(text(&value, "message").into()),
                     _ => {}
                 }
             }
@@ -123,6 +132,43 @@ fn create_workspace_item(state: &Value, action: Action) -> Result<Value, &'stati
     request["action"] = json!(action);
     request["args"] = args;
     Ok(request)
+}
+
+fn resize_split(state: &Value, action: Action, kind: KeyEventKind) -> Option<Value> {
+    if kind == KeyEventKind::Release
+        || state["connected"] != true
+        || state["hosts"]["pending"] == true
+        || !state["pane"].is_string()
+        || items(&state["dividers"]).is_empty()
+    {
+        return None;
+    }
+    let direction = match action {
+        Action::ResizeLeft => "left",
+        Action::ResizeRight => "right",
+        Action::ResizeUp => "up",
+        Action::ResizeDown => "down",
+        _ => return None,
+    };
+    let mut request = targeted(state, "workspace");
+    request["action"] = json!("pane.resize");
+    request["args"] = json!({"direction": direction, "amount": 5});
+    Some(request)
+}
+
+fn consume_modal_key(keys: &mut HashSet<KeyCode>, key: KeyEvent, modal: bool) -> bool {
+    match key.kind {
+        KeyEventKind::Press | KeyEventKind::Repeat if modal => {
+            keys.insert(key.code);
+            true
+        }
+        KeyEventKind::Press => {
+            keys.remove(&key.code);
+            false
+        }
+        KeyEventKind::Repeat => keys.contains(&key.code),
+        KeyEventKind::Release => keys.remove(&key.code) || modal,
+    }
 }
 
 fn terminal_key(event: KeyEvent) -> Option<Value> {
@@ -252,10 +298,18 @@ fn run(
     let mut sizes = HashMap::new();
     let mut resize_scope: Option<(String, Option<u64>, String, String)> = None;
     let mut last_claim = None;
+    let mut close_dialog: Option<CloseDialog> = None;
+    let mut close_request_id = 0u64;
+    let mut modal_keys = HashSet::new();
     loop {
-        let (update, message, closed) = {
+        let (update, message, rejected_request, closed) = {
             let mut inbox = backend.inbox.lock().unwrap();
-            (inbox.state.take(), inbox.problem.take(), inbox.closed)
+            (
+                inbox.state.take(),
+                inbox.problem.take(),
+                inbox.rejected_request.take(),
+                inbox.closed,
+            )
         };
         let changed = update.is_some() || message.is_some();
         if let Some(update) = update {
@@ -278,8 +332,27 @@ fn run(
                 }
             );
         }
+        if close_dialog
+            .as_ref()
+            .is_some_and(|dialog| !dialog.active(&state, rejected_request))
+        {
+            close_dialog = None;
+            screen.dirty = true;
+        }
+        if let Some(request) = close_dialog
+            .as_mut()
+            .and_then(|dialog| dialog.cancel(&state))
+        {
+            backend.send(request)?;
+            screen.dirty = true;
+        }
         if changed || screen.dirty {
-            terminal.draw(|frame| screen.draw(frame, &state, &problem, settings_path))?;
+            terminal.draw(|frame| {
+                screen.draw(frame, &state, &problem, settings_path);
+                if let Some(dialog) = &close_dialog {
+                    dialog.draw(frame, &state);
+                }
+            })?;
             screen.dirty = false;
         }
         if state["hosts"]["pending"] != true {
@@ -331,10 +404,26 @@ fn run(
         if !event::poll(Duration::from_millis(25))? {
             continue;
         }
-        match event::read()? {
+        let input = event::read()?;
+        if let Event::Key(key) = &input {
+            let swallowed = consume_modal_key(&mut modal_keys, *key, close_dialog.is_some());
+            if let Some(dialog) = &mut close_dialog {
+                let size = terminal.size()?;
+                let popup_visible = size.width >= 38 && size.height >= 8;
+                if let Some(request) = dialog.key(&state, *key, popup_visible) {
+                    backend.send(request)?;
+                }
+                screen.dirty = true;
+            }
+            if swallowed {
+                continue;
+            }
+        }
+        match input {
             Event::Resize(..) => screen.dirty = true,
             Event::Paste(paste)
-                if !screen.sidebar
+                if close_dialog.is_none()
+                    && !screen.sidebar
                     && !screen.settings_open
                     && state["terminal"]["connected"] == true
                     && state["hosts"]["pending"] != true =>
@@ -371,6 +460,35 @@ fn run(
                     focus_terminal_on_attach = false;
                 }
                 match action {
+                    Some(action @ (Action::CloseSession | Action::CloseTab)) => {
+                        if key.kind == KeyEventKind::Press {
+                            close_request_id = close_request_id.wrapping_add(1);
+                            let kind = if action == Action::CloseSession {
+                                CloseTarget::Session
+                            } else {
+                                CloseTarget::Tab
+                            };
+                            match CloseDialog::start(&state, kind, close_request_id) {
+                                Ok((dialog, request)) => {
+                                    backend.send(request)?;
+                                    close_dialog = Some(dialog);
+                                    problem.clear();
+                                }
+                                Err(message) => problem = message.into(),
+                            }
+                            screen.dirty = true;
+                        }
+                    }
+                    Some(
+                        action @ (Action::ResizeLeft
+                        | Action::ResizeRight
+                        | Action::ResizeUp
+                        | Action::ResizeDown),
+                    ) => {
+                        if let Some(request) = resize_split(&state, action, key.kind) {
+                            backend.send(request)?;
+                        }
+                    }
                     Some(Action::Settings) => {
                         if key.kind == KeyEventKind::Press {
                             screen.settings_open = true;
@@ -541,5 +659,61 @@ mod tests {
         assert_eq!(request["args"]["direction"], "down");
         state["hosts"] = json!({"pending": true});
         assert!(create_workspace_item(&state, Action::SplitDown).is_err());
+    }
+
+    #[test]
+    fn resize_uses_five_point_steps_in_each_direction() {
+        let mut state = json!({
+            "host": "local", "epoch": 7, "connected": true, "session": "session",
+            "window": "window", "pane": "shell", "dividers": [{"ratio": 0.5}]
+        });
+        for (action, direction) in [
+            (Action::ResizeLeft, "left"),
+            (Action::ResizeRight, "right"),
+            (Action::ResizeUp, "up"),
+            (Action::ResizeDown, "down"),
+        ] {
+            let request = resize_split(&state, action, KeyEventKind::Press).unwrap();
+            assert_eq!(request["action"], "pane.resize");
+            assert_eq!(request["pane"], "shell");
+            assert_eq!(
+                request["args"],
+                json!({"direction": direction, "amount": 5})
+            );
+        }
+        let down = Action::ResizeDown;
+        assert!(resize_split(&state, down, KeyEventKind::Repeat).is_some());
+        assert!(resize_split(&state, down, KeyEventKind::Release).is_none());
+        state["dividers"] = json!([]);
+        assert!(resize_split(&state, down, KeyEventKind::Press).is_none());
+        state["dividers"] = json!([{"ratio": 0.5}]);
+        state["hosts"]["pending"] = json!(true);
+        assert!(resize_split(&state, down, KeyEventKind::Press).is_none());
+    }
+
+    #[test]
+    fn modal_press_and_its_trailing_events_do_not_reach_the_shell() {
+        let mut keys = HashSet::new();
+        let event = |kind| KeyEvent::new_with_kind(KeyCode::Char('y'), KeyModifiers::NONE, kind);
+        assert!(consume_modal_key(
+            &mut keys,
+            event(KeyEventKind::Press),
+            true
+        ));
+        assert!(consume_modal_key(
+            &mut keys,
+            event(KeyEventKind::Repeat),
+            false
+        ));
+        assert!(consume_modal_key(
+            &mut keys,
+            event(KeyEventKind::Release),
+            false
+        ));
+        assert!(!consume_modal_key(
+            &mut keys,
+            event(KeyEventKind::Press),
+            false
+        ));
     }
 }

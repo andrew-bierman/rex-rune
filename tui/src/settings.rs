@@ -25,10 +25,16 @@ pub enum Action {
     NextPane,
     SplitRight,
     SplitDown,
+    CloseSession,
+    CloseTab,
+    ResizeLeft,
+    ResizeRight,
+    ResizeUp,
+    ResizeDown,
     Quit,
 }
 
-const DEFAULT_KEYS: [(Action, &str); 10] = [
+const DEFAULT_KEYS: [(Action, &str); 16] = [
     (Action::Settings, "F1"),
     (Action::NewSession, "F2"),
     (Action::PreviousTab, "F3"),
@@ -39,6 +45,12 @@ const DEFAULT_KEYS: [(Action, &str); 10] = [
     (Action::SplitRight, "F8"),
     (Action::SplitDown, "F9"),
     (Action::Quit, "F10"),
+    (Action::CloseSession, "Shift+F2"),
+    (Action::CloseTab, "Shift+F5"),
+    (Action::ResizeLeft, "Ctrl+Shift+Left"),
+    (Action::ResizeRight, "Ctrl+Shift+Right"),
+    (Action::ResizeUp, "Ctrl+Shift+Up"),
+    (Action::ResizeDown, "Ctrl+Shift+Down"),
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
