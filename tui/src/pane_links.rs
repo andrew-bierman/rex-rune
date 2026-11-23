@@ -255,7 +255,12 @@ mod tests {
     }
 
     fn mouse(kind: MouseEventKind, modifiers: KeyModifiers) -> MouseEvent {
-        MouseEvent { kind, column: 4, row: 5, modifiers }
+        MouseEvent {
+            kind,
+            column: 4,
+            row: 5,
+            modifiers,
+        }
     }
 
     #[test]
@@ -265,21 +270,46 @@ mod tests {
         let left_down = MouseEventKind::Down(MouseButton::Left);
         let left_up = MouseEventKind::Up(MouseButton::Left);
         let ctrl = KeyModifiers::CONTROL;
-        assert_eq!(click.event(&state, &grids, mouse(left_down, KeyModifiers::NONE)), None);
-        assert_eq!(click.event(&state, &grids, mouse(left_down, KeyModifiers::SHIFT | ctrl)), None);
+        assert_eq!(
+            click.event(&state, &grids, mouse(left_down, KeyModifiers::NONE)),
+            None
+        );
+        assert_eq!(
+            click.event(&state, &grids, mouse(left_down, KeyModifiers::SHIFT | ctrl)),
+            None
+        );
 
-        assert_eq!(click.event(&state, &grids, mouse(left_down, ctrl)), Some(None));
-        assert_eq!(click.event(&state, &grids, mouse(left_up, ctrl)), Some(Some("https://example.test/label".into())));
+        assert_eq!(
+            click.event(&state, &grids, mouse(left_down, ctrl)),
+            Some(None)
+        );
+        assert_eq!(
+            click.event(&state, &grids, mouse(left_up, ctrl)),
+            Some(Some("https://example.test/label".into()))
+        );
         click.event(&state, &grids, mouse(left_down, ctrl));
         let mut changed = state.clone();
         changed["panes"][0]["frame"]["links"][0]["uri"] = json!("https://example.test/replacement");
-        assert_eq!(click.event(&changed, &grids, mouse(left_up, ctrl)), Some(None));
+        assert_eq!(
+            click.event(&changed, &grids, mouse(left_up, ctrl)),
+            Some(None)
+        );
         click.event(&state, &grids, mouse(left_down, ctrl));
-        click.event(&state, &grids, mouse(MouseEventKind::Drag(MouseButton::Left), ctrl));
-        assert_eq!(click.event(&state, &grids, mouse(left_up, ctrl)), Some(None));
+        click.event(
+            &state,
+            &grids,
+            mouse(MouseEventKind::Drag(MouseButton::Left), ctrl),
+        );
+        assert_eq!(
+            click.event(&state, &grids, mouse(left_up, ctrl)),
+            Some(None)
+        );
         click.event(&state, &grids, mouse(left_down, ctrl));
         changed["epoch"] = json!(3);
-        assert_eq!(click.event(&changed, &grids, mouse(left_up, ctrl)), Some(None));
+        assert_eq!(
+            click.event(&changed, &grids, mouse(left_up, ctrl)),
+            Some(None)
+        );
     }
 
     #[test]
@@ -287,17 +317,33 @@ mod tests {
         let (state, grids) = fixture();
         let mut picker = Picker::new(&state, &grids).unwrap();
         let key = |code| KeyEvent::new(code, KeyModifiers::NONE);
-        assert!(matches!(picker.key(&state, &grids, key(KeyCode::Down), true), Pick::Continue));
+        assert!(matches!(
+            picker.key(&state, &grids, key(KeyCode::Down), true),
+            Pick::Continue
+        ));
         assert!(matches!(
             picker.key(&state, &grids, key(KeyCode::Enter), true),
             Pick::Open(uri) if uri == "http://example.test/wrapped"
         ));
         picker.key(&state, &grids, key(KeyCode::Down), true);
-        assert!(matches!(picker.key(&state, &grids, key(KeyCode::Enter), true), Pick::Open(uri) if uri == "http://example.test/wrapped"));
+        assert!(
+            matches!(picker.key(&state, &grids, key(KeyCode::Enter), true), Pick::Open(uri) if uri == "http://example.test/wrapped")
+        );
         let mut changed = state.clone();
         changed["pane"] = json!("other");
-        assert!(matches!(picker.key(&changed, &grids, key(KeyCode::Enter), true), Pick::Changed));
-        for uri in ["file:///tmp/no", "javascript:alert(1)", "--help", "mailto:a@example.test", "https://", "https://x.test/\x1b", "https://x.test/a b"] {
+        assert!(matches!(
+            picker.key(&changed, &grids, key(KeyCode::Enter), true),
+            Pick::Changed
+        ));
+        for uri in [
+            "file:///tmp/no",
+            "javascript:alert(1)",
+            "--help",
+            "mailto:a@example.test",
+            "https://",
+            "https://x.test/\x1b",
+            "https://x.test/a b",
+        ] {
             assert!(!web_url(uri), "{uri:?}");
         }
     }
