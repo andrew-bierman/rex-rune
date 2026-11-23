@@ -407,6 +407,7 @@ impl Settings {
                     | Action::MoveTabLeft
                     | Action::MoveTabRight
                     | Action::NextAttention
+                    | Action::Find
                     | Action::FilterSidebar
             )
         };
@@ -714,6 +715,25 @@ pub mod tests {
         );
         fs::write(themes.join("custom.toml"), "[chrome]\nunknown = \"blue\"").unwrap();
         assert!(format!("{:#}", Settings::load(&settings).unwrap_err()).contains("unknown"));
+    }
+
+    #[test]
+    fn sidebar_and_find_defaults_preserve_existing_bindings() {
+        let file = toml::from_str(
+            r#"[keys]
+            new_tab = "/"
+            settings = "Alt+/"
+            split_down = "Alt+a"
+        "#,
+        )
+        .unwrap();
+        let settings = Settings::from_file(file, Path::new("")).unwrap();
+        assert_eq!(settings.shortcut(Action::NewTab), Some("/"));
+        assert_eq!(settings.shortcut(Action::Settings), Some("Alt+/"));
+        assert_eq!(settings.shortcut(Action::SplitDown), Some("Alt+a"));
+        assert_eq!(settings.shortcut(Action::FilterSidebar), None);
+        assert_eq!(settings.shortcut(Action::Find), None);
+        assert_eq!(settings.shortcut(Action::NextAttention), None);
     }
 
     #[test]
