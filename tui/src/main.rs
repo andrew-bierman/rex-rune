@@ -1,3 +1,4 @@
+mod attention;
 mod cli;
 mod close;
 mod input_prompt;
@@ -825,6 +826,27 @@ fn run(
                             && let Some(request) = move_active_tab(&state, action)
                         {
                             backend.send(request)?;
+                        }
+                    }
+                    Some(Action::NextAttention) => {
+                        if key.kind == KeyEventKind::Press && state["hosts"]["pending"] != true {
+                            let attention = attention::Attention::from_state(&state);
+                            if let Some(request) = attention.next(&state) {
+                                backend.send(request)?;
+                                problem.clear();
+                            } else {
+                                problem = if !attention.is_empty() {
+                                    "You’re on the only tab needing attention"
+                                } else if state["activity"]["reading"] == true {
+                                    "Still checking Rex activity"
+                                } else if state["activity"]["incomplete"] == true {
+                                    "No reported attention. Some Rex activity is unavailable."
+                                } else {
+                                    "No tabs report needing attention"
+                                }
+                                .into();
+                            }
+                            screen.dirty = true;
                         }
                     }
                     Some(action @ (Action::ScrollUp | Action::ScrollDown)) => {
