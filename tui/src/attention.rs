@@ -19,6 +19,48 @@ impl Status {
 
 type Scope<'a> = (&'a str, &'a str, &'a str);
 
+pub(crate) struct TabReport<'a> {
+    pub scope: Scope<'a>,
+    pub epoch: u64,
+    pub activity_epoch: Option<u64>,
+    pub status: Option<Status>,
+    pub muted: bool,
+    pub observed: bool,
+}
+
+pub(crate) fn reported_tabs(state: &Value) -> impl Iterator<Item = TabReport<'_>> {
+    let connected: HashMap<_, _> = items(&state["hosts"]["rows"])
+        .iter()
+        .filter(|host| host["connected"] == true)
+        .filter_map(|host| Some((text(host, "id"), host["epoch"].as_u64()?)))
+        .collect();
+    items(&state["activity"]["rows"])
+        .iter()
+        .filter_map(move |row| {
+            let scope = (text(row, "host"), text(row, "session"), text(row, "window"));
+            let epoch = row["epoch"].as_u64()?;
+            if scope.0.is_empty()
+                || scope.1.is_empty()
+                || scope.2.is_empty()
+                || connected.get(scope.0) != Some(&epoch)
+            {
+                return None;
+            }
+            Some(TabReport {
+                scope,
+                epoch,
+                activity_epoch: row["activityEpoch"].as_u64(),
+                status: match text(row, "state") {
+                    "blocked" => Some(Status::Blocked),
+                    "error" => Some(Status::Error),
+                    _ => None,
+                },
+                muted: row["muted"] == true,
+                observed: row["age"]["reported"] == false,
+            })
+        })
+}
+
 #[derive(Default)]
 pub(crate) struct Attention<'a> {
     tabs: HashMap<Scope<'a>, (Status, u64)>,
@@ -28,35 +70,15 @@ pub(crate) struct Attention<'a> {
 
 impl<'a> Attention<'a> {
     pub(crate) fn from_state(state: &'a Value) -> Self {
-        let connected: HashMap<_, _> = items(&state["hosts"]["rows"])
-            .iter()
-            .filter(|host| host["connected"] == true)
-            .filter_map(|host| Some((text(host, "id"), host["epoch"].as_u64()?)))
-            .collect();
         let mut attention = Self::default();
-        for row in items(&state["activity"]["rows"]) {
-            let host = text(row, "host");
-            let session = text(row, "session");
-            let window = text(row, "window");
-            let Some(epoch) = row["epoch"].as_u64() else {
+        for report in reported_tabs(state).filter(|report| !report.muted) {
+            let Some(status) = report.status else {
                 continue;
             };
-            if host.is_empty()
-                || session.is_empty()
-                || window.is_empty()
-                || connected.get(host) != Some(&epoch)
-                || row["muted"] == true
-            {
-                continue;
-            }
-            let status = match text(row, "state") {
-                "blocked" => Status::Blocked,
-                "error" => Status::Error,
-                _ => continue,
-            };
+            let (host, session, _) = report.scope;
             if attention
                 .tabs
-                .insert((host, session, window), (status, epoch))
+                .insert(report.scope, (status, report.epoch))
                 .is_none()
             {
                 *attention.hosts.entry(host).or_default() += 1;

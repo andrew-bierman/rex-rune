@@ -291,6 +291,12 @@ struct SelectionConfig {
     mouse: bool,
 }
 
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct NotificationConfig {
+    attention: bool,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct File {
@@ -300,6 +306,7 @@ struct File {
     panes: Panes,
     experimental: Experimental,
     selection: SelectionConfig,
+    notifications: NotificationConfig,
     keys: BTreeMap<Action, String>,
 }
 
@@ -312,6 +319,7 @@ impl Default for File {
             panes: Panes::default(),
             experimental: Experimental::default(),
             selection: SelectionConfig::default(),
+            notifications: NotificationConfig::default(),
             keys: BTreeMap::new(),
         }
     }
@@ -326,6 +334,7 @@ pub struct Settings {
     pub panes: Panes,
     pub mouse_selection: bool,
     pub mouse_actions: bool,
+    pub attention_notifications: bool,
     keys: BTreeMap<Action, Binding>,
 }
 
@@ -429,6 +438,7 @@ impl Settings {
             sidebar: file.sidebar,
             panes: file.panes,
             mouse_selection,
+            attention_notifications: file.notifications.attention,
             mouse_actions: file.experimental.mouse_actions,
             keys,
         })

@@ -19,6 +19,9 @@ mouse_actions = false
 [selection]
 mouse = false
 
+[notifications]
+attention = false
+
 [keys]
 settings = "F1"
 compose_input = "F11"
