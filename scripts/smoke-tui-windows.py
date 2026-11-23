@@ -182,7 +182,7 @@ def exercise_conpty(frontend, root, profile, sessions, env):
     output.start()
     try:
         screen = lambda text: text in "".join(chunks.copy())
-        wait_for(lambda: screen("Connected"), "HTTPS connection in rex-tui")
+        wait_for(lambda: screen("F2 Create session"), "HTTPS connection in rex-tui")
         terminal.write("\x1bOQ")  # F2 creates the disposable session.
         wait_for(sessions, "session created through ConPTY and HTTPS")
         wait_for(lambda: screen("Browse"), "terminal input focus")
