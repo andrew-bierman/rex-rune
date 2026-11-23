@@ -117,6 +117,20 @@ rows. **Alt+a** cycles through reported attention, with waiting tabs first.
 Remap it with `next_attention` in `[keys]`. These indicators depend on
 programs publishing Rex status.
 
+To receive desktop notifications in Foot when a background tab changes to a
+waiting or error state, enable this in `settings.toml` and reload Settings.
+
+```toml
+[notifications]
+attention = true
+```
+
+Notifications are off by default. They use Foot's OSC 777 support with its
+usual notification command and focus suppression. The client emits these
+requests when Foot identifies itself via `TERM`. The messages contain no
+tab names, terminal output, or program messages. Existing statuses at
+startup or reconnect, the current tab, and muted tabs stay quiet.
+
 Rename prompts capture the active target. Edit the label or clear it with
 Ctrl+U, then press Enter to send the change. An empty tab or pane label restores
 its generated title. Press Esc to cancel a draft or return after sending it.

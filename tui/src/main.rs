@@ -1,4 +1,5 @@
 mod attention;
+mod attention_notifications;
 mod cli;
 mod close;
 mod input_prompt;
@@ -369,6 +370,10 @@ fn run(
     let mut mouse_capture = selection::MouseCapture::default();
     let mut pointer = Pointer::default();
     let mut pending_focus: Option<Focus> = None;
+    let foot = std::env::var("TERM")
+        .is_ok_and(|term| matches!(term.as_str(), "foot" | "foot-extra" | "foot-direct"));
+    let mut notifications = attention_notifications::Notifications::default();
+    let mut notifications_enabled = false;
     loop {
         mouse_capture.set(screen.settings.mouse_selection)?;
         let (update, message, rejection, closed) = {
@@ -380,7 +385,8 @@ fn run(
                 inbox.closed,
             )
         };
-        let changed = update.is_some() || message.is_some();
+        let updated = update.is_some();
+        let changed = updated || message.is_some();
         if let Some(update) = update {
             state = update;
             if let Some(prompt) = &mut screen.prompt {
@@ -407,6 +413,15 @@ fn run(
                     &problem
                 }
             );
+        }
+        let enabled = foot && screen.settings.attention_notifications;
+        let notification_setting_changed = enabled != notifications_enabled;
+        if notification_setting_changed {
+            notifications.clear();
+            notifications_enabled = enabled;
+        }
+        if enabled && (updated || notification_setting_changed) {
+            let _ = notifications.observe(&state, &mut std::io::stdout());
         }
         if let Some(focus) = &pending_focus {
             match focus.status(&state, rejected_request) {
