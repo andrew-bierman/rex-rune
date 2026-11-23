@@ -1,0 +1,18 @@
+[package]
+name = "rex-tui"
+version = "0.1.0"
+description = "Terminal interface for Rex servers"
+repository = "https://github.com/andrew-bierman/rex-tui"
+license = "MIT"
+license-files = ["../LICENSE"]
+binaries = ["rex-tui", "rex-qt-backend"]
+out-dir = "target/rex-tui-dist-pair"
+build-command = [
+    "python",
+    "../scripts/stage-tui-pair.py",
+    "--for-cargo-dist",
+]
+
+[dist]
+auto-includes = false
+include = ["README.md", "../LICENSE"]

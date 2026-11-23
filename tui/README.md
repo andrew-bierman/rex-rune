@@ -25,12 +25,34 @@ rex-tui
 
 The package installs the TUI and the matching backend from the same checkout.
 
+## Build a portable pair
+
+From the repository root, stage both executables from the same checkout using
+the pinned Rust and Zig toolchains and Python 3:
+
+```sh
+mise exec -- python3 scripts/stage-tui-pair.py --output dist/rex-tui-pair
+```
+
+The script targets the build host by default. Pass `--target TRIPLE` for a
+configured cross toolchain. Run `rex-tui` (or `rex-tui.exe`) from the staged
+directory. Keep the companion `rex-qt-backend` executable beside it.
+
+The portable artifact workflow exercises Linux and macOS on x86_64 and arm64,
+and Windows on x86_64. Each job checks the package checksum and both executables
+and uploads the archive with its cargo-dist manifest. Both Linux executables
+must support glibc 2.35. Windows arm64 is in the distribution plan and awaits a
+validation runner setup for the pinned cargo-dist tool.
+
 ## Hosts and profiles
 
 Run `rex-tui` in Foot or another terminal. It uses
 `${XDG_CONFIG_HOME:-$HOME/.config}/rex-tui/workspace.json` and defaults to the
-local Rex server if the profile is absent. Use `rex-tui --config PATH` to select
-a profile explicitly.
+local Rex server on Unix if the profile is absent. The native Windows command
+uses `%APPDATA%/rex-tui` when `XDG_CONFIG_HOME` is unset. Use `rex-tui --config
+PATH` to select a profile explicitly. Windows needs a reachable HTTPS Rex host
+in the profile because the shared backend has no local Unix socket or SSH
+transport there.
 
 To connect to a remote server, add its endpoint to that profile. For example:
 

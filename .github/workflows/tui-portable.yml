@@ -1,0 +1,182 @@
+name: rex-tui portable artifacts
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/tui-portable.yml
+      - dist-workspace.toml
+      - scripts/checksum-tui-powershell-installer.py
+      - scripts/smoke-tui-windows.py
+      - scripts/stage-tui-pair.py
+      - scripts/tui-paste-private.py
+      - scripts/verify-tui-artifact.py
+      - Cargo.lock
+      - Cargo.toml
+      - build.rs
+      - mise.toml
+      - qt/backend/**
+      - src/**
+      - tui/**
+      - vendor/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  portable:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+            archive: tar.xz
+            dist-sha256: 7fee44ff3ff71ed0064b32d4ec62fee6b58bd37c5887b12a86aedddc5af0c7b5
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-22.04-arm
+            archive: tar.xz
+            dist-sha256: 58efb33edf01342875bfd0c3ce2befa9d73075579ca1b3e5dd75b98c88f92e83
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+            archive: tar.xz
+            dist-sha256: 6aa89bb1e7c18f51ae8b148ce2fc6ab00ac46ed8173d4f2ed9afa12101218773
+          - target: aarch64-apple-darwin
+            runner: macos-15
+            archive: tar.xz
+            dist-sha256: d1eec30e63eed23e5a5bd48fe96eae314799811bffca254ec1d2264638ba1890
+          - target: x86_64-pc-windows-msvc
+            runner: windows-2025
+            archive: zip
+            dist-sha256: 7bb53fbc998321f77a3bbb044084a52747c8ed041cf6d6a604802aa57b9c80c6
+    env:
+      TARGET: ${{ matrix.target }}
+      ARCHIVE_EXTENSION: ${{ matrix.archive }}
+      DIST_SHA256: ${{ matrix.dist-sha256 }}
+      DIST_VERSION: 0.34.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+        if: runner.os == 'Windows'
+        with:
+          arch: x64
+      - name: Fetch pinned Ghostty source on Windows
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          lock=vendor/ghostty-vt-sys/GHOSTTY.lock
+          url=$(sed -n 's/^url = //p' "$lock" | tr -d '\r')
+          checksum=$(sed -n 's/^sha256 = //p' "$lock" | tr -d '\r')
+          mkdir -p target/ghostty-source
+          curl --proto '=https' --tlsv1.2 -fsSLo target/ghostty-source.tar.gz "$url"
+          echo "$checksum  target/ghostty-source.tar.gz" | sha256sum -c -
+          "$SYSTEMROOT/System32/tar.exe" -xzf "$(cygpath -w "$PWD/target/ghostty-source.tar.gz")" \
+            -C "$(cygpath -w "$PWD/target/ghostty-source")" --strip-components=1
+          echo "GHOSTTY_SOURCE_DIR=$(cygpath -w "$PWD/target/ghostty-source")" >> "$GITHUB_ENV"
+      - name: Build and verify the native artifact
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            # Git Bash puts its Unix link.exe ahead of the MSVC linker.
+            msvc_bin="$(cygpath -u "$VCToolsInstallDir")"
+            msvc_bin="${msvc_bin%/}/bin/Hostx64/x64"
+            test -f "$msvc_bin/link.exe"
+            export PATH="$msvc_bin:$PATH"
+            test "$(command -v link.exe)" = "$msvc_bin/link.exe"
+          fi
+          test "$(mise exec -- rustc -vV | sed -n 's/^host: //p' | tr -d '\r')" = "$TARGET"
+          dist_config_version=$(python -c 'import tomllib; print(tomllib.load(open("dist-workspace.toml", "rb"))["dist"]["cargo-dist-version"])')
+          test "$DIST_VERSION" = "$dist_config_version"
+          version=$(python -c 'import tomllib; print(tomllib.load(open("tui/Cargo.toml", "rb"))["package"]["version"])')
+          mkdir -p target/dist-tool target/portable-receipt
+          tool="cargo-dist-$TARGET"
+          archive="$tool.$ARCHIVE_EXTENSION"
+          curl --proto '=https' --tlsv1.2 -fsSLo "target/dist-tool/$archive" \
+            "https://github.com/axodotdev/cargo-dist/releases/download/v$DIST_VERSION/$archive"
+          python -c 'import hashlib,sys; from pathlib import Path; assert hashlib.sha256(Path(sys.argv[1]).read_bytes()).hexdigest() == sys.argv[2]' \
+            "target/dist-tool/$archive" "$DIST_SHA256"
+          if [[ "$ARCHIVE_EXTENSION" == zip ]]; then
+            python -m zipfile -e "target/dist-tool/$archive" target/dist-tool
+            dist_tool="$PWD/target/dist-tool/dist.exe"
+          else
+            tar -xJf "target/dist-tool/$archive" -C target/dist-tool
+            dist_tool="$PWD/target/dist-tool/$tool/dist"
+          fi
+          "$dist_tool" --version
+          manifest="target/portable-receipt/$TARGET-dist-manifest.json"
+          mise exec -- "$dist_tool" build --artifacts local --target "$TARGET" \
+            --tag "rex-tui-v$version" --output-format json > "$manifest"
+          package="rex-tui-$TARGET.$ARCHIVE_EXTENSION"
+          python scripts/verify-tui-artifact.py "$TARGET" "target/distrib/$package" "$manifest"
+          cp "target/distrib/$package" "target/distrib/$package.sha256" target/portable-receipt/
+      - name: Smoke-test the installed macOS pair against disposable Rex
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          # Superlogical Rex 0.1.0-preview.22
+          REX_PREVIEW_COMMIT: a086db17db8d464627c77e3bb0be6d462668b0ac
+        run: |
+          case "$TARGET" in
+            x86_64-apple-darwin)
+              rex_archive=rex-darwin-amd64.zip
+              rex_sha256=51c4e14ada5ede8fb2d6e8e55dbd20f7eae19946ba0ab9fa588af82346d328f0
+              ;;
+            aarch64-apple-darwin)
+              rex_archive=rex-darwin-arm64.zip
+              rex_sha256=ef0931ba516259372b26b53d32eef535a94b43e81ede5b63489487df3e32f77b
+              ;;
+            *) exit 1 ;;
+          esac
+          smoke_dir="$(mktemp -d /tmp/rex-install.XXXXXXXX)"
+          trap 'rm -rf "$smoke_dir"' EXIT
+          curl --proto '=https' --tlsv1.2 -fsSLo "$smoke_dir/rex.zip" \
+            "https://blob.superlogical.com/download/rex/preview/$REX_PREVIEW_COMMIT/$rex_archive"
+          echo "$rex_sha256  $smoke_dir/rex.zip" | shasum -a 256 -c -
+          unzip -q "$smoke_dir/rex.zip" -d "$smoke_dir/vendor"
+          tar -xJf "target/distrib/rex-tui-$TARGET.tar.xz" -C "$smoke_dir"
+          installed="$smoke_dir/installed prefix/bin"
+          mkdir -p "$installed"
+          install -m 755 "$smoke_dir/rex-tui-$TARGET/rex-tui" \
+            "$smoke_dir/rex-tui-$TARGET/rex-qt-backend" "$installed/"
+          TMPDIR=/tmp REX_BIN="$smoke_dir/vendor/rex" \
+            python scripts/tui-paste-private.py "$installed/rex-tui"
+      - name: Exercise PowerShell installation and Rex over Windows ConPTY
+        if: matrix.target == 'x86_64-pc-windows-msvc'
+        shell: bash
+        run: |
+          manifest="$TARGET-dist-manifest.json"
+          cp "target/portable-receipt/$manifest" "target/distrib/$manifest"
+          mise exec -- "$PWD/target/dist-tool/dist.exe" build --artifacts global \
+            --tag "$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["announcement_tag"])' "target/distrib/$manifest")" \
+            --output-format json > target/portable-global.json
+          python scripts/checksum-tui-powershell-installer.py \
+            target/distrib/rex-tui-installer.ps1 target/portable-global.json
+
+          mkdir -p target/windows-smoke
+          rex_url=https://blob.superlogical.com/download/rex/preview/a086db17db8d464627c77e3bb0be6d462668b0ac/rex-windows-amd64.zip
+          curl --proto '=https' --tlsv1.2 -fsSLo target/windows-smoke/rex.zip "$rex_url"
+          echo 'd5c6385f087ec3ec30c3da7d6fe20f7ae0f409e7f4f196f39b245307d52365d9  target/windows-smoke/rex.zip' | sha256sum -c -
+          python -m zipfile -e target/windows-smoke/rex.zip target/windows-smoke/rex
+          rex_exe=$(find target/windows-smoke/rex -iname rex.exe -type f)
+          test -f "$rex_exe"
+          wheel=pywinpty-3.1.2-cp312-cp312-win_amd64.whl
+          wheel_url=https://files.pythonhosted.org/packages/ce/dd/e5ee2cc1295fc76ad8cd26ae4ec001358edbc9d4c4e7a465c136133d38cf
+          curl --proto '=https' --tlsv1.2 -fsSLo "target/windows-smoke/$wheel" "$wheel_url/$wheel"
+          echo "220e30a8cccd7f0be3356d4e3e56fdcda2ae45edc1de526b440c4031fe9308da  target/windows-smoke/$wheel" | sha256sum -c -
+          python -m pip install --no-deps --no-index "target/windows-smoke/$wheel"
+          python scripts/smoke-tui-windows.py target/distrib/rex-tui-installer.ps1 \
+            "target/distrib/rex-tui-$TARGET.zip" "$rex_exe" --openssl "$(cygpath -w "$(command -v openssl)")"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rex-tui-portable-${{ matrix.target }}
+          path: target/portable-receipt/
+          if-no-files-found: error

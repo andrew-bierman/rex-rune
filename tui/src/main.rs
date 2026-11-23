@@ -1,3 +1,4 @@
+mod cli;
 mod close;
 mod input_prompt;
 mod mouse;
@@ -924,62 +925,57 @@ fn run(
 }
 
 fn main() -> Result<()> {
-    let mut args = std::env::args_os().skip(1);
-    let first = args
-        .next()
-        .context("usage: rex-tui BACKEND PROFILE [--settings PATH]")?;
-    if first == "--print-default-settings" {
-        anyhow::ensure!(args.next().is_none(), "Unexpected argument");
-        print!("{}", settings::DEFAULT_FILE);
-        return Ok(());
-    }
-    let check = first == "--check-settings";
-    let profile = if check {
-        None
-    } else {
-        Some(PathBuf::from(
-            args.next().context("Expected a workspace profile")?,
-        ))
-    };
-    let explicit_path = match args.next() {
-        Some(flag) if flag == "--settings" => Some(PathBuf::from(
-            args.next().context("Expected --settings PATH")?,
-        )),
-        Some(_) => bail!("Expected --settings PATH"),
-        None => None,
-    };
-    anyhow::ensure!(args.next().is_none(), "Unexpected argument");
-    let settings_path = match explicit_path {
-        None => settings::default_path()?,
-        Some(path) => {
-            if check {
-                anyhow::ensure!(
-                    path.try_exists()?,
-                    "Settings file does not exist: {}",
-                    path.display()
-                );
+    use cli::{Cli, Mode};
+
+    let args = Cli::parse(std::env::args_os().skip(1))?;
+    match args.mode {
+        Mode::Help => print!("{}", cli::USAGE),
+        Mode::Version => println!("rex-tui {}", env!("CARGO_PKG_VERSION")),
+        Mode::PrintSettings => print!("{}", settings::DEFAULT_FILE),
+        Mode::CheckSettings | Mode::Launch => {
+            let settings_path = match args.settings {
+                Some(path) => {
+                    if args.mode == Mode::CheckSettings {
+                        anyhow::ensure!(
+                            path.try_exists()?,
+                            "Settings file does not exist: {}",
+                            path.display()
+                        );
+                    }
+                    path
+                }
+                None => settings::default_path()?,
+            };
+            let settings = Settings::load(&settings_path)?;
+            if args.mode == Mode::CheckSettings {
+                println!("Settings valid: {}", settings_path.display());
+            } else {
+                let executable = match args.backend {
+                    Some(path) => path,
+                    None => cli::bundled_backend()?,
+                };
+                let profile = match args.profile {
+                    Some(path) => path,
+                    None => settings::config_dir()?.join("workspace.json"),
+                };
+                let mut backend = Backend::start(
+                    executable,
+                    profile,
+                    settings.panes.ansi_palette == PaneDefaultColors::Terminal,
+                )?;
+                let mut terminal = ratatui::try_init()?;
+                let result =
+                    crossterm::execute!(std::io::stdout(), crossterm::event::EnableBracketedPaste)
+                        .map_err(Into::into)
+                        .and_then(|()| run(&mut terminal, &mut backend, &settings_path, settings));
+                let _ =
+                    crossterm::execute!(std::io::stdout(), crossterm::event::DisableBracketedPaste);
+                ratatui::restore();
+                result?;
             }
-            path
         }
-    };
-    let settings = Settings::load(&settings_path)?;
-    if let Some(profile) = profile {
-        let mut backend = Backend::start(
-            PathBuf::from(first),
-            profile,
-            settings.panes.ansi_palette == PaneDefaultColors::Terminal,
-        )?;
-        let mut terminal = ratatui::try_init()?;
-        let result = crossterm::execute!(std::io::stdout(), crossterm::event::EnableBracketedPaste)
-            .map_err(Into::into)
-            .and_then(|()| run(&mut terminal, &mut backend, &settings_path, settings));
-        let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableBracketedPaste);
-        ratatui::restore();
-        result
-    } else {
-        println!("Settings valid: {}", settings_path.display());
-        Ok(())
     }
+    Ok(())
 }
 
 #[cfg(test)]
