@@ -19,7 +19,7 @@ mkdir -p "$PWD/dist"
   cd tui
   mise exec -- makepkg --clean
 )
-sudo pacman -U dist/rex-tui-0.1.0-16-x86_64.pkg.tar.zst
+sudo pacman -U dist/rex-tui-0.1.1-1-x86_64.pkg.tar.zst
 rex-tui
 ```
 
@@ -89,17 +89,25 @@ fi
 | Shift+F2 | Ask to close the active session |
 | F3 / F4 | Switch tabs |
 | Alt+Shift+Left / Right | Move the active tab one place left or right |
+| Alt+a | Jump to the next tab reporting attention |
+| Alt+Shift+Up / Down | Move the highlighted sidebar row up or down |
 | F5 | Open a shell in a new tab |
 | Shift+F5 | Ask to close the active tab |
 | Shift+F9 | Ask to close the focused pane or its tab if it has only one pane |
 | Shift+F6 / Shift+F7 / Shift+F8 | Rename the active session, tab, or focused pane |
 | F6 | Switch input between the sidebar and the terminal |
+| / | Filter hosts, sessions, and known tabs while browsing the sidebar |
 | F7 | Cycle pane focus |
 | Ctrl+Alt+Arrow | Focus the adjacent pane in that direction |
 | F8 / F9 | Split the focused pane right or down |
 | Ctrl+Shift+Arrow | Move a divider next to the focused pane |
 | F10 | Exit while leaving server sessions running |
 | Alt+PageUp / Alt+PageDown | Scroll the active pane back or forward |
+| Alt+/ | Find text in the active pane and its scrollback |
+
+While filtering, use the arrow keys to move through results and Enter to open
+the highlighted row. Press Ctrl+U to clear the query or Esc to restore the
+original sidebar selection and folds. Remap `/` with `filter_sidebar` in `[keys]`.
 
 Directional focus stops at the edge of the split layout. Remap it with
 `focus_left`, `focus_right`, `focus_up`, and `focus_down` in `[keys]`.
@@ -107,8 +115,34 @@ Directional focus stops at the edge of the split layout. Remap it with
 Tab moves keep the same tab active and stop at the ends of the tab strip.
 Remap them with `move_tab_left` and `move_tab_right` in `[keys]`.
 
+**Alt+Shift+Up/Down** moves the highlighted sidebar row among its siblings.
+Host order is saved in your local profile. Sessions move within their Rex
+server and tabs move within their session. Rex shares session and tab order
+across clients. Moving a row keeps the current workspace focused.
+Remap the shortcuts with `move_sidebar_up` and `move_sidebar_down`.
+
 Close prompts name the pane, tab, or session and explain what will stop. Press Y
 to confirm, or Enter or Esc to cancel. Remap Shift+F9 with `close_pane` in `[keys]`.
+
+Tabs marked **!** have a program waiting for input. **×** marks a reported
+error. The count on each host or session includes attention tabs inside folded
+rows. **Alt+a** cycles through reported attention, with waiting tabs first.
+Remap it with `next_attention` in `[keys]`. These indicators depend on
+programs publishing Rex status.
+
+To receive desktop notifications in Foot when a background tab changes to a
+waiting or error state, enable this in `settings.toml` and reload Settings.
+
+```toml
+[notifications]
+attention = true
+```
+
+Notifications are off by default. They use Foot's OSC 777 support with its
+usual notification command and focus suppression. The client emits these
+requests when Foot identifies itself via `TERM`. The messages contain no
+tab names, terminal output, or program messages. Existing statuses at
+startup or reconnect, the current tab, and muted tabs stay quiet.
 
 Rename prompts capture the active target. Edit the label or clear it with
 Ctrl+U, then press Enter to send the change. An empty tab or pane label restores
@@ -298,6 +332,11 @@ A mouse-tracking application in the selected pane receives wheel events.
 Use **Alt+PageUp** or **Alt+PageDown** for local scrollback in the active
 pane, including with mouse capture off. Typing returns to live output.
 Remap these shortcuts with `scroll_up` and `scroll_down` in `[keys]`.
+
+Press **Alt+/** to find text in the active pane. Type a query and press
+**Enter**. The footer shows the match count and the pane highlights the
+current result. Press **Up** for an older match or **Down** for a newer
+one. **Esc** closes Find. Remap the opener with `find` in `[keys]`.
 
 With mouse capture off, Foot can translate the wheel into Up and Down,
 which may step through shell or chat history. For pane wheel scrolling

@@ -294,6 +294,30 @@ impl Backend {
                     .filter(|w| !w.is_empty())
                     .map(str::to_owned),
             })?,
+            "reorder" => {
+                let direction = args["direction"]
+                    .as_i64()
+                    .context("missing reorder direction")?;
+                let scope = |key: &str| {
+                    if args[key].is_null() {
+                        Ok(None)
+                    } else {
+                        args[key]
+                            .as_str()
+                            .filter(|id| !id.is_empty())
+                            .map(Some)
+                            .context("invalid reorder target")
+                    }
+                };
+                self.hosts.reorder(
+                    &mut self.settings,
+                    &self.path,
+                    &id,
+                    scope("session")?,
+                    scope("window")?,
+                    isize::try_from(direction)?,
+                )?;
+            }
             "history" => self.hosts.history_step(
                 args["direction"]
                     .as_i64()

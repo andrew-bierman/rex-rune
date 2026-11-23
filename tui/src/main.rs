@@ -1,3 +1,5 @@
+mod attention;
+mod attention_notifications;
 mod cli;
 mod close;
 mod input_prompt;
@@ -368,6 +370,10 @@ fn run(
     let mut mouse_capture = selection::MouseCapture::default();
     let mut pointer = Pointer::default();
     let mut pending_focus: Option<Focus> = None;
+    let foot = std::env::var("TERM")
+        .is_ok_and(|term| matches!(term.as_str(), "foot" | "foot-extra" | "foot-direct"));
+    let mut notifications = attention_notifications::Notifications::default();
+    let mut notifications_enabled = false;
     loop {
         mouse_capture.set(screen.settings.mouse_selection)?;
         let (update, message, rejection, closed) = {
@@ -379,7 +385,8 @@ fn run(
                 inbox.closed,
             )
         };
-        let changed = update.is_some() || message.is_some();
+        let updated = update.is_some();
+        let changed = updated || message.is_some();
         if let Some(update) = update {
             state = update;
             if let Some(prompt) = &mut screen.prompt {
@@ -407,11 +414,21 @@ fn run(
                 }
             );
         }
+        let enabled = foot && screen.settings.attention_notifications;
+        let notification_setting_changed = enabled != notifications_enabled;
+        if notification_setting_changed {
+            notifications.clear();
+            notifications_enabled = enabled;
+        }
+        if enabled && (updated || notification_setting_changed) {
+            let _ = notifications.observe(&state, &mut std::io::stdout());
+        }
         if let Some(focus) = &pending_focus {
             match focus.status(&state, rejected_request) {
                 FocusStatus::Pending => {}
                 FocusStatus::Selected => {
                     pending_focus = None;
+                    screen.stop_filter();
                     screen.sidebar = false;
                     problem.clear();
                     screen.dirty = true;
@@ -543,7 +560,16 @@ fn run(
                     }
                     match prompt.key(&state, key, InputPrompt::visible(terminal.size()?)) {
                         Edit::Continue => {}
-                        Edit::Cancel => screen.prompt = None,
+                        Edit::Cancel => {
+                            let clear = {
+                                let inbox = backend.inbox.lock().unwrap();
+                                prompt.clear_find(inbox.state.as_ref().unwrap_or(&state))
+                            };
+                            if let Some(request) = clear {
+                                backend.send(request)?;
+                            }
+                            screen.prompt = None;
+                        }
                         // Keep the prompt open so repeated Enter presses stay out of the shell.
                         Edit::Send(request) => backend.send(request)?,
                     }
@@ -622,6 +648,20 @@ fn run(
             screen.dirty = true;
             continue;
         }
+        if screen.filtering() {
+            match input {
+                Event::Key(key) => {
+                    consume_modal_key(&mut modal_keys, key, true);
+                    if let Some(request) = screen.filter_key(&state, key) {
+                        backend.send(request)?;
+                    }
+                }
+                Event::Paste(paste) => screen.filter_paste(&state, &paste),
+                Event::Resize(..) => screen.dirty = true,
+                _ => {}
+            }
+            continue;
+        }
         if let Event::Key(key) = &input {
             let swallowed = consume_modal_key(&mut modal_keys, *key, close_dialog.is_some());
             if let Some(dialog) = &mut close_dialog {
@@ -659,8 +699,7 @@ fn run(
                     continue;
                 }
                 if !pointer_enabled {
-                    if let Some(request) = screen.selection.mouse(&state, &screen.pane_grids, event)
-                    {
+                    for request in screen.selection.mouse(&state, &screen.pane_grids, event) {
                         backend.send(request)?;
                         screen.dirty = true;
                     }
@@ -669,21 +708,15 @@ fn run(
                 match pointer.event(&state, &screen.pane_grids, event) {
                     PointerAction::None => {}
                     PointerAction::Selection(event) => {
-                        if selection_enabled
-                            && let Some(request) =
-                                screen.selection.mouse(&state, &screen.pane_grids, event)
-                        {
+                        for request in screen.selection.mouse(&state, &screen.pane_grids, event) {
                             backend.send(request)?;
                         }
                     }
                     PointerAction::BeginDrag(down, drag) => {
-                        if selection_enabled {
-                            for event in [down, drag] {
-                                if let Some(request) =
-                                    screen.selection.mouse(&state, &screen.pane_grids, event)
-                                {
-                                    backend.send(request)?;
-                                }
+                        for event in [down, drag] {
+                            for request in screen.selection.mouse(&state, &screen.pane_grids, event)
+                            {
+                                backend.send(request)?;
                             }
                         }
                     }
@@ -827,6 +860,41 @@ fn run(
                             backend.send(request)?;
                         }
                     }
+                    Some(Action::NextAttention) => {
+                        if key.kind == KeyEventKind::Press && state["hosts"]["pending"] != true {
+                            let attention = attention::Attention::from_state(&state);
+                            if let Some(request) = attention.next(&state) {
+                                backend.send(request)?;
+                                problem.clear();
+                            } else {
+                                problem = if !attention.is_empty() {
+                                    "You’re on the only tab needing attention"
+                                } else if state["activity"]["reading"] == true {
+                                    "Still checking Rex activity"
+                                } else if state["activity"]["incomplete"] == true {
+                                    "No reported attention. Some Rex activity is unavailable."
+                                } else {
+                                    "No tabs report needing attention"
+                                }
+                                .into();
+                            }
+                            screen.dirty = true;
+                        }
+                    }
+                    Some(action @ (Action::MoveSidebarUp | Action::MoveSidebarDown))
+                        if screen.sidebar =>
+                    {
+                        let direction = if action == Action::MoveSidebarUp {
+                            -1
+                        } else {
+                            1
+                        };
+                        if key.kind == KeyEventKind::Press
+                            && let Some(request) = screen.reorder_sidebar(&state, direction)
+                        {
+                            backend.send(request)?;
+                        }
+                    }
                     Some(action @ (Action::ScrollUp | Action::ScrollDown)) => {
                         if down && let Some(request) = scroll_active_pane(&state, action) {
                             backend.send(request)?;
@@ -843,9 +911,14 @@ fn run(
                             screen.dirty = true;
                         }
                     }
-                    Some(Action::ComposeInput) => {
+                    Some(action @ (Action::ComposeInput | Action::Find)) => {
                         if key.kind == KeyEventKind::Press {
-                            match InputPrompt::compose(&state) {
+                            let prompt = if action == Action::Find {
+                                InputPrompt::find(&state)
+                            } else {
+                                InputPrompt::compose(&state)
+                            };
+                            match prompt {
                                 Ok(prompt) => {
                                     screen.prompt = Some(prompt);
                                     modal_keys.insert(key.code);
@@ -882,6 +955,13 @@ fn run(
                     Some(Action::Quit) => {
                         if down {
                             return Ok(());
+                        }
+                    }
+                    Some(Action::FilterSidebar) if screen.sidebar => {
+                        if key.kind == KeyEventKind::Press {
+                            consume_modal_key(&mut modal_keys, key, true);
+                            pointer.cancel();
+                            screen.start_filter();
                         }
                     }
                     Some(Action::ToggleFocus) => {

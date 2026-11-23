@@ -64,21 +64,26 @@ On Arch and Omarchy you can also use the [native package](tui/README.md#install-
 
 A [personal Rex server started over SSH](docs/hosts.md#ssh-setup) runs until stopped or the host restarts. On systemd hosts, logging out ends the server and its sessions unless lingering is enabled.
 
+In the Linux 0.1.1 preview, **/** filters the sidebar, **Alt+/** searches
+pane scrollback, and **Alt+A** jumps between tabs reporting attention.
+**Alt+Shift+Up/Down** reorders the highlighted sidebar row. Foot notifications
+are opt-in. See the [keyboard and settings guide](tui/README.md#controls).
+
 ## Roadmap
 
 The roadmap takes its cues from the official [Rex for Mac actions](https://www.superlogical.com/rex/docs/reference/mac-actions) and [settings](https://www.superlogical.com/rex/docs/reference/mac-settings). Keyboard workflows come first. Changes to the published preview are verified in private Foot against disposable Rex sessions.
 
 | Area | What’s planned |
 | --- | --- |
-| Navigation | Searchable command palette, global session and tab switcher, sidebar filtering, and recent-tab history |
+| Navigation | Searchable command palette, global session and tab switcher, and recent-tab history |
 | Workspace controls | Move, zoom, balance, and close panes, plus close-others and floating panes |
-| Scrollback | Search within a pane, prompt jumps, and keyboard copy mode |
+| Scrollback | Jump to live output, prompt jumps, and keyboard copy mode |
 | Activity | Tab indicators, work grouped by session or priority, and opt-in desktop notifications |
 | Hosts and files | Host management, SSH setup guidance, device pairing, paths, file insertion, and links |
 | Mouse | Divider resizing, tab context actions, and forwarding for terminal programs that request it |
 | Settings | Theme picking and import, key sequences and modes, and terminal display preferences |
 
-After the keyboard workflows, the roadmap includes a richer input composer and optional terminal preloading.
+After the keyboard workflows, the roadmap includes a richer input composer, optional terminal preloading, and a standalone view of an existing pane.
 
 ## Contribute
 

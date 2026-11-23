@@ -86,6 +86,23 @@ pub struct Hosts {
     prefetch: bool,
 }
 
+fn sibling_anchor<'a>(
+    siblings: &[&'a str],
+    target: &str,
+    direction: isize,
+) -> Result<Option<Option<&'a str>>> {
+    let index = siblings
+        .iter()
+        .position(|id| *id == target)
+        .context("That row is no longer available.")?;
+    let before = match direction {
+        -1 => index.checked_sub(1),
+        1 if index + 1 < siblings.len() => Some(index + 2),
+        _ => None,
+    };
+    Ok(before.map(|index| siblings.get(index).copied()))
+}
+
 impl Hosts {
     /// Catalog construction is inert. `connect_all` starts attachment-only workers explicitly.
     pub fn new(settings: &Settings) -> Self {
@@ -126,6 +143,85 @@ impl Hosts {
             .iter()
             .position(|s| s.id == id)
             .context("host was removed or replaced")
+    }
+
+    pub fn reorder(
+        &mut self,
+        settings: &mut Settings,
+        path: &Path,
+        id: &str,
+        session: Option<&str>,
+        window: Option<&str>,
+        direction: isize,
+    ) -> Result<()> {
+        ensure!(matches!(direction, -1 | 1), "invalid reorder direction");
+        if self.pending.is_some() {
+            return Ok(());
+        }
+        let index = self.index(id)?;
+        let Some(session) = session else {
+            ensure!(window.is_none(), "missing tab session");
+            if let Some(adjacent) = index
+                .checked_add_signed(direction)
+                .filter(|i| *i < self.slots.len())
+            {
+                let mut next = settings.clone();
+                next.hosts.swap(index, adjacent);
+                next.save(path)?;
+                *settings = next;
+                self.slots.swap(index, adjacent);
+            }
+            return Ok(());
+        };
+
+        let slot = &self.slots[index];
+        let connection = slot.connection.as_ref().context("host is disconnected")?;
+        ensure!(slot.model.connected, "host is disconnected");
+        let sessions = slot
+            .model
+            .sessions
+            .iter()
+            .map(|row| row.session_id.as_str())
+            .collect::<Vec<_>>();
+        ensure!(
+            sessions.contains(&session),
+            "That session is no longer available."
+        );
+        let (method, anchor_name, anchor, mut payload) = if let Some(window) = window {
+            let view = slot
+                .model
+                .views
+                .get(session)
+                .context("That session is no longer available.")?;
+            let tabs = view
+                .windows
+                .iter()
+                .filter_map(|tab| tab.window_id.as_deref())
+                .collect::<Vec<_>>();
+            (
+                "session.move_window",
+                "before_window_id",
+                sibling_anchor(&tabs, window, direction)?,
+                json!({"session_id":session,"window_id":window}),
+            )
+        } else {
+            (
+                "session.move",
+                "before_session_id",
+                sibling_anchor(&sessions, session, direction)?,
+                json!({"session_id":session}),
+            )
+        };
+        if let Some(anchor) = anchor {
+            if let Some(anchor) = anchor {
+                payload[anchor_name] = json!(anchor);
+            }
+            connection.commands.send(HostCommand::Request {
+                method: method.into(),
+                payload,
+            })?;
+        }
+        Ok(())
     }
     pub fn require_active(&self, id: &str) -> Result<usize> {
         ensure!(id == self.active, "active host changed; request discarded");
@@ -847,6 +943,48 @@ mod tests {
             session: session.into(),
             window: None,
         }
+    }
+
+    #[test]
+    fn host_reorder_persists_the_profile_and_keeps_slot_identity() {
+        let (mut settings, mut hosts) = configured();
+        let ids = hosts.ids();
+        let first = settings.hosts[0].endpoint.clone();
+        let second = settings.hosts[1].endpoint.clone();
+        hosts.slots[0].model.connection_epoch = 42;
+        hosts.history.observe(visit(&ids[0], "active"));
+        let dir = scratch();
+        let profile = dir.path().join("workspace.json");
+        hosts
+            .reorder(&mut settings, &profile, &ids[0], None, None, 1)
+            .unwrap();
+        assert_eq!(hosts.ids(), [ids[1].clone(), ids[0].clone()]);
+        assert_eq!(hosts.active, ids[0]);
+        assert_eq!(hosts.slots[1].model.connection_epoch, 42);
+        assert_eq!(hosts.history.current(), Some(&visit(&ids[0], "active")));
+        let saved: Settings = serde_json::from_slice(&std::fs::read(&profile).unwrap()).unwrap();
+        assert_eq!(saved.hosts[0].endpoint, second);
+        assert_eq!(saved.hosts[1].endpoint, first);
+
+        let invalid_path = profile.join("cannot-write.json");
+        assert!(
+            hosts
+                .reorder(&mut settings, &invalid_path, &ids[0], None, None, -1)
+                .is_err()
+        );
+        assert_eq!(hosts.ids(), [ids[1].clone(), ids[0].clone()]);
+        assert_eq!(settings.hosts[0].endpoint, second);
+    }
+
+    #[test]
+    fn relative_moves_stop_at_boundaries_and_omit_the_anchor_for_append() {
+        let order = ["a", "b", "c", "d"];
+        assert_eq!(sibling_anchor(&order, "a", -1).unwrap(), None);
+        assert_eq!(sibling_anchor(&order, "d", 1).unwrap(), None);
+        assert_eq!(sibling_anchor(&order, "c", -1).unwrap(), Some(Some("b")));
+        assert_eq!(sibling_anchor(&order, "b", 1).unwrap(), Some(Some("d")));
+        assert_eq!(sibling_anchor(&order, "c", 1).unwrap(), Some(None));
+        assert!(sibling_anchor(&order, "stale", 1).is_err());
     }
 
     #[test]

@@ -22,6 +22,7 @@ pub enum Action {
     NextTab,
     NewTab,
     ToggleFocus,
+    FilterSidebar,
     NextPane,
     SplitRight,
     SplitDown,
@@ -37,6 +38,7 @@ pub enum Action {
     ResizeDown,
     ComposeInput,
     CopySelection,
+    Find,
     ScrollUp,
     ScrollDown,
     FocusLeft,
@@ -45,16 +47,20 @@ pub enum Action {
     FocusDown,
     MoveTabLeft,
     MoveTabRight,
+    NextAttention,
+    MoveSidebarUp,
+    MoveSidebarDown,
     Quit,
 }
 
-const DEFAULT_KEYS: [(Action, &str); 30] = [
+const DEFAULT_KEYS: [(Action, &str); 35] = [
     (Action::Settings, "F1"),
     (Action::NewSession, "F2"),
     (Action::PreviousTab, "F3"),
     (Action::NextTab, "F4"),
     (Action::NewTab, "F5"),
     (Action::ToggleFocus, "F6"),
+    (Action::FilterSidebar, "/"),
     (Action::NextPane, "F7"),
     (Action::SplitRight, "F8"),
     (Action::SplitDown, "F9"),
@@ -68,6 +74,7 @@ const DEFAULT_KEYS: [(Action, &str); 30] = [
     (Action::ResizeDown, "Ctrl+Shift+Down"),
     (Action::ComposeInput, "F11"),
     (Action::CopySelection, "F12"),
+    (Action::Find, "Alt+/"),
     (Action::ScrollUp, "Alt+PageUp"),
     (Action::ScrollDown, "Alt+PageDown"),
     (Action::RenameSession, "Shift+F6"),
@@ -79,6 +86,9 @@ const DEFAULT_KEYS: [(Action, &str); 30] = [
     (Action::FocusDown, "Ctrl+Alt+Down"),
     (Action::MoveTabLeft, "Alt+Shift+Left"),
     (Action::MoveTabRight, "Alt+Shift+Right"),
+    (Action::NextAttention, "Alt+a"),
+    (Action::MoveSidebarUp, "Alt+Shift+Up"),
+    (Action::MoveSidebarDown, "Alt+Shift+Down"),
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -291,6 +301,12 @@ struct SelectionConfig {
     mouse: bool,
 }
 
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct NotificationConfig {
+    attention: bool,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct File {
@@ -300,6 +316,7 @@ struct File {
     panes: Panes,
     experimental: Experimental,
     selection: SelectionConfig,
+    notifications: NotificationConfig,
     keys: BTreeMap<Action, String>,
 }
 
@@ -312,6 +329,7 @@ impl Default for File {
             panes: Panes::default(),
             experimental: Experimental::default(),
             selection: SelectionConfig::default(),
+            notifications: NotificationConfig::default(),
             keys: BTreeMap::new(),
         }
     }
@@ -326,6 +344,7 @@ pub struct Settings {
     pub panes: Panes,
     pub mouse_selection: bool,
     pub mouse_actions: bool,
+    pub attention_notifications: bool,
     keys: BTreeMap<Action, Binding>,
 }
 
@@ -391,6 +410,11 @@ impl Settings {
                     | Action::FocusDown
                     | Action::MoveTabLeft
                     | Action::MoveTabRight
+                    | Action::NextAttention
+                    | Action::Find
+                    | Action::FilterSidebar
+                    | Action::MoveSidebarUp
+                    | Action::MoveSidebarDown
             )
         };
         let mut defaults = DEFAULT_KEYS;
@@ -429,6 +453,7 @@ impl Settings {
             sidebar: file.sidebar,
             panes: file.panes,
             mouse_selection,
+            attention_notifications: file.notifications.attention,
             mouse_actions: file.experimental.mouse_actions,
             keys,
         })
@@ -696,6 +721,25 @@ pub mod tests {
         );
         fs::write(themes.join("custom.toml"), "[chrome]\nunknown = \"blue\"").unwrap();
         assert!(format!("{:#}", Settings::load(&settings).unwrap_err()).contains("unknown"));
+    }
+
+    #[test]
+    fn sidebar_and_find_defaults_preserve_existing_bindings() {
+        let file = toml::from_str(
+            r#"[keys]
+            new_tab = "/"
+            settings = "Alt+/"
+            split_down = "Alt+a"
+        "#,
+        )
+        .unwrap();
+        let settings = Settings::from_file(file, Path::new("")).unwrap();
+        assert_eq!(settings.shortcut(Action::NewTab), Some("/"));
+        assert_eq!(settings.shortcut(Action::Settings), Some("Alt+/"));
+        assert_eq!(settings.shortcut(Action::SplitDown), Some("Alt+a"));
+        assert_eq!(settings.shortcut(Action::FilterSidebar), None);
+        assert_eq!(settings.shortcut(Action::Find), None);
+        assert_eq!(settings.shortcut(Action::NextAttention), None);
     }
 
     #[test]
