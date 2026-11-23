@@ -10,6 +10,7 @@ from pathlib import Path
 import pty
 import re
 import select
+import shlex
 import subprocess
 import tempfile
 import termios
@@ -85,12 +86,19 @@ def exercise(launcher, root, env, api, mouse_actions):
         send(b"\x1b")
         time.sleep(.15)
 
-        # One-based SGR coordinates. The left pane starts at (22, 5). Start
-        # after the last character and drag backwards across the sidebar boundary.
-        send(b"\x1b[<0;36;5M\x1b[<32;2;5M\x1b[<0;2;5m")
-        send(b"\x1b[24~")
-        wait_for(clipboard, "copy after release acknowledgement")
-        assert clipboard() == [b"LEFT_PANE_ONLY"], clipboard()
+        def drag_and_copy(start, end, expected):
+            count = len(clipboard())
+            x1, y1 = start
+            x2, y2 = end
+            send(f"\x1b[<0;{x1};{y1}M\x1b[<32;{x2};{y2}M\x1b[<0;{x2};{y2}m".encode())
+            send(b"\x1b[24~")
+            wait_for(lambda: len(clipboard()) == count + 1, "copy after release acknowledgement")
+            assert clipboard()[-1] == expected, clipboard()
+
+        # One-based SGR coordinates, both ends on the first and last letters.
+        drag_and_copy((22, 5), (35, 5), b"LEFT_PANE_ONLY")
+        drag_and_copy((35, 5), (22, 5), b"LEFT_PANE_ONLY")
+        drag_and_copy((35, 5), (2, 5), b"LEFT_PANE_ONLY")
 
         # Drag out through the *other* pane. Fresh clipboard content is still
         # exactly the left marker and cannot include the right marker.
@@ -99,6 +107,31 @@ def exercise(launcher, root, env, api, mouse_actions):
         send(b"\x1b[24~")
         wait_for(lambda: len(clipboard()) == copy_count + 1, "copy clipped across other pane")
         assert clipboard()[-1] == b"LEFT_PANE_ONLY", clipboard()
+
+        left = blocks(api, sid)[0]
+        columns = root / "pane-columns"
+        seed = (
+            "import os; from pathlib import Path; "
+            "width=os.get_terminal_size().columns; "
+            f"Path({str(columns)!r}).write_text(str(width)); "
+            "print(chr(27)+'[2J'+chr(27)+'[H'+'A'*(width-2)+'XY界Z')"
+        )
+        start = len(output)
+        api("block.event", session_id=sid, block_id=left,
+            event={"type": "paste", "payload": {"text": f"python3 -c {shlex.quote(seed)}"}})
+        api("block.event", session_id=sid, block_id=left,
+            event={"type": "key", "payload": {"key": "enter", "action": "press", "mods": ""}})
+        wait_for(lambda: columns.exists() and b"\x1b[6;24HZ" in output[start:],
+                 "wide text wrapped inside the pane")
+        width = int(columns.read_text())
+        wrapped = ("A" * (width - 2) + "XY界Z").encode()
+        drag_and_copy((22, 5), (24, 6), wrapped)
+        drag_and_copy((24, 6), (22, 5), wrapped)
+        drag_and_copy((24, 6), (23, 6), "界Z".encode())
+        api("block.event", session_id=sid, block_id=left,
+            event={"type": "paste", "payload": {"text": "printf '\\033[2J\\033[HLEFT_PANE_ONLY\\n'"}})
+        api("block.event", session_id=sid, block_id=left,
+            event={"type": "key", "payload": {"key": "enter", "action": "press", "mods": ""}})
 
         send(b"\x1bOP")
         start = len(output)

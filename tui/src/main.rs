@@ -674,8 +674,7 @@ fn run(
                     continue;
                 }
                 if !pointer_enabled {
-                    if let Some(request) = screen.selection.mouse(&state, &screen.pane_grids, event)
-                    {
+                    for request in screen.selection.mouse(&state, &screen.pane_grids, event) {
                         backend.send(request)?;
                         screen.dirty = true;
                     }
@@ -684,21 +683,15 @@ fn run(
                 match pointer.event(&state, &screen.pane_grids, event) {
                     PointerAction::None => {}
                     PointerAction::Selection(event) => {
-                        if selection_enabled
-                            && let Some(request) =
-                                screen.selection.mouse(&state, &screen.pane_grids, event)
-                        {
+                        for request in screen.selection.mouse(&state, &screen.pane_grids, event) {
                             backend.send(request)?;
                         }
                     }
                     PointerAction::BeginDrag(down, drag) => {
-                        if selection_enabled {
-                            for event in [down, drag] {
-                                if let Some(request) =
-                                    screen.selection.mouse(&state, &screen.pane_grids, event)
-                                {
-                                    backend.send(request)?;
-                                }
+                        for event in [down, drag] {
+                            for request in screen.selection.mouse(&state, &screen.pane_grids, event)
+                            {
+                                backend.send(request)?;
                             }
                         }
                     }

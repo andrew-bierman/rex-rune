@@ -39,7 +39,9 @@ struct Gesture {
     first_revision: u64,
     final_revision: Option<u64>,
     copy_requested: bool,
+    anchor: Position,
     at: Position,
+    reverse: bool,
 }
 
 impl Gesture {
@@ -59,10 +61,23 @@ impl Gesture {
         })
     }
 
+    fn clamp(&self, at: Position) -> Position {
+        let area = self.grid.area;
+        Position::new(
+            at.x.clamp(area.left(), area.right() - 1),
+            at.y.clamp(area.top(), area.bottom() - 1),
+        )
+    }
+
     fn request(&self, phase: &str, revision: u64) -> Value {
         let area = self.grid.area;
-        let x = self.at.x.clamp(area.left(), area.right() - 1) - area.left();
-        let y = self.at.y.clamp(area.top(), area.bottom() - 1) - area.top();
+        let at = if phase == "down" {
+            self.anchor
+        } else {
+            self.at
+        };
+        let x = at.x - area.left();
+        let y = at.y - area.top();
         let mut request = self.target.clone();
         request["phase"] = json!(phase);
         request["clicks"] = json!(1);
@@ -70,8 +85,14 @@ impl Gesture {
         request["generation"] = json!(self.grid.generation);
         request["x"] = json!(x);
         request["y"] = json!(y);
-        // SGR mouse events report a cell, not a pixel. Use each cell's center.
-        request["px"] = json!(u32::from(x) * 8 + 4);
+        // SGR reports cells. Span the whole endpoint cells so Ghostty's
+        // pixel threshold includes both, using the same edge for a plain click.
+        let right_edge = if phase == "down" || at == self.anchor {
+            self.reverse
+        } else {
+            !self.reverse
+        };
+        request["px"] = json!(u32::from(x) * 8 + if right_edge { 7 } else { 0 });
         request["py"] = json!(u32::from(y) * 16 + 8);
         request["columns"] = json!(area.width);
         request["cell_width"] = json!(8);
@@ -101,49 +122,71 @@ impl Selection {
         None
     }
 
-    pub fn mouse(&mut self, state: &Value, grids: &[Grid], event: MouseEvent) -> Option<Value> {
+    pub fn mouse(&mut self, state: &Value, grids: &[Grid], event: MouseEvent) -> Vec<Value> {
         if event.modifiers.contains(KeyModifiers::SHIFT) {
-            return None;
+            return Vec::new();
         }
         let at = Position::new(event.column, event.row);
-        let phase = match event.kind {
-            MouseEventKind::Down(MouseButton::Left) => {
-                let Some(grid) = grids.iter().find(|grid| grid.area.contains(at)) else {
-                    return self.reconcile(state, grids, false);
-                };
-                let mut target = targeted(state, "selection");
-                target["pane"] = json!(grid.pane);
-                let gesture = Gesture {
-                    grid: Grid {
-                        pane: grid.pane.clone(),
-                        generation: grid.generation,
-                        area: grid.area,
-                    },
-                    target,
-                    first_revision: self.revision + 1,
-                    final_revision: None,
-                    copy_requested: false,
-                    at,
-                };
-                gesture.pane(state)?;
-                self.gesture = Some(gesture);
-                "down"
+        if event.kind == MouseEventKind::Down(MouseButton::Left) {
+            let Some(grid) = grids.iter().find(|grid| grid.area.contains(at)) else {
+                return self.reconcile(state, grids, false).into_iter().collect();
+            };
+            let mut target = targeted(state, "selection");
+            target["pane"] = json!(grid.pane);
+            let gesture = Gesture {
+                grid: grid.clone(),
+                target,
+                first_revision: self.revision + 1,
+                final_revision: None,
+                copy_requested: false,
+                anchor: at,
+                at,
+                reverse: false,
+            };
+            if gesture.pane(state).is_none() {
+                return Vec::new();
             }
-            MouseEventKind::Drag(MouseButton::Left) => "move",
-            MouseEventKind::Up(MouseButton::Left) => "up",
-            _ => return None,
+            self.revision += 1;
+            let request = gesture.request("down", self.revision);
+            self.gesture = Some(gesture);
+            return vec![request];
+        }
+        let release = match event.kind {
+            MouseEventKind::Drag(MouseButton::Left) => false,
+            MouseEventKind::Up(MouseButton::Left) => true,
+            _ => return Vec::new(),
         };
-        let gesture = self.gesture.as_mut()?;
-        if gesture.final_revision.is_some() || !grids.contains(&gesture.grid) {
-            return None;
+        let Some(gesture) = self.gesture.as_mut() else {
+            return Vec::new();
+        };
+        if gesture.final_revision.is_some()
+            || !grids.contains(&gesture.grid)
+            || gesture.pane(state).is_none()
+        {
+            return Vec::new();
         }
-        gesture.pane(state)?;
-        self.revision += 1;
-        gesture.at = at;
-        if phase == "up" {
+
+        let mut requests = Vec::new();
+        let at = gesture.clamp(at);
+        if at != gesture.at {
+            let reverse = (at.y, at.x) < (gesture.anchor.y, gesture.anchor.x);
+            if at != gesture.anchor && reverse != gesture.reverse {
+                // Ghostty remembers the press pixel. Update it when the drag
+                // crosses the anchor so the new direction includes that cell.
+                gesture.reverse = reverse;
+                self.revision += 1;
+                requests.push(gesture.request("down", self.revision));
+            }
+            gesture.at = at;
+            self.revision += 1;
+            requests.push(gesture.request("move", self.revision));
+        }
+        if release {
+            self.revision += 1;
             gesture.final_revision = Some(self.revision);
+            requests.push(gesture.request("up", self.revision));
         }
-        Some(gesture.request(phase, self.revision))
+        requests
     }
 
     pub fn highlights(&self, state: &Value, pane: &Value) -> bool {
@@ -264,23 +307,70 @@ mod tests {
         let mut selection = Selection::default();
         let mut down = mouse(MouseEventKind::Down(MouseButton::Left), 25, 5);
         down.modifiers = KeyModifiers::SHIFT;
-        assert!(selection.mouse(&state, &grids, down).is_none());
+        assert!(selection.mouse(&state, &grids, down).is_empty());
         down.modifiers = KeyModifiers::NONE;
-        let request = selection.mouse(&state, &grids, down).unwrap();
+        let request = selection.mouse(&state, &grids, down).pop().unwrap();
         assert_eq!(request["pane"], "left");
         assert_eq!(request["generation"], 2);
         let drag = mouse(MouseEventKind::Drag(MouseButton::Left), 2, 1);
-        let request = selection.mouse(&state, &grids, drag).unwrap();
+        let request = selection.mouse(&state, &grids, drag).pop().unwrap();
         assert_eq!(
             (request["x"].as_u64(), request["y"].as_u64()),
             (Some(0), Some(0))
         );
         let up = mouse(MouseEventKind::Up(MouseButton::Left), 46, 12);
-        let request = selection.mouse(&state, &grids, up).unwrap();
+        let request = selection.mouse(&state, &grids, up).pop().unwrap();
         assert_eq!(request["pane"], "left");
         assert_eq!(
             (request["x"].as_u64(), request["y"].as_u64()),
             (Some(11), Some(4))
+        );
+    }
+
+    #[test]
+    fn drag_includes_both_endpoint_cells_when_crossing_the_anchor() {
+        let (state, grids) = fixture();
+        let mut selection = Selection::default();
+        let mut send = |kind, column, row| {
+            selection
+                .mouse(&state, &grids, mouse(kind, column, row))
+                .into_iter()
+                .map(|packet| {
+                    (
+                        packet["phase"].as_str().unwrap().to_owned(),
+                        packet["px"].as_u64().unwrap(),
+                        packet["y"].as_u64().unwrap(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let left = MouseButton::Left;
+        assert_eq!(
+            send(MouseEventKind::Down(left), 24, 6),
+            [("down".into(), 32, 2)]
+        );
+        assert_eq!(
+            send(MouseEventKind::Drag(left), 27, 6),
+            [("move".into(), 63, 2)]
+        );
+        // The higher column is earlier on a previous row, including a wrapped row.
+        assert_eq!(
+            send(MouseEventKind::Drag(left), 29, 5),
+            [("down".into(), 39, 2), ("move".into(), 72, 1)]
+        );
+        // Coming back to the anchor crosses no part of that cell.
+        assert_eq!(
+            send(MouseEventKind::Drag(left), 24, 6),
+            [("move".into(), 39, 2)]
+        );
+        // Release can supply the last endpoint without a preceding motion packet.
+        assert_eq!(
+            send(MouseEventKind::Up(left), 50, 12),
+            [
+                ("down".into(), 32, 2),
+                ("move".into(), 95, 4),
+                ("up".into(), 95, 4),
+            ]
         );
     }
 
@@ -295,7 +385,7 @@ mod tests {
                     &grids,
                     mouse(MouseEventKind::Down(MouseButton::Left), 2, 5)
                 )
-                .is_none()
+                .is_empty()
         );
         selection.mouse(
             &state,
@@ -309,6 +399,7 @@ mod tests {
                 &grids,
                 mouse(MouseEventKind::Up(MouseButton::Left), 25, 5),
             )
+            .pop()
             .unwrap();
         state["panes"][1]["frame"]["selection_revision"] = request["revision"].clone();
         state["panes"][1]["frame"]["selection_text"] = json!("right pane");
