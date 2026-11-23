@@ -70,8 +70,7 @@ def install_pair(installer, archive, root, env):
     return destination
 
 
-@contextmanager
-def trusted_cert(root, openssl):
+def test_certificate(root, openssl):
     ca, ca_key = root / "ca.pem", root / "ca.key"
     cert, key, request = root / "fixture.pem", root / "fixture.key", root / "fixture.csr"
     extensions = root / "server.ext"
@@ -91,15 +90,9 @@ def trusted_cert(root, openssl):
                 "-keyout", key, "-out", request)
     certificate("x509", "-req", "-in", request, "-CA", ca, "-CAkey", ca_key,
                 "-set_serial", "1", "-days", "1", "-extfile", extensions, "-out", cert)
-    thumbprint = hashlib.sha1(ssl.PEM_cert_to_DER_cert(ca.read_text())).hexdigest()
-    store = ["certutil.exe", "-user", "-f"]
-    subprocess.run([*store, "-addstore", "Root", ca], check=True, timeout=30)
-    try:
-        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        context.load_cert_chain(cert, key)
-        yield context
-    finally:
-        subprocess.run([*store, "-delstore", "Root", thumbprint], check=True, timeout=30)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(cert, key)
+    return context, ca
 
 
 @contextmanager
@@ -240,9 +233,12 @@ def main():
             path.mkdir()
             env[name] = str(path)
         installed = install_pair(args.installer.resolve(), args.archive.resolve(), root, env)
-        with trusted_cert(root, args.openssl) as context:
-            with rex_server(args.rex.resolve(), root, env) as (port, sessions):
-                asyncio.run(run_terminal(installed / "rex-tui.exe", root, port, sessions, context, env))
+        context, ca = test_certificate(root, args.openssl)
+        # rustls-native-certs honors this process-local trust bundle on Windows.
+        env.pop("SSL_CERT_DIR", None)
+        env["SSL_CERT_FILE"] = str(ca)
+        with rex_server(args.rex.resolve(), root, env) as (port, sessions):
+            asyncio.run(run_terminal(installed / "rex-tui.exe", root, port, sessions, context, env))
     print("PowerShell installation, package tamper refusal, HTTPS, ConPTY input and clean exit passed.")
 
 
