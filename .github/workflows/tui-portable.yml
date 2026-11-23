@@ -6,6 +6,7 @@ on:
       - .github/workflows/tui-portable.yml
       - dist-workspace.toml
       - scripts/stage-tui-pair.py
+      - scripts/tui-paste-private.py
       - scripts/verify-tui-artifact.py
       - Cargo.lock
       - Cargo.toml
@@ -115,6 +116,37 @@ jobs:
           package="rex-tui-$TARGET.$ARCHIVE_EXTENSION"
           python scripts/verify-tui-artifact.py "$TARGET" "target/distrib/$package" "$manifest"
           cp "target/distrib/$package" "target/distrib/$package.sha256" target/portable-receipt/
+      - name: Smoke-test the installed macOS pair against disposable Rex
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          # Superlogical Rex 0.1.0-preview.22
+          REX_PREVIEW_COMMIT: a086db17db8d464627c77e3bb0be6d462668b0ac
+        run: |
+          case "$TARGET" in
+            x86_64-apple-darwin)
+              rex_archive=rex-darwin-amd64.zip
+              rex_sha256=51c4e14ada5ede8fb2d6e8e55dbd20f7eae19946ba0ab9fa588af82346d328f0
+              ;;
+            aarch64-apple-darwin)
+              rex_archive=rex-darwin-arm64.zip
+              rex_sha256=ef0931ba516259372b26b53d32eef535a94b43e81ede5b63489487df3e32f77b
+              ;;
+            *) exit 1 ;;
+          esac
+          smoke_dir="$(mktemp -d /tmp/rex-install.XXXXXXXX)"
+          trap 'rm -rf "$smoke_dir"' EXIT
+          curl --proto '=https' --tlsv1.2 -fsSLo "$smoke_dir/rex.zip" \
+            "https://blob.superlogical.com/download/rex/preview/$REX_PREVIEW_COMMIT/$rex_archive"
+          echo "$rex_sha256  $smoke_dir/rex.zip" | shasum -a 256 -c -
+          unzip -q "$smoke_dir/rex.zip" -d "$smoke_dir/vendor"
+          tar -xJf "target/distrib/rex-tui-$TARGET.tar.xz" -C "$smoke_dir"
+          installed="$smoke_dir/installed prefix/bin"
+          mkdir -p "$installed"
+          install -m 755 "$smoke_dir/rex-tui-$TARGET/rex-tui" \
+            "$smoke_dir/rex-tui-$TARGET/rex-qt-backend" "$installed/"
+          TMPDIR=/tmp REX_BIN="$smoke_dir/vendor/rex" \
+            python scripts/tui-paste-private.py "$installed/rex-tui"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: rex-tui-portable-${{ matrix.target }}
