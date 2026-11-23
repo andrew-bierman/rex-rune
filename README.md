@@ -10,13 +10,20 @@ A fictional workspace rendered by rex-tui in Foot. [Reproduce the screenshots](t
 
 ## Install
 
-Use the installer for your system. It installs rex-tui and its matching backend
-together. Archives and checksums are available on the [release page](https://github.com/andrew-bierman/rex-tui/releases/tag/rex-tui-v0.1.0).
+The installer includes rex-tui and its matching backend. Pick the release
+for your system to see the archives and checksums.
 
-### Linux and macOS
+### Linux x86-64 and ARM64
 
-Linux x86-64 and ARM64 require glibc 2.35 or newer. macOS supports Intel and
-Apple Silicon.
+The [0.1.1 Linux preview](https://github.com/andrew-bierman/rex-tui/releases/tag/rex-tui-v0.1.1)
+requires glibc 2.35 or newer.
+
+```sh
+curl -fLO https://github.com/andrew-bierman/rex-tui/releases/download/rex-tui-v0.1.1/rex-tui-installer.sh
+sh rex-tui-installer.sh
+```
+
+### macOS Intel and Apple Silicon
 
 ```sh
 curl -fLO https://github.com/andrew-bierman/rex-tui/releases/download/rex-tui-v0.1.0/rex-tui-installer.sh

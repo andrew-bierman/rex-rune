@@ -4,6 +4,8 @@ mod cli;
 mod close;
 mod input_prompt;
 mod mouse;
+mod pane_links;
+mod platform;
 mod selection;
 mod settings;
 mod ui;
@@ -177,9 +179,15 @@ fn scroll_active_pane(state: &Value, action: Action) -> Option<Value> {
     {
         return None;
     }
-    let mut request = targeted(state, "scroll");
-    request["lines"] = json!(if action == Action::ScrollUp { -3 } else { 3 });
-    Some(request)
+    match action {
+        Action::JumpToLiveOutput => Some(targeted(state, "bottom")),
+        Action::ScrollUp | Action::ScrollDown => {
+            let mut request = targeted(state, "scroll");
+            request["lines"] = json!(if action == Action::ScrollUp { -3 } else { 3 });
+            Some(request)
+        }
+        _ => None,
+    }
 }
 
 fn resize_split(state: &Value, action: Action, kind: KeyEventKind) -> Option<Value> {
@@ -370,6 +378,9 @@ fn run(
     let mut mouse_capture = selection::MouseCapture::default();
     let mut pointer = Pointer::default();
     let mut pending_focus: Option<Focus> = None;
+    let mut link_picker: Option<pane_links::Picker> = None;
+    let mut link_click = pane_links::LinkClick::default();
+    let mut link_opener = platform::LinkOpener::default();
     let foot = std::env::var("TERM")
         .is_ok_and(|term| matches!(term.as_str(), "foot" | "foot-extra" | "foot-direct"));
     let mut notifications = attention_notifications::Notifications::default();
@@ -443,6 +454,7 @@ fn run(
         let pointer_enabled = screen.settings.mouse_actions
             && !screen.settings_open
             && screen.prompt.is_none()
+            && link_picker.is_none()
             && close_dialog.is_none();
         if !pointer_enabled {
             pointer.cancel();
@@ -462,11 +474,18 @@ fn run(
             backend.send(request)?;
             screen.dirty = true;
         }
+        if link_opener.reap() {
+            problem = "The desktop link opener failed".into();
+            screen.dirty = true;
+        }
         if changed || screen.dirty {
             terminal.draw(|frame| {
                 screen.draw(frame, &state, &problem, settings_path);
                 if let Some(dialog) = &close_dialog {
                     dialog.draw(frame, &state);
+                }
+                if let Some(picker) = &link_picker {
+                    picker.draw(frame, screen.settings.chrome);
                 }
             })?;
             screen.dirty = false;
@@ -480,7 +499,11 @@ fn run(
         let selection_enabled = screen.settings.mouse_selection
             && !screen.settings_open
             && screen.prompt.is_none()
+            && link_picker.is_none()
             && close_dialog.is_none();
+        if !selection_enabled || pending_focus.is_some() || screen.filtering() {
+            link_click.cancel();
+        }
         if let Some(request) =
             screen
                 .selection
@@ -550,6 +573,35 @@ fn run(
             continue;
         }
         let input = event::read()?;
+        if let Some(picker) = &mut link_picker {
+            if let Event::Key(key) = input {
+                consume_modal_key(&mut modal_keys, key, true);
+                let action = {
+                    let inbox = backend.inbox.lock().unwrap();
+                    let latest = inbox.state.as_ref().unwrap_or(&state);
+                    picker.key(
+                        latest,
+                        &screen.pane_grids,
+                        key,
+                        InputPrompt::visible(terminal.size()?),
+                    )
+                };
+                match action {
+                    pane_links::Pick::Continue => {}
+                    pane_links::Pick::Close => link_picker = None,
+                    pane_links::Pick::Changed => {
+                        problem = "The link is no longer visible in the active pane".into();
+                        link_picker = None;
+                    }
+                    pane_links::Pick::Open(uri) => {
+                        problem = link_opener.open(&uri).err().unwrap_or_default().into();
+                        link_picker = None;
+                    }
+                }
+            }
+            screen.dirty = true;
+            continue;
+        }
         if let Some(prompt) = &mut screen.prompt {
             match input {
                 Event::Key(key) => {
@@ -679,6 +731,24 @@ fn run(
         match input {
             Event::Resize(..) => screen.dirty = true,
             Event::Mouse(event) if selection_enabled => {
+                let link_event = if platform::LINKS_SUPPORTED {
+                    let inbox = backend.inbox.lock().unwrap();
+                    link_click.event(
+                        inbox.state.as_ref().unwrap_or(&state),
+                        &screen.pane_grids,
+                        event,
+                    )
+                } else {
+                    None
+                };
+                if let Some(uri) = link_event {
+                    pointer.cancel();
+                    if let Some(uri) = uri {
+                        problem = link_opener.open(&uri).err().unwrap_or_default().into();
+                        screen.dirty = true;
+                    }
+                    continue;
+                }
                 if pointer_enabled
                     && let ui::SidebarMouse::Handled(request) = screen.sidebar_mouse(&state, event)
                 {
@@ -895,7 +965,22 @@ fn run(
                             backend.send(request)?;
                         }
                     }
-                    Some(action @ (Action::ScrollUp | Action::ScrollDown)) => {
+                    Some(Action::OpenLinks) if platform::LINKS_SUPPORTED => {
+                        if key.kind == KeyEventKind::Press {
+                            link_picker = pane_links::Picker::new(&state, &screen.pane_grids);
+                            if link_picker.is_some() {
+                                modal_keys.insert(key.code);
+                                problem.clear();
+                            } else {
+                                problem =
+                                    "No visible HTTP or HTTPS links in the active pane".into();
+                            }
+                            screen.dirty = true;
+                        }
+                    }
+                    Some(
+                        action @ (Action::ScrollUp | Action::ScrollDown | Action::JumpToLiveOutput),
+                    ) => {
                         if down && let Some(request) = scroll_active_pane(&state, action) {
                             backend.send(request)?;
                         }
@@ -1105,8 +1190,16 @@ mod tests {
             scroll_active_pane(&state, Action::ScrollDown).unwrap()["lines"],
             3
         );
+        assert_eq!(
+            scroll_active_pane(&state, Action::JumpToLiveOutput).unwrap(),
+            json!({"op":"bottom","host":"host","epoch":7,"session":"s","window":"w","pane":"p"})
+        );
+        state["hosts"]["pending"] = json!(true);
+        assert!(scroll_active_pane(&state, Action::JumpToLiveOutput).is_none());
+        state["hosts"]["pending"] = json!(false);
         state["terminal"]["connected"] = json!(false);
         assert!(scroll_active_pane(&state, Action::ScrollUp).is_none());
+        assert!(scroll_active_pane(&state, Action::JumpToLiveOutput).is_none());
     }
 
     #[test]

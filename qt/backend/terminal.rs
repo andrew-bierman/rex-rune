@@ -10,6 +10,7 @@ pub fn command(r: &Value) -> Result<Command> {
     Ok(match r["op"].as_str().context("missing op")? {
         "clear" => Command::Clear,
         "reset" => Command::Reset,
+        "bottom" => Command::Bottom,
         "scroll" => Command::Scroll(
             isize::try_from(r["lines"].as_i64().context("invalid lines")?)
                 .context("line count is out of range")?,
@@ -67,6 +68,14 @@ pub fn command(r: &Value) -> Result<Command> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn jump_to_live_output_is_a_viewport_command() {
+        assert!(matches!(
+            command(&json!({"op": "bottom"})).unwrap(),
+            Command::Bottom
+        ));
+    }
 
     #[test]
     fn clear_and_reset_use_the_existing_terminal_worker() {

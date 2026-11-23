@@ -669,7 +669,7 @@ impl Screen {
                             .is_some_and(InputPrompt::showing_matches),
                 },
             );
-            if self.settings.mouse_selection
+            if (self.settings.mouse_selection || crate::platform::LINKS_SUPPORTED)
                 && let Some(grid) = Grid::new(pane, inner)
             {
                 self.pane_grids.push(grid);
@@ -1210,6 +1210,14 @@ fn draw_pane(
     };
     let buffer = frame.buffer_mut();
     buffer.set_style(inner, Style::new().bg(background));
+    let columns = snapshot["cols"].as_u64().unwrap_or_default();
+    let mut links = items(&snapshot["links"])
+        .iter()
+        .filter_map(|link| {
+            (crate::platform::LINKS_SUPPORTED && crate::pane_links::web_url(text(link, "uri")))
+                .then_some((link["start"].as_u64()?, link["end"].as_u64()?))
+        })
+        .peekable();
     for (y, row) in items(&snapshot["cells"])
         .iter()
         .take(inner.height.into())
@@ -1236,6 +1244,10 @@ fn draw_pane(
                 Some(start.as_u64()?..=end.as_u64()?)
             });
         for (x, cell) in items(row).iter().take(inner.width.into()).enumerate() {
+            let index = y as u64 * columns + x as u64;
+            while links.peek().is_some_and(|&(_, end)| end < index) {
+                links.next();
+            }
             let wide = items(row)
                 .get(x + 1)
                 .is_some_and(|next| next["spacer_tail"] == true);
@@ -1284,9 +1296,10 @@ fn draw_pane(
                     style = style.add_modifier(flag);
                 }
             }
-            if cell["underline"]
-                .as_str()
-                .is_some_and(|kind| kind != "none")
+            if links.peek().is_some_and(|&(start, _)| start <= index)
+                || cell["underline"]
+                    .as_str()
+                    .is_some_and(|kind| kind != "none")
             {
                 style = style.add_modifier(Modifier::UNDERLINED);
             }
