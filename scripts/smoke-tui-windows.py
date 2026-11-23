@@ -185,9 +185,12 @@ def exercise_conpty(frontend, root, profile, sessions, env):
         wait_for(lambda: screen("F2 Create session"), "HTTPS connection in rex-tui")
         terminal.write("\x1bOQ")  # F2 creates the disposable session.
         wait_for(sessions, "session created through ConPTY and HTTPS")
+        wait_for(lambda: screen("USERPROFILE>"), "disposable PowerShell prompt")
+        terminal.write("\x1b[17~")  # F6 focuses the shell.
         wait_for(lambda: screen("Browse"), "terminal input focus")
         marker = root / "command-result.txt"
-        terminal.write(f'echo verified>"{marker}"\r')
+        escaped_marker = str(marker).replace("'", "''")
+        terminal.write(f"[IO.File]::WriteAllText('{escaped_marker}', 'verified')\r")
         def verified_output():
             try:
                 return marker.read_text().strip() == "verified"

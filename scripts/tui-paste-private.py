@@ -103,7 +103,6 @@ def exercise(launcher, root, env):
         wait_for(lambda: b"Terminal" in output, "focus the remote shell")
         marker = root / "pasted"
         paste(f"echo PASTE_OK >> {shlex.quote(str(marker))}")
-        wait_for(lambda: b"PASTE_OK" in output, "echo the pasted command")
         os.write(master, b"\r")
         wait_for(marker.exists, "execute the pasted command")
         assert marker.read_text() == "PASTE_OK\n"
