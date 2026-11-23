@@ -25,12 +25,34 @@ rex-tui
 
 The package installs the TUI and the matching backend from the same checkout.
 
+## Build a portable pair
+
+From the repository root, stage both executables from the same checkout using
+the pinned Rust and Zig toolchains and Python 3:
+
+```sh
+mise exec -- python3 scripts/stage-tui-pair.py --output dist/rex-tui-pair
+```
+
+The script targets the build host by default. Pass `--target TRIPLE` for a
+configured cross toolchain. Run `rex-tui` (or `rex-tui.exe`) from the staged
+directory. Keep the companion `rex-qt-backend` executable beside it.
+
+The portable artifact workflow exercises Linux and macOS on x86_64 and arm64,
+and Windows on x86_64. Each job checks the package checksum and both executables
+and uploads the archive with its cargo-dist manifest. Both Linux executables
+must support glibc 2.35. Windows arm64 is in the distribution plan and awaits a
+validation runner setup for the pinned cargo-dist tool.
+
 ## Hosts and profiles
 
 Run `rex-tui` in Foot or another terminal. It uses
 `${XDG_CONFIG_HOME:-$HOME/.config}/rex-tui/workspace.json` and defaults to the
-local Rex server if the profile is absent. Use `rex-tui --config PATH` to select
-a profile explicitly.
+local Rex server on Unix if the profile is absent. The native Windows command
+uses `%APPDATA%/rex-tui` when `XDG_CONFIG_HOME` is unset. Use `rex-tui --config
+PATH` to select a profile explicitly. Windows needs a reachable HTTPS Rex host
+in the profile because the shared backend has no local Unix socket or SSH
+transport there.
 
 To connect to a remote server, add its endpoint to that profile. For example:
 
@@ -69,6 +91,7 @@ fi
 | Alt+Shift+Left / Right | Move the active tab one place left or right |
 | F5 | Open a shell in a new tab |
 | Shift+F5 | Ask to close the active tab |
+| Shift+F9 | Ask to close the focused pane or its tab if it has only one pane |
 | Shift+F6 / Shift+F7 / Shift+F8 | Rename the active session, tab, or focused pane |
 | F6 | Switch input between the sidebar and the terminal |
 | F7 | Cycle pane focus |
@@ -84,8 +107,8 @@ Directional focus stops at the edge of the split layout. Remap it with
 Tab moves keep the same tab active and stop at the ends of the tab strip.
 Remap them with `move_tab_left` and `move_tab_right` in `[keys]`.
 
-Close prompts name the session or tab and explain what will stop. Press Y to
-confirm, or Enter or Esc to cancel.
+Close prompts name the pane, tab, or session and explain what will stop. Press Y
+to confirm, or Enter or Esc to cancel. Remap Shift+F9 with `close_pane` in `[keys]`.
 
 Rename prompts capture the active target. Edit the label or clear it with
 Ctrl+U, then press Enter to send the change. An empty tab or pane label restores

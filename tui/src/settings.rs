@@ -27,6 +27,7 @@ pub enum Action {
     SplitDown,
     CloseSession,
     CloseTab,
+    ClosePane,
     RenameSession,
     RenameTab,
     RenamePane,
@@ -47,7 +48,7 @@ pub enum Action {
     Quit,
 }
 
-const DEFAULT_KEYS: [(Action, &str); 29] = [
+const DEFAULT_KEYS: [(Action, &str); 30] = [
     (Action::Settings, "F1"),
     (Action::NewSession, "F2"),
     (Action::PreviousTab, "F3"),
@@ -60,6 +61,7 @@ const DEFAULT_KEYS: [(Action, &str); 29] = [
     (Action::Quit, "F10"),
     (Action::CloseSession, "Shift+F2"),
     (Action::CloseTab, "Shift+F5"),
+    (Action::ClosePane, "Shift+F9"),
     (Action::ResizeLeft, "Ctrl+Shift+Left"),
     (Action::ResizeRight, "Ctrl+Shift+Right"),
     (Action::ResizeUp, "Ctrl+Shift+Up"),
@@ -382,6 +384,7 @@ impl Settings {
                     | Action::RenameSession
                     | Action::RenameTab
                     | Action::RenamePane
+                    | Action::ClosePane
                     | Action::FocusLeft
                     | Action::FocusRight
                     | Action::FocusUp
@@ -443,13 +446,24 @@ impl Settings {
     }
 }
 
-pub fn default_path() -> Result<PathBuf> {
+pub fn config_dir() -> Result<PathBuf> {
+    #[cfg(windows)]
+    let platform_config = env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute());
+    #[cfg(not(windows))]
+    let platform_config = None;
     let root = env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .filter(|path| path.is_absolute())
+        .or(platform_config)
         .or_else(|| env::home_dir().map(|home| home.join(".config")))
         .context("Could not find a configuration directory")?;
-    Ok(root.join("rex-tui/settings.toml"))
+    Ok(root.join("rex-tui"))
+}
+
+pub fn default_path() -> Result<PathBuf> {
+    Ok(config_dir()?.join("settings.toml"))
 }
 
 pub fn editor(path: &Path) -> Result<Command> {
@@ -527,6 +541,23 @@ pub mod tests {
         assert_eq!(configured.shortcut(Action::NextTab), Some("Alt+Shift+Left"));
         assert_eq!(configured.shortcut(Action::MoveTabLeft), None);
         assert_eq!(configured.shortcut(Action::MoveTabRight), Some("Alt+r"));
+    }
+
+    #[test]
+    fn pane_close_default_respects_custom_shortcuts_and_can_be_disabled() {
+        assert_eq!(
+            Settings::default().shortcut(Action::ClosePane),
+            Some("Shift+F9")
+        );
+        let file = toml::from_str("[keys]\nnext_tab = \"Shift+F9\"").unwrap();
+        let settings = Settings::from_file(file, Path::new("")).unwrap();
+        assert_eq!(settings.shortcut(Action::NextTab), Some("Shift+F9"));
+        assert_eq!(settings.shortcut(Action::ClosePane), None);
+        for (value, expected) in [("Alt+x", Some("Alt+x")), ("none", None)] {
+            let file = toml::from_str(&format!("[keys]\nclose_pane = \"{value}\"")).unwrap();
+            let settings = Settings::from_file(file, Path::new("")).unwrap();
+            assert_eq!(settings.shortcut(Action::ClosePane), expected);
+        }
     }
 
     #[test]
