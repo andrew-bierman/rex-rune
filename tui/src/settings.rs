@@ -41,6 +41,7 @@ pub enum Action {
     Find,
     ScrollUp,
     ScrollDown,
+    JumpToLiveOutput,
     FocusLeft,
     FocusRight,
     FocusUp,
@@ -54,7 +55,7 @@ pub enum Action {
     Quit,
 }
 
-const DEFAULT_KEYS: [(Action, &str); 36] = [
+const DEFAULT_KEYS: [(Action, &str); 37] = [
     (Action::Settings, "F1"),
     (Action::NewSession, "F2"),
     (Action::PreviousTab, "F3"),
@@ -78,6 +79,7 @@ const DEFAULT_KEYS: [(Action, &str); 36] = [
     (Action::Find, "Alt+/"),
     (Action::ScrollUp, "Alt+PageUp"),
     (Action::ScrollDown, "Alt+PageDown"),
+    (Action::JumpToLiveOutput, "Alt+End"),
     (Action::RenameSession, "Shift+F6"),
     (Action::RenameTab, "Shift+F7"),
     (Action::RenamePane, "Shift+F8"),
@@ -402,6 +404,7 @@ impl Settings {
                 action,
                 Action::ScrollUp
                     | Action::ScrollDown
+                    | Action::JumpToLiveOutput
                     | Action::RenameSession
                     | Action::RenameTab
                     | Action::RenamePane
@@ -632,6 +635,30 @@ pub mod tests {
         let key = KeyEvent::new(KeyCode::PageUp, KeyModifiers::ALT);
         assert_eq!(settings.action(key), Some(Action::PreviousTab));
         assert_eq!(settings.shortcut(Action::ScrollUp), None);
+    }
+
+    #[test]
+    fn live_output_shortcut_respects_existing_bindings_and_leaves_plain_end_available() {
+        let key = |mods| KeyEvent::new(KeyCode::End, mods);
+        let default = Settings::default();
+        assert_eq!(
+            default.action(key(KeyModifiers::ALT)),
+            Some(Action::JumpToLiveOutput)
+        );
+        assert_eq!(default.action(key(KeyModifiers::NONE)), None);
+        let file = toml::from_str("[keys]\nprevious_tab = \"Alt+End\"\n").unwrap();
+        let config = Settings::from_file(file, Path::new("")).unwrap();
+        assert_eq!(
+            config.action(key(KeyModifiers::ALT)),
+            Some(Action::PreviousTab)
+        );
+        assert_eq!(config.shortcut(Action::JumpToLiveOutput), None);
+        let file = toml::from_str("[keys]\njump_to_live_output = \"Ctrl+End\"\n").unwrap();
+        let config = Settings::from_file(file, Path::new("")).unwrap();
+        assert_eq!(
+            config.action(key(KeyModifiers::CONTROL)),
+            Some(Action::JumpToLiveOutput)
+        );
     }
 
     #[test]

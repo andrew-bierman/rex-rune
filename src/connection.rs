@@ -154,6 +154,8 @@ pub enum Command {
     Wheel(Value),
     Resize(u16, u16, u16, u16),
     Scroll(isize),
+    /// Return this client's viewport to live output without sending input.
+    Bottom,
     /// Search the terminal's screen and scrollback for this text; empty stops searching.
     Search(String),
     /// Select the next older search match (`true`) or the next newer one.
@@ -2165,6 +2167,9 @@ async fn handle_command(
                 }
                 Command::Scroll(delta) => {
                     let _ = worker.commands.send(DataCommand::Scroll(delta));
+                }
+                Command::Bottom => {
+                    let _ = worker.commands.send(DataCommand::Bottom);
                 }
                 Command::Search(needle) => {
                     let _ = worker.commands.send(DataCommand::Search(needle));

@@ -382,6 +382,12 @@ impl Adapter {
                     blocks: vec![target.pane],
                 })?;
             }
+            "bottom" => {
+                let connection = self.connection_scope(&model, request, false, false, true)?;
+                connection
+                    .commands
+                    .try_send(crate::terminal::command(request)?)?;
+            }
             "clear" | "reset" | "scroll" | "search" | "search_step" | "prompt_step"
             | "selection" | "mouse" | "wheel" => {
                 let local = !matches!(op, "mouse" | "wheel" | "clear" | "reset");

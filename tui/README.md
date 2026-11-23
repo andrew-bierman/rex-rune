@@ -104,6 +104,7 @@ fi
 | F10 | Exit while leaving server sessions running |
 | Alt+PageUp / Alt+PageDown | Scroll the active pane back or forward |
 | Alt+o | Choose a visible web link in the active pane on Linux |
+| Alt+End | Return the active pane to live output |
 | Alt+/ | Find text in the active pane and its scrollback |
 
 While filtering, use the arrow keys to move through results and Enter to open
@@ -331,8 +332,10 @@ its copy shortcut are off by default.
 When mouse capture is enabled, the wheel scrolls the pane under the pointer.
 A mouse-tracking application in the selected pane receives wheel events.
 Use **Alt+PageUp** or **Alt+PageDown** for local scrollback in the active
-pane, including with mouse capture off. Typing returns to live output.
-Remap these shortcuts with `scroll_up` and `scroll_down` in `[keys]`.
+pane, including with mouse capture off. Press **Alt+End** to jump back to
+live output without sending a key to the program in the pane. Plain **End**
+remains available to that program. Remap these shortcuts with `scroll_up`,
+`scroll_down`, and `jump_to_live_output` in `[keys]`.
 
 On Linux, **Alt+o** shows the destinations of visible HTTP and HTTPS links,
 including labeled links from terminal programs. Use **Up** or **Down** and

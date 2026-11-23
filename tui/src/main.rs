@@ -179,9 +179,15 @@ fn scroll_active_pane(state: &Value, action: Action) -> Option<Value> {
     {
         return None;
     }
-    let mut request = targeted(state, "scroll");
-    request["lines"] = json!(if action == Action::ScrollUp { -3 } else { 3 });
-    Some(request)
+    match action {
+        Action::JumpToLiveOutput => Some(targeted(state, "bottom")),
+        Action::ScrollUp | Action::ScrollDown => {
+            let mut request = targeted(state, "scroll");
+            request["lines"] = json!(if action == Action::ScrollUp { -3 } else { 3 });
+            Some(request)
+        }
+        _ => None,
+    }
 }
 
 fn resize_split(state: &Value, action: Action, kind: KeyEventKind) -> Option<Value> {
@@ -972,7 +978,9 @@ fn run(
                             screen.dirty = true;
                         }
                     }
-                    Some(action @ (Action::ScrollUp | Action::ScrollDown)) => {
+                    Some(
+                        action @ (Action::ScrollUp | Action::ScrollDown | Action::JumpToLiveOutput),
+                    ) => {
                         if down && let Some(request) = scroll_active_pane(&state, action) {
                             backend.send(request)?;
                         }
@@ -1182,8 +1190,16 @@ mod tests {
             scroll_active_pane(&state, Action::ScrollDown).unwrap()["lines"],
             3
         );
+        assert_eq!(
+            scroll_active_pane(&state, Action::JumpToLiveOutput).unwrap(),
+            json!({"op":"bottom","host":"host","epoch":7,"session":"s","window":"w","pane":"p"})
+        );
+        state["hosts"]["pending"] = json!(true);
+        assert!(scroll_active_pane(&state, Action::JumpToLiveOutput).is_none());
+        state["hosts"]["pending"] = json!(false);
         state["terminal"]["connected"] = json!(false);
         assert!(scroll_active_pane(&state, Action::ScrollUp).is_none());
+        assert!(scroll_active_pane(&state, Action::JumpToLiveOutput).is_none());
     }
 
     #[test]
