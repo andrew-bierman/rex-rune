@@ -201,6 +201,31 @@ impl Screen {
         self.selected = self.selected.min(rows.len().saturating_sub(1));
     }
 
+    pub fn reorder_sidebar(&mut self, state: &Value, direction: i8) -> Option<Value> {
+        if !self.sidebar || state["hosts"]["pending"] == true {
+            return None;
+        }
+        let rows = rows(state, &self.folded);
+        let row = if let Some((host, session, tab)) = &self.selected_id {
+            rows.iter()
+                .find(|row| row.id() == RowId(host, session, tab))?
+        } else {
+            self.restore_selection(&rows, state);
+            rows.get(self.selected)?
+        };
+        if row.session.is_some() && row.host["connected"] != true {
+            return None;
+        }
+        self.sidebar_scrolled = false;
+        self.sidebar_press = None;
+        self.dirty = true;
+        Some(json!({
+            "op":"host","action":"reorder","host":row.host["id"],"epoch":row.host["epoch"],
+            "args":{ "direction":direction, "session":row.session.map(|session| text(session,"id")),
+                     "window":row.tab.map(|tab| text(tab,"id")) }
+        }))
+    }
+
     pub fn navigate(&mut self, state: &Value, key: KeyCode) -> Option<Value> {
         let rows = rows(state, &self.folded);
         let last = rows.len().saturating_sub(1);
@@ -1054,6 +1079,41 @@ fn draw_pane(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sidebar_reorder_targets_the_highlighted_tab_and_keeps_its_identity() {
+        let mut state = json!({
+            "host":"h","session":"s","window":"current",
+            "hosts":{"rows":[{"id":"h","epoch":7,"active":true,"connected":true,
+                "sessions":[{"id":"s","opened":true,"tabs":[{"id":"current"},{"id":"other"}]}]}]}
+        });
+        let mut screen = Screen::default();
+        screen.navigate(&state, KeyCode::Down);
+        assert_eq!(
+            screen.reorder_sidebar(&state, -1).unwrap(),
+            json!({
+                "op":"host","action":"reorder","host":"h","epoch":7,
+                "args":{"direction":-1,"session":"s","window":"other"}
+            })
+        );
+        state["hosts"]["rows"][0]["sessions"][0]["tabs"]
+            .as_array_mut()
+            .unwrap()
+            .swap(0, 1);
+        assert_eq!(
+            screen.reorder_sidebar(&state, 1).unwrap()["args"]["window"],
+            "other"
+        );
+        state["hosts"]["rows"][0]["sessions"][0]["tabs"]
+            .as_array_mut()
+            .unwrap()
+            .remove(0);
+        assert!(screen.reorder_sidebar(&state, 1).is_none());
+        screen.navigate(&state, KeyCode::Home);
+        assert!(screen.reorder_sidebar(&state, 1).unwrap()["args"]["session"].is_null());
+        screen.sidebar = false;
+        assert!(screen.reorder_sidebar(&state, 1).is_none());
+    }
 
     fn sidebar_event(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
         MouseEvent {

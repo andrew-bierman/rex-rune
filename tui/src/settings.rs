@@ -45,10 +45,12 @@ pub enum Action {
     FocusDown,
     MoveTabLeft,
     MoveTabRight,
+    MoveSidebarUp,
+    MoveSidebarDown,
     Quit,
 }
 
-const DEFAULT_KEYS: [(Action, &str); 30] = [
+const DEFAULT_KEYS: [(Action, &str); 32] = [
     (Action::Settings, "F1"),
     (Action::NewSession, "F2"),
     (Action::PreviousTab, "F3"),
@@ -79,6 +81,8 @@ const DEFAULT_KEYS: [(Action, &str); 30] = [
     (Action::FocusDown, "Ctrl+Alt+Down"),
     (Action::MoveTabLeft, "Alt+Shift+Left"),
     (Action::MoveTabRight, "Alt+Shift+Right"),
+    (Action::MoveSidebarUp, "Alt+Shift+Up"),
+    (Action::MoveSidebarDown, "Alt+Shift+Down"),
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -391,6 +395,8 @@ impl Settings {
                     | Action::FocusDown
                     | Action::MoveTabLeft
                     | Action::MoveTabRight
+                    | Action::MoveSidebarUp
+                    | Action::MoveSidebarDown
             )
         };
         let mut defaults = DEFAULT_KEYS;

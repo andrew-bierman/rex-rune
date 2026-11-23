@@ -826,6 +826,20 @@ fn run(
                             backend.send(request)?;
                         }
                     }
+                    Some(action @ (Action::MoveSidebarUp | Action::MoveSidebarDown))
+                        if screen.sidebar =>
+                    {
+                        let direction = if action == Action::MoveSidebarUp {
+                            -1
+                        } else {
+                            1
+                        };
+                        if key.kind == KeyEventKind::Press
+                            && let Some(request) = screen.reorder_sidebar(&state, direction)
+                        {
+                            backend.send(request)?;
+                        }
+                    }
                     Some(action @ (Action::ScrollUp | Action::ScrollDown)) => {
                         if down && let Some(request) = scroll_active_pane(&state, action) {
                             backend.send(request)?;
