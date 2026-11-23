@@ -1,6 +1,6 @@
 [package]
 name = "rex-tui"
-version = "0.1.0"
+version = "0.1.1"
 description = "Terminal interface for Rex servers"
 repository = "https://github.com/andrew-bierman/rex-tui"
 license = "MIT"
