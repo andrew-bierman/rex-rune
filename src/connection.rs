@@ -2097,7 +2097,14 @@ async fn handle_command(
         HostCommand::Request { method, payload } => {
             let session_id = payload["session_id"].as_str().map(str::to_owned);
             request(control, &method, payload).await?;
-            after_request(control, shared, workers, state, session_id.as_deref()).await?;
+            // Reordering does not open the moved session. The server's session_moved
+            // event refreshes the inventory, while a session view would open its row.
+            let refresh_session = if method == "session.move" {
+                None
+            } else {
+                session_id.as_deref()
+            };
+            after_request(control, shared, workers, state, refresh_session).await?;
         }
         HostCommand::NewTerminal {
             method,
