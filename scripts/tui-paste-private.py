@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import pty
+import pwd
 import select
 import shlex
 import signal
@@ -88,8 +89,11 @@ def exercise(launcher, root, env):
     try:
         wait_for(lambda: b"F2 Create session" in output, "connect to private Rex")
         os.write(master, b"\x1bOQ")
+        # macOS login Bash replaces the inherited PS1 with its user prompt.
+        login_prompt = (pwd.getpwuid(os.getuid()).pw_name + "$").encode()
         wait_for(
-            lambda: b"rex-paste-private>" in output or b"Waiting for terminal" in output,
+            lambda: b"rex-paste-private>" in output or login_prompt in output
+            or b"Waiting for terminal" in output,
             "open session",
         )
         forbidden = root / "sidebar-paste"
