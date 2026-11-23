@@ -10,20 +10,36 @@ A fictional workspace rendered by rex-tui in Foot. [Reproduce the screenshots](t
 
 ## Install
 
-**Arch Linux and Omarchy (x86_64).** Copy this into your terminal to install the current preview:
+Use the installer for your system. It installs rex-tui and its matching backend
+together. Archives and checksums are available on the [release page](https://github.com/andrew-bierman/rex-tui/releases/tag/rex-tui-v0.1.0).
+
+### Linux and macOS
+
+Linux x86-64 and ARM64 require glibc 2.35 or newer. macOS supports Intel and
+Apple Silicon.
 
 ```sh
-package=rex-tui-0.1.0-16-x86_64.pkg.tar.zst
-curl -fLO "https://github.com/andrew-bierman/rex-tui/releases/download/rex-tui-v0.1.0-16/$package" &&
-  sudo pacman -U "./$package"
+curl -fLO https://github.com/andrew-bierman/rex-tui/releases/download/rex-tui-v0.1.0/rex-tui-installer.sh
+sh rex-tui-installer.sh
 ```
 
-The package includes rex-tui and its matching backend. [Browse preview downloads](https://github.com/andrew-bierman/rex-tui/releases). For a source build, follow the [build and install guide](tui/README.md#install-on-arch-linux-and-omarchy).
+### Windows x64
+
+Run in PowerShell, then open a new Windows Terminal tab. Windows connects to a
+remote HTTPS Rex host. See [hosts and profiles](tui/README.md#hosts-and-profiles)
+to set up the endpoint.
+
+```powershell
+Invoke-WebRequest https://github.com/andrew-bierman/rex-tui/releases/download/rex-tui-v0.1.0/rex-tui-installer.ps1 -OutFile rex-tui-installer.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\rex-tui-installer.ps1
+```
+
+On Arch and Omarchy you can also use the [native package](tui/README.md#install-on-arch-linux-and-omarchy).
 
 ## Quick start
 
 1. Start your local Rex server or have the remote endpoint ready. The Linux install instructions require a Discord sign-in. [Rex server setup on Linux](https://www.superlogical.com/rex/docs/linux/installation).
-2. Run `rex-tui` in Foot or another terminal. It connects to your local Rex server by default. See the [remote hosts and profiles guide](tui/README.md#hosts-and-profiles) for other servers.
+2. Run `rex-tui` in Foot or another terminal. On Unix it connects to your local Rex server by default. See the [remote hosts and profiles guide](tui/README.md#hosts-and-profiles) for other servers.
 3. Press **F2** to create a session on the active host. Use the sidebar arrows and **Enter** to open an existing session or tab.
 
 ![rex-tui first-run screen with a connected Local Rex host and F2 shown as the shortcut to create the first session](docs/images/rex-tui-first-run.png)
