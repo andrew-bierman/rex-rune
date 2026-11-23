@@ -5,6 +5,8 @@ on:
     paths:
       - .github/workflows/tui-portable.yml
       - dist-workspace.toml
+      - scripts/checksum-tui-powershell-installer.py
+      - scripts/smoke-tui-windows.py
       - scripts/stage-tui-pair.py
       - scripts/tui-paste-private.py
       - scripts/verify-tui-artifact.py
@@ -147,6 +149,32 @@ jobs:
             "$smoke_dir/rex-tui-$TARGET/rex-qt-backend" "$installed/"
           TMPDIR=/tmp REX_BIN="$smoke_dir/vendor/rex" \
             python scripts/tui-paste-private.py "$installed/rex-tui"
+      - name: Exercise PowerShell installation and Rex over Windows ConPTY
+        if: matrix.target == 'x86_64-pc-windows-msvc'
+        shell: bash
+        run: |
+          manifest="$TARGET-dist-manifest.json"
+          cp "target/portable-receipt/$manifest" "target/distrib/$manifest"
+          mise exec -- "$PWD/target/dist-tool/dist.exe" build --artifacts global \
+            --tag "$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["announcement_tag"])' "target/distrib/$manifest")" \
+            --output-format json > target/portable-global.json
+          python scripts/checksum-tui-powershell-installer.py \
+            target/distrib/rex-tui-installer.ps1 target/portable-global.json
+
+          mkdir -p target/windows-smoke
+          rex_url=https://blob.superlogical.com/download/rex/preview/a086db17db8d464627c77e3bb0be6d462668b0ac/rex-windows-amd64.zip
+          curl --proto '=https' --tlsv1.2 -fsSLo target/windows-smoke/rex.zip "$rex_url"
+          echo 'd5c6385f087ec3ec30c3da7d6fe20f7ae0f409e7f4f196f39b245307d52365d9  target/windows-smoke/rex.zip' | sha256sum -c -
+          python -m zipfile -e target/windows-smoke/rex.zip target/windows-smoke/rex
+          rex_exe=$(find target/windows-smoke/rex -iname rex.exe -type f)
+          test -f "$rex_exe"
+          wheel=pywinpty-3.1.2-cp312-cp312-win_amd64.whl
+          wheel_url=https://files.pythonhosted.org/packages/ce/dd/e5ee2cc1295fc76ad8cd26ae4ec001358edbc9d4c4e7a465c136133d38cf
+          curl --proto '=https' --tlsv1.2 -fsSLo "target/windows-smoke/$wheel" "$wheel_url/$wheel"
+          echo "220e30a8cccd7f0be3356d4e3e56fdcda2ae45edc1de526b440c4031fe9308da  target/windows-smoke/$wheel" | sha256sum -c -
+          python -m pip install --no-deps --no-index "target/windows-smoke/$wheel"
+          python scripts/smoke-tui-windows.py target/distrib/rex-tui-installer.ps1 \
+            "target/distrib/rex-tui-$TARGET.zip" "$rex_exe" --openssl "$(cygpath -w "$(command -v openssl)")"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: rex-tui-portable-${{ matrix.target }}
