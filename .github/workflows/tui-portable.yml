@@ -82,6 +82,14 @@ jobs:
       - name: Build and verify the native artifact
         shell: bash
         run: |
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            # Git Bash puts its Unix link.exe ahead of the MSVC linker.
+            msvc_bin="$(cygpath -u "$VCToolsInstallDir")"
+            msvc_bin="${msvc_bin%/}/bin/Hostx64/x64"
+            test -f "$msvc_bin/link.exe"
+            export PATH="$msvc_bin:$PATH"
+            test "$(command -v link.exe)" = "$msvc_bin/link.exe"
+          fi
           test "$(mise exec -- rustc -vV | sed -n 's/^host: //p' | tr -d '\r')" = "$TARGET"
           dist_config_version=$(python -c 'import tomllib; print(tomllib.load(open("dist-workspace.toml", "rb"))["dist"]["cargo-dist-version"])')
           test "$DIST_VERSION" = "$dist_config_version"
