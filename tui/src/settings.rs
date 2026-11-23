@@ -50,10 +50,11 @@ pub enum Action {
     NextAttention,
     MoveSidebarUp,
     MoveSidebarDown,
+    OpenLinks,
     Quit,
 }
 
-const DEFAULT_KEYS: [(Action, &str); 35] = [
+const DEFAULT_KEYS: [(Action, &str); 36] = [
     (Action::Settings, "F1"),
     (Action::NewSession, "F2"),
     (Action::PreviousTab, "F3"),
@@ -89,6 +90,7 @@ const DEFAULT_KEYS: [(Action, &str); 35] = [
     (Action::NextAttention, "Alt+a"),
     (Action::MoveSidebarUp, "Alt+Shift+Up"),
     (Action::MoveSidebarDown, "Alt+Shift+Down"),
+    (Action::OpenLinks, "Alt+o"),
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -415,6 +417,7 @@ impl Settings {
                     | Action::FilterSidebar
                     | Action::MoveSidebarUp
                     | Action::MoveSidebarDown
+                    | Action::OpenLinks
             )
         };
         let mut defaults = DEFAULT_KEYS;

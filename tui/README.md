@@ -103,6 +103,7 @@ fi
 | Ctrl+Shift+Arrow | Move a divider next to the focused pane |
 | F10 | Exit while leaving server sessions running |
 | Alt+PageUp / Alt+PageDown | Scroll the active pane back or forward |
+| Alt+o | Choose a visible web link in the active pane on Linux |
 | Alt+/ | Find text in the active pane and its scrollback |
 
 While filtering, use the arrow keys to move through results and Enter to open
@@ -332,6 +333,13 @@ A mouse-tracking application in the selected pane receives wheel events.
 Use **Alt+PageUp** or **Alt+PageDown** for local scrollback in the active
 pane, including with mouse capture off. Typing returns to live output.
 Remap these shortcuts with `scroll_up` and `scroll_down` in `[keys]`.
+
+On Linux, **Alt+o** shows the destinations of visible HTTP and HTTPS links,
+including labeled links from terminal programs. Use **Up** or **Down** and
+press **Enter** to open a destination with your desktop's browser.
+With pane mouse capture enabled, **Ctrl+click** an underlined link to open it
+directly. Plain drag still selects text, and **Shift** keeps Foot's native
+selection. Remap the link picker with `open_links` in `[keys]`.
 
 Press **Alt+/** to find text in the active pane. Type a query and press
 **Enter**. The footer shows the match count and the pane highlights the
