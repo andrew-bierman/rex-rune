@@ -67,6 +67,7 @@ fi
 | Shift+F2 | Ask to close the active session |
 | F3 / F4 | Switch tabs |
 | Alt+Shift+Left / Right | Move the active tab one place left or right |
+| Alt+a | Jump to the next tab reporting attention |
 | F5 | Open a shell in a new tab |
 | Shift+F5 | Ask to close the active tab |
 | Shift+F6 / Shift+F7 / Shift+F8 | Rename the active session, tab, or focused pane |
@@ -86,6 +87,12 @@ Remap them with `move_tab_left` and `move_tab_right` in `[keys]`.
 
 Close prompts name the session or tab and explain what will stop. Press Y to
 confirm, or Enter or Esc to cancel.
+
+Tabs marked **!** have a program waiting for input. **×** marks a reported
+error. The count on each host or session includes attention tabs inside folded
+rows. **Alt+a** cycles through reported attention, with waiting tabs first.
+Remap it with `next_attention` in `[keys]`. These indicators depend on
+programs publishing Rex status.
 
 Rename prompts capture the active target. Edit the label or clear it with
 Ctrl+U, then press Enter to send the change. An empty tab or pane label restores

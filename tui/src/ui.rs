@@ -1,4 +1,5 @@
 use crate::{
+    attention::{Attention, Status},
     input_prompt::InputPrompt,
     items,
     mouse::{Menu, Target},
@@ -419,6 +420,7 @@ impl Screen {
         }
         let footer_problem = if self.settings_open { "" } else { problem };
         let footer_lines = self.footer(state, footer_problem, area.width);
+        let attention = Attention::from_state(state);
         let [body, footer] = Layout::vertical([
             Constraint::Min(0),
             Constraint::Length(footer_lines.len() as u16),
@@ -444,11 +446,11 @@ impl Screen {
                 (sidebar, work)
             }
         };
-        self.draw_sidebar(frame, sidebar, state);
+        self.draw_sidebar(frame, sidebar, state, &attention);
         let [tabs, terminal] =
             Layout::vertical([Constraint::Length(3), Constraint::Min(0)]).areas(work);
         self.pane_area = terminal;
-        draw_tabs(frame, tabs, state, self.settings.chrome);
+        draw_tabs(frame, tabs, state, self.settings.chrome, &attention);
         let panes = items(&state["panes"]);
         if panes.is_empty() {
             let (empty, help) = if state["connected"] != true {
@@ -651,7 +653,13 @@ impl Screen {
         }
     }
 
-    fn draw_sidebar(&mut self, frame: &mut Frame<'_>, area: Rect, state: &Value) {
+    fn draw_sidebar(
+        &mut self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        state: &Value,
+        attention: &Attention<'_>,
+    ) {
         let chrome = self.settings.chrome;
         let block = Block::default()
             .title(Line::styled(
@@ -700,10 +708,24 @@ impl Screen {
                 Some(false) => "▸ ",
                 None => "  ",
             };
+            let RowId(host, session, window) = row.id();
+            let count = if row.tab.is_none() {
+                attention.count(host, session)
+            } else {
+                0
+            };
+            let count_badge = if count == 0 {
+                String::new()
+            } else {
+                format!("[{count}] ")
+            };
             let line = if let Some(tab) = row.tab {
+                let badge = attention
+                    .tab(host, session, window)
+                    .map_or("", Status::badge);
                 Line::styled(
                     format!(
-                        "{cursor_marker}      {} {}",
+                        "{cursor_marker}      {} {badge}{}",
                         if selected { "▰" } else { "▫" },
                         label(tab)
                     ),
@@ -711,7 +733,7 @@ impl Screen {
                 )
             } else if let Some(session) = row.session {
                 Line::styled(
-                    format!("{cursor_marker}  {branch}{}", label(session)),
+                    format!("{cursor_marker}  {branch}{count_badge}{}", label(session)),
                     row_style,
                 )
             } else {
@@ -734,7 +756,10 @@ impl Screen {
                             })
                         },
                     ),
-                    Span::styled(label(row.host), row_style.bold()),
+                    Span::styled(
+                        format!("{count_badge}{}", label(row.host)),
+                        row_style.bold(),
+                    ),
                 ])
                 .style(row_style)
             };
@@ -744,7 +769,13 @@ impl Screen {
     }
 }
 
-fn draw_tabs(frame: &mut Frame<'_>, area: Rect, state: &Value, chrome: Chrome) {
+fn draw_tabs(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    state: &Value,
+    chrome: Chrome,
+    attention: &Attention<'_>,
+) {
     let active = items(&state["hosts"]["rows"])
         .iter()
         .find(|host| host["active"] == true);
@@ -769,7 +800,12 @@ fn draw_tabs(frame: &mut Frame<'_>, area: Rect, state: &Value, chrome: Chrome) {
             .iter()
             .skip(start)
             .map(|tab| {
-                let budget = usize::from(inner.width).min(28).saturating_sub(4);
+                let badge = attention
+                    .tab(text(state, "host"), text(state, "session"), text(tab, "id"))
+                    .map_or("", Status::badge);
+                let budget = usize::from(inner.width)
+                    .min(28)
+                    .saturating_sub(4 + badge.chars().count());
                 let mut remaining = budget;
                 let name: String = label(tab)
                     .chars()
@@ -784,7 +820,7 @@ fn draw_tabs(frame: &mut Frame<'_>, area: Rect, state: &Value, chrome: Chrome) {
                     .collect();
                 let active = tab["id"] == state["window"];
                 Span::styled(
-                    format!(" {} {name} ", if active { "▰" } else { "▫" }),
+                    format!(" {} {badge}{name} ", if active { "▰" } else { "▫" }),
                     if active {
                         chrome.selection()
                     } else {
@@ -1054,6 +1090,46 @@ fn draw_pane(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn folded_host_keeps_attention_count_and_active_strip_marks_reported_tabs() {
+        let state = json!({
+            "host": "host", "session": "session", "window": "ask", "connected": true,
+            "hosts": {"rows": [{"id":"host","label":"Team","active":true,"connected":true,"epoch":4,
+                "sessions":[{"id":"session","label":"Work","opened":true,
+                    "tabs":[{"id":"ask","label":"Review"},{"id":"failed","label":"Build"}]}]}]},
+            "windows":[{"id":"ask","label":"Review"},{"id":"failed","label":"Build"}],
+            "activity":{"rows":[
+                {"host":"host","session":"session","window":"ask","epoch":4,"state":"blocked"},
+                {"host":"host","session":"session","window":"failed","epoch":4,"state":"error"}
+            ]}
+        });
+        let mut screen = Screen::default();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 18)).unwrap();
+        let display = |buffer: &ratatui::buffer::Buffer| {
+            buffer
+                .content()
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>()
+        };
+        let draw = |screen: &mut Screen, frame: &mut Frame<'_>| {
+            screen.draw(frame, &state, "", Path::new("settings.toml"));
+        };
+        let expanded = terminal.draw(|frame| draw(&mut screen, frame)).unwrap();
+        let text = display(expanded.buffer);
+        assert!(text.contains("[2] Team") && text.contains("[2] Work"));
+        assert_eq!(text.matches("! Review").count(), 2);
+        assert_eq!(text.matches("× Build").count(), 2);
+        screen.navigate(&state, KeyCode::Home);
+        screen.navigate(&state, KeyCode::Left);
+        let folded = terminal.draw(|frame| draw(&mut screen, frame)).unwrap();
+        let text = display(folded.buffer);
+        assert!(text.contains("[2] Team") && !text.contains("[2] Work"));
+        assert_eq!(text.matches("! Review").count(), 1);
+        assert_eq!(text.matches("× Build").count(), 1);
+    }
 
     fn sidebar_event(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
         MouseEvent {
