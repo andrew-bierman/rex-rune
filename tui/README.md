@@ -90,6 +90,7 @@ fi
 | F3 / F4 | Switch tabs |
 | Alt+Shift+Left / Right | Move the active tab one place left or right |
 | Alt+a | Jump to the next tab reporting attention |
+| Alt+Shift+Up / Down | Move the highlighted sidebar row up or down |
 | F5 | Open a shell in a new tab |
 | Shift+F5 | Ask to close the active tab |
 | Shift+F9 | Ask to close the focused pane or its tab if it has only one pane |
@@ -113,6 +114,12 @@ Directional focus stops at the edge of the split layout. Remap it with
 
 Tab moves keep the same tab active and stop at the ends of the tab strip.
 Remap them with `move_tab_left` and `move_tab_right` in `[keys]`.
+
+**Alt+Shift+Up/Down** moves the highlighted sidebar row among its siblings.
+Host order is saved in your local profile. Sessions move within their Rex
+server and tabs move within their session. Rex shares session and tab order
+across clients. Moving a row keeps the current workspace focused.
+Remap the shortcuts with `move_sidebar_up` and `move_sidebar_down`.
 
 Close prompts name the pane, tab, or session and explain what will stop. Press Y
 to confirm, or Enter or Esc to cancel. Remap Shift+F9 with `close_pane` in `[keys]`.
