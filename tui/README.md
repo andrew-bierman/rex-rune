@@ -203,7 +203,9 @@ has the worktree commands and Qt test setup.
 
 ## Settings and themes
 
-Press **F1** to open Settings. Press **E** to edit the file using `VISUAL`
+Press **F1** for a scrollable list of your active shortcuts. Use the arrow
+keys or PageUp/PageDown to browse and **Tab** to switch to Settings. In
+either view, press **E** to edit the file using `VISUAL`
 or `EDITOR`, **R** to reload changes you made elsewhere, or **Esc** to
 close the panel. Editing creates a starter file when needed and reloads it
 after the editor exits. A rejected reload leaves the current settings in use.

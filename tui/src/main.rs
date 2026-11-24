@@ -834,9 +834,30 @@ fn run(
                     if key.kind != KeyEventKind::Press {
                         continue;
                     }
+                    let help_page = terminal.size()?.height.saturating_sub(6).clamp(1, 24) as usize;
+                    let last = screen
+                        .settings
+                        .shortcut_help()
+                        .count()
+                        .saturating_sub(help_page);
                     match (key.code, key.modifiers) {
                         (KeyCode::Esc, KeyModifiers::NONE) => screen.settings_open = false,
+                        (KeyCode::Tab, KeyModifiers::NONE) => screen.help_tab = !screen.help_tab,
+                        (KeyCode::Up, KeyModifiers::NONE) if screen.help_tab => {
+                            screen.help_offset = screen.help_offset.min(last).saturating_sub(1);
+                        }
+                        (KeyCode::Down, KeyModifiers::NONE) if screen.help_tab => {
+                            screen.help_offset = (screen.help_offset + 1).min(last);
+                        }
+                        (KeyCode::PageUp, KeyModifiers::NONE) if screen.help_tab => {
+                            screen.help_offset =
+                                screen.help_offset.min(last).saturating_sub(help_page);
+                        }
+                        (KeyCode::PageDown, KeyModifiers::NONE) if screen.help_tab => {
+                            screen.help_offset = (screen.help_offset + help_page).min(last);
+                        }
                         (KeyCode::Char('e'), KeyModifiers::NONE) => {
+                            screen.help_tab = false;
                             mouse_capture.set(false)?;
                             problem = match edit_settings(terminal, settings_path)? {
                                 Ok(()) => reload_settings(&mut screen, settings_path),
@@ -844,6 +865,7 @@ fn run(
                             };
                         }
                         (KeyCode::Char('r'), KeyModifiers::NONE) => {
+                            screen.help_tab = false;
                             problem = reload_settings(&mut screen, settings_path);
                         }
                         _ if action == Some(Action::Settings) => screen.settings_open = false,
@@ -1017,6 +1039,8 @@ fn run(
                     Some(Action::Settings) => {
                         if key.kind == KeyEventKind::Press {
                             screen.settings_open = true;
+                            screen.help_tab = true;
+                            screen.help_offset = 0;
                             screen.dirty = true;
                         }
                     }
