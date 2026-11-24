@@ -174,6 +174,8 @@ pub struct Screen {
     pub settings: Settings,
     pub ansi_palette_started: bool,
     pub settings_open: bool,
+    pub help_tab: bool,
+    pub help_offset: usize,
     pub prompt: Option<InputPrompt>,
     pub dirty: bool,
     pub pane_sizes: Vec<(String, u16, u16)>,
@@ -198,6 +200,8 @@ impl Default for Screen {
             settings: Settings::default(),
             ansi_palette_started: false,
             settings_open: false,
+            help_tab: false,
+            help_offset: 0,
             prompt: None,
             dirty: true,
             pane_sizes: Vec::new(),
@@ -699,7 +703,11 @@ impl Screen {
             frame.render_widget(Paragraph::new(footer_lines), footer);
         }
         if self.settings_open {
-            self.draw_settings(frame, settings_path, problem);
+            if self.help_tab {
+                self.draw_help(frame);
+            } else {
+                self.draw_settings(frame, settings_path, problem);
+            }
         }
         if let Some(prompt) = &self.prompt
             && !prompt.is_find()
@@ -724,6 +732,46 @@ impl Screen {
             .map_or_else(String::new, |key| format!("{key} {label}"))
     }
 
+    fn draw_help(&self, frame: &mut Frame<'_>) {
+        let area = frame.area();
+        let width = area.width.min(68);
+        let height = area.height.saturating_sub(2).min(28);
+        let bounds = Rect::new(
+            area.x + (area.width - width) / 2,
+            area.y + (area.height - height) / 2,
+            width,
+            height,
+        );
+        let rows = usize::from(height.saturating_sub(4));
+        let count = self.settings.shortcut_help().count();
+        let offset = self.help_offset.min(count.saturating_sub(rows));
+        let chrome = self.settings.chrome;
+        let mut lines = vec![Line::raw("↑↓ Scroll  PgUp/PgDn  Tab Settings  Esc Close")];
+        lines.extend(self.settings.shortcut_help().skip(offset).take(rows).map(
+            |(key, command)| {
+                Line::from(vec![
+                    Span::styled(format!("{key:<19}"), Style::new().fg(chrome.accent)),
+                    Span::raw(command),
+                ])
+            },
+        ));
+        lines.push(Line::raw(format!(
+            "{}–{} of {count}",
+            (offset + 1).min(count),
+            (offset + rows).min(count)
+        )));
+        frame.render_widget(Clear, bounds);
+        frame.render_widget(
+            Paragraph::new(lines).block(
+                Block::bordered()
+                    .title(" Keyboard shortcuts ")
+                    .style(chrome.style())
+                    .border_style(Style::new().fg(chrome.accent)),
+            ),
+            bounds,
+        );
+    }
+
     fn draw_settings(&self, frame: &mut Frame<'_>, path: &Path, problem: &str) {
         let area = frame.area();
         let width = area.width.min(70);
@@ -741,7 +789,7 @@ impl Screen {
             .width
             .map_or_else(|| "auto".into(), |width| width.to_string());
         let mut lines = vec![
-            Line::raw("E Edit    R Reload    Esc Close"),
+            Line::raw("E Edit  R Reload  Tab Help  Esc Close"),
             Line::from(path.display().to_string()),
             Line::raw(""),
             Line::from(format!("Theme  {}", self.settings.theme)),
@@ -816,7 +864,7 @@ impl Screen {
         ]);
         let actions = Span::raw(
             [
-                self.hint(Action::Settings, "Settings"),
+                self.hint(Action::Settings, "Help"),
                 self.hint(Action::CopySelection, "Copy"),
                 if !self.sidebar && state["pane"].is_string() {
                     self.hint(Action::Find, "Find")
@@ -1838,7 +1886,7 @@ mod tests {
         assert!(display.contains("Theme  terminal"));
         assert!(display.contains("Sidebar  Right, 27"));
         assert!(display.contains("Invalid color"));
-        assert!(display.contains("F12 Settings"));
+        assert!(display.contains("F12 Help"));
     }
 
     #[test]

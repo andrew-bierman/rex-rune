@@ -95,6 +95,58 @@ const DEFAULT_KEYS: [(Action, &str); 37] = [
     (Action::OpenLinks, "Alt+o"),
 ];
 
+impl Action {
+    fn help_label(self) -> &'static str {
+        match self {
+            Self::Settings => "Open help and settings",
+            Self::NewSession => "New session",
+            Self::PreviousTab => "Previous tab",
+            Self::NextTab => "Next tab",
+            Self::NewTab => "New tab",
+            Self::ToggleFocus => "Switch sidebar and shell focus",
+            Self::FilterSidebar => "Filter sidebar",
+            Self::NextPane => "Cycle panes",
+            Self::SplitRight => "Split right",
+            Self::SplitDown => "Split down",
+            Self::CloseSession => "Close session",
+            Self::CloseTab => "Close tab",
+            Self::ClosePane => "Close pane",
+            Self::RenameSession => "Rename session",
+            Self::RenameTab => "Rename tab",
+            Self::RenamePane => "Rename pane",
+            Self::ResizeLeft => "Resize divider left",
+            Self::ResizeRight => "Resize divider right",
+            Self::ResizeUp => "Resize divider up",
+            Self::ResizeDown => "Resize divider down",
+            Self::ComposeInput => "Open input composer",
+            Self::CopySelection => "Copy pane selection",
+            Self::Find => "Find in pane scrollback",
+            Self::ScrollUp => "Scroll up",
+            Self::ScrollDown => "Scroll down",
+            Self::JumpToLiveOutput => "Jump to live output",
+            Self::FocusLeft => "Focus pane left",
+            Self::FocusRight => "Focus pane right",
+            Self::FocusUp => "Focus pane up",
+            Self::FocusDown => "Focus pane down",
+            Self::MoveTabLeft => "Move tab left",
+            Self::MoveTabRight => "Move tab right",
+            Self::NextAttention => "Jump to next tab needing attention",
+            Self::MoveSidebarUp => "Move sidebar row up",
+            Self::MoveSidebarDown => "Move sidebar row down",
+            Self::OpenLinks => "Choose a visible web link",
+            Self::Quit => "Detach and quit",
+        }
+    }
+}
+
+impl Settings {
+    pub(crate) fn shortcut_help(&self) -> impl Iterator<Item = (&str, &str)> {
+        DEFAULT_KEYS
+            .iter()
+            .filter_map(|&(action, _)| self.shortcut(action).map(|key| (key, action.help_label())))
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Chord {
     code: KeyCode,
@@ -782,6 +834,19 @@ pub mod tests {
                 (!matches!(action, Action::ComposeInput | Action::CopySelection)).then_some(key);
             assert_eq!(settings.shortcut(action), expected);
         }
+    }
+
+    #[test]
+    fn shortcut_help_shows_remaps_and_omits_disabled_actions() {
+        let file = toml::from_str("[keys]\nnext_tab = \"Ctrl+n\"\nsplit_down = \"none\"").unwrap();
+        let settings = Settings::from_file(file, Path::new("")).unwrap();
+        let help: Vec<_> = settings.shortcut_help().collect();
+        assert!(help.contains(&("Ctrl+n", "Next tab")));
+        assert!(
+            !help
+                .iter()
+                .any(|(_, command)| matches!(*command, "Split down" | "Open input composer"))
+        );
     }
 
     #[test]
