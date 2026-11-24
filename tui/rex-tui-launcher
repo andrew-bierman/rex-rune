@@ -1,49 +1,5 @@
 #!/bin/sh
 set -eu
 
-usage() {
-    printf 'Usage: rex-tui [--config PATH] [--settings PATH]\n'
-    printf '       rex-tui --check-settings [--settings PATH]\n'
-    printf '       rex-tui --print-default-settings\n'
-}
-
-profile=
-settings=
-mode=
-while [ "$#" -gt 0 ]; do
-    case "$1" in
-        -h|--help) usage; exit 0 ;;
-        --config|--settings)
-            if [ "$#" -lt 2 ] || [ -z "$2" ]; then
-                usage >&2
-                exit 2
-            fi
-            case "$1" in
-                --config) profile=$2 ;;
-                --settings) settings=$2 ;;
-            esac
-            shift 2
-            ;;
-        --check-settings|--print-default-settings)
-            if [ -n "$mode" ]; then usage >&2; exit 2; fi
-            mode=$1
-            shift
-            ;;
-        *) usage >&2; exit 2 ;;
-    esac
-done
-
 launcher=$(readlink -f -- "$0")
-private_dir=${launcher%/*}/../lib/rex-tui
-if [ "$mode" = --print-default-settings ]; then
-    if [ -n "$settings" ] || [ -n "$profile" ]; then usage >&2; exit 2; fi
-    set -- "$mode"
-elif [ "$mode" = --check-settings ]; then
-    if [ -n "$profile" ]; then usage >&2; exit 2; fi
-    set -- "$mode"
-else
-    profile=${profile:-${XDG_CONFIG_HOME:-"$HOME/.config"}/rex-tui/workspace.json}
-    set -- "$private_dir/rex-qt-backend" "$profile"
-fi
-if [ -n "$settings" ]; then set -- "$@" --settings "$settings"; fi
-exec "$private_dir/rex-tui" "$@"
+exec "${launcher%/*}/../lib/rex-tui/rex-tui" "$@"
