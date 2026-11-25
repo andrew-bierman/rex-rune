@@ -31,23 +31,13 @@ pub struct Cli {
 impl Cli {
     pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Self> {
         let mut args = args.into_iter().peekable();
-        let mode = match args.peek().and_then(|arg| arg.to_str()) {
-            Some("--check-settings") => Mode::CheckSettings,
-            Some("--print-default-settings") => Mode::PrintSettings,
-            Some("--help" | "-h") => Mode::Help,
-            Some("--version" | "-V") => Mode::Version,
-            _ => Mode::Launch,
-        };
         let mut cli = Self {
-            mode,
+            mode: Mode::Launch,
             backend: None,
             profile: None,
             settings: None,
         };
-        if cli.mode != Mode::Launch {
-            args.next();
-        }
-        // The Arch launcher and development tools pass an explicit backend and profile.
+        // Development tools pass an explicit backend and profile.
         if cli.mode == Mode::Launch
             && args
                 .peek()
@@ -59,13 +49,21 @@ impl Cli {
             ));
         }
         while let Some(flag) = args.next() {
-            let path = match (cli.mode == Mode::Launch, flag.to_str()) {
-                (true, Some("--config")) if cli.backend.is_none() => &mut cli.profile,
-                (_, Some("--settings"))
-                    if matches!(cli.mode, Mode::Launch | Mode::CheckSettings) =>
-                {
-                    &mut cli.settings
-                }
+            let mode = match flag.to_str() {
+                Some("--check-settings") => Some(Mode::CheckSettings),
+                Some("--print-default-settings") => Some(Mode::PrintSettings),
+                Some("--help" | "-h") => Some(Mode::Help),
+                Some("--version" | "-V") => Some(Mode::Version),
+                _ => None,
+            };
+            if let Some(mode) = mode {
+                ensure!(cli.mode == Mode::Launch, "Choose one mode\n{USAGE}");
+                cli.mode = mode;
+                continue;
+            }
+            let path = match flag.to_str() {
+                Some("--config") => &mut cli.profile,
+                Some("--settings") => &mut cli.settings,
                 _ => bail!("Unexpected argument {:?}\n{USAGE}", flag),
             };
             ensure!(path.is_none(), "Duplicate {}", flag.to_string_lossy());
@@ -75,6 +73,14 @@ impl Cli {
                 .with_context(|| format!("Expected a path after {}", flag.to_string_lossy()))?;
             *path = Some(PathBuf::from(value));
         }
+        ensure!(
+            cli.mode == Mode::Launch || cli.profile.is_none(),
+            "Workspace profiles are only used when launching rex-tui\n{USAGE}"
+        );
+        ensure!(
+            matches!(cli.mode, Mode::Launch | Mode::CheckSettings) || cli.settings.is_none(),
+            "This mode does not accept a settings path\n{USAGE}"
+        );
         Ok(cli)
     }
 }
@@ -135,6 +141,10 @@ mod tests {
     #[test]
     fn standalone_settings_and_help_modes_need_no_backend() {
         let check = parse(&["--check-settings", "--settings", "custom"]).unwrap();
+        assert_eq!(
+            check,
+            parse(&["--settings", "custom", "--check-settings"]).unwrap()
+        );
         assert_eq!(check.mode, Mode::CheckSettings);
         assert_eq!(check.settings, Some("custom".into()));
         assert_eq!(

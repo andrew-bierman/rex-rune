@@ -81,6 +81,15 @@ fi
 
 ## Controls
 
+Press **F1**, then **/** to search commands by name or shortcut. Use **↑ / ↓**
+to select and **Enter** to run. **Esc** returns to help, and **Tab** from help
+opens settings. Sidebar-only commands are offered when the sidebar has focus.
+
+Use `rex-tui --version` to check which frontend build is installed. Use
+`rex-tui --help` for launch and settings flags, or `rex --help` for server and
+session automation.
+
+
 | Key | Action |
 | --- | --- |
 | Arrows or j/k, Enter | Move through the sidebar and open the selected row |

@@ -176,6 +176,8 @@ pub struct Screen {
     pub settings_open: bool,
     pub help_tab: bool,
     pub help_offset: usize,
+    pub command_query: Option<String>,
+    pub command_index: usize,
     pub prompt: Option<InputPrompt>,
     pub dirty: bool,
     pub pane_sizes: Vec<(String, u16, u16)>,
@@ -202,6 +204,8 @@ impl Default for Screen {
             settings_open: false,
             help_tab: false,
             help_offset: 0,
+            command_query: None,
+            command_index: 0,
             prompt: None,
             dirty: true,
             pane_sizes: Vec::new(),
@@ -743,28 +747,54 @@ impl Screen {
             height,
         );
         let rows = usize::from(height.saturating_sub(4));
-        let count = self.settings.shortcut_help().count();
-        let offset = self.help_offset.min(count.saturating_sub(rows));
         let chrome = self.settings.chrome;
-        let mut lines = vec![Line::raw("↑↓ Scroll  PgUp/PgDn  Tab Settings  Esc Close")];
-        lines.extend(self.settings.shortcut_help().skip(offset).take(rows).map(
-            |(key, command)| {
-                Line::from(vec![
-                    Span::styled(format!("{key:<19}"), Style::new().fg(chrome.accent)),
-                    Span::raw(command),
-                ])
-            },
-        ));
-        lines.push(Line::raw(format!(
-            "{}–{} of {count}",
-            (offset + 1).min(count),
-            (offset + rows).min(count)
-        )));
+        let lines = if let Some(query) = &self.command_query {
+            let commands = self.settings.palette_actions(query, self.sidebar);
+            let offset = (self.command_index + 1).saturating_sub(rows);
+            let mut lines = vec![Line::raw(format!("Search: {query}"))];
+            if commands.is_empty() {
+                lines.push(Line::raw("No matching commands"));
+            }
+            lines.extend(commands.iter().enumerate().skip(offset).take(rows).map(
+                |(index, (_, key, label))| {
+                    let style = if index == self.command_index {
+                        Style::new().add_modifier(Modifier::REVERSED)
+                    } else {
+                        Style::default()
+                    };
+                    Line::styled(format!("{key:<19}{label}"), style)
+                },
+            ));
+            lines.push(Line::raw("↑↓ Select  Enter Run  Esc Back"));
+            lines
+        } else {
+            let count = self.settings.shortcut_help().count();
+            let offset = self.help_offset.min(count.saturating_sub(rows));
+            let mut lines = vec![Line::raw("/ Search  ↑↓ Scroll  Tab Settings")];
+            lines.extend(self.settings.shortcut_help().skip(offset).take(rows).map(
+                |(key, command)| {
+                    Line::from(vec![
+                        Span::styled(format!("{key:<19}"), Style::new().fg(chrome.accent)),
+                        Span::raw(command),
+                    ])
+                },
+            ));
+            lines.push(Line::raw(format!(
+                "{}–{} of {count}   Esc Close",
+                (offset + 1).min(count),
+                (offset + rows).min(count)
+            )));
+            lines
+        };
         frame.render_widget(Clear, bounds);
         frame.render_widget(
             Paragraph::new(lines).block(
                 Block::bordered()
-                    .title(" Keyboard shortcuts ")
+                    .title(if self.command_query.is_some() {
+                        " Commands "
+                    } else {
+                        " Keyboard shortcuts "
+                    })
                     .style(chrome.style())
                     .border_style(Style::new().fg(chrome.accent)),
             ),

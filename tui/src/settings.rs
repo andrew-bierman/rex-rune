@@ -96,6 +96,13 @@ const DEFAULT_KEYS: [(Action, &str); 37] = [
 ];
 
 impl Action {
+    fn sidebar_only(self) -> bool {
+        matches!(
+            self,
+            Self::FilterSidebar | Self::MoveSidebarUp | Self::MoveSidebarDown
+        )
+    }
+
     fn help_label(self) -> &'static str {
         match self {
             Self::Settings => "Open help and settings",
@@ -140,6 +147,32 @@ impl Action {
 }
 
 impl Settings {
+    pub(crate) fn palette_actions(&self, query: &str, sidebar: bool) -> Vec<(Action, &str, &str)> {
+        let query = query.to_lowercase();
+        DEFAULT_KEYS
+            .iter()
+            .filter_map(|&(action, _)| {
+                let key = self.shortcut(action)?;
+                let label = action.help_label();
+                let aliases = match action {
+                    Action::NewSession => "create workspace",
+                    Action::NewTab => "shell window",
+                    Action::Find => "scrollback history search",
+                    Action::FilterSidebar => "host session tab search",
+                    _ => "",
+                };
+                (action != Action::Settings
+                    && (sidebar || !action.sidebar_only())
+                    && query.split_whitespace().all(|word| {
+                        label.to_lowercase().contains(word)
+                            || key.to_lowercase().contains(word)
+                            || aliases.contains(word)
+                    }))
+                .then_some((action, key, label))
+            })
+            .collect()
+    }
+
     pub(crate) fn shortcut_help(&self) -> impl Iterator<Item = (&str, &str)> {
         DEFAULT_KEYS
             .iter()
@@ -846,6 +879,22 @@ pub mod tests {
             !help
                 .iter()
                 .any(|(_, command)| matches!(*command, "Split down" | "Open input composer"))
+        );
+    }
+
+    #[test]
+    fn palette_search_matches_aliases_and_respects_sidebar_focus() {
+        let file = toml::from_str("[keys]\nnew_tab = \"Ctrl+n\"\nsplit_down = \"none\"").unwrap();
+        let settings = Settings::from_file(file, Path::new("")).unwrap();
+        assert_eq!(
+            settings.palette_actions("new SHELL", false),
+            [(Action::NewTab, "Ctrl+n", "New tab")]
+        );
+        assert!(settings.palette_actions("split down", true).is_empty());
+        assert!(settings.palette_actions("filter sidebar", false).is_empty());
+        assert_eq!(
+            settings.palette_actions("filter sidebar", true)[0].0,
+            Action::FilterSidebar
         );
     }
 

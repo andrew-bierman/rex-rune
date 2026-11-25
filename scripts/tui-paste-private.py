@@ -30,6 +30,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("launcher", type=Path, help="Path to the packaged rex-tui launcher")
     args = parser.parse_args()
+    assert subprocess.check_output([args.launcher, "--version"], text=True).startswith("rex-tui ")
     with tempfile.TemporaryDirectory(prefix="rex-tui-paste-") as temp:
         root = Path(temp)
         profile = root / "config" / "rex-tui" / "workspace.json"
@@ -88,7 +89,12 @@ def exercise(launcher, root, env):
 
     try:
         wait_for(lambda: b"F2 Create session" in output, "connect to private Rex")
-        os.write(master, b"\x1bOQ")
+        os.write(master, b"\x1bOP")
+        wait_for(lambda: b"Keyboard shortcuts" in output, "open help")
+        os.write(master, b"/")
+        wait_for(lambda: b"Search:" in output, "open command search")
+        paste("create session")
+        os.write(master, b"\r")
         # macOS login Bash replaces the inherited PS1 with its user prompt.
         login_prompt = (pwd.getpwuid(os.getuid()).pw_name + "$").encode()
         wait_for(

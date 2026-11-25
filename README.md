@@ -67,7 +67,7 @@ On Arch and Omarchy you can also use the [native package](tui/README.md#install-
 - **Workspaces.** Browse and fold the host tree, create and rename sessions, open and reorder shell tabs, and confirm before closing a tab or session.
 - **Panes.** Split and resize panes with the keyboard, move focus by direction, rename a pane, and scroll its history with **Alt+PageUp / Alt+PageDown**. The client also resizes visible panes it owns when the terminal window changes size.
 - **Input and clipboard.** Type and paste into a focused shell. Foot can copy text from its native selection. Opt in to pane selection, click-to-focus, a pane context menu, or the local input composer.
-- **Appearance and keys.** Open **F1** to edit or reload settings. Remap shortcuts, position the sidebar, change pane borders and headers, and select a named theme. Chrome and default pane colors follow the terminal palette. [ANSI palette inheritance](tui/README.md#ansi-palette) is opt-in.
+- **Appearance and keys.** Open **F1** for keyboard help, then **/** to search and run commands or **Tab** for settings. Remap shortcuts, position the sidebar, change pane borders and headers, and select a named theme. Chrome and default pane colors follow the terminal palette. [ANSI palette inheritance](tui/README.md#ansi-palette) is opt-in.
 
 A [personal Rex server started over SSH](docs/hosts.md#ssh-setup) runs until stopped or the host restarts. On systemd hosts, logging out ends the server and its sessions unless lingering is enabled.
 
@@ -82,13 +82,16 @@ The roadmap takes its cues from the official [Rex for Mac actions](https://www.s
 
 | Area | What’s planned |
 | --- | --- |
-| Navigation | Searchable command palette, global session and tab switcher, and recent-tab history |
-| Workspace controls | Move, zoom, balance, and close panes, plus close-others and floating panes |
-| Scrollback | Jump to live output, prompt jumps, and keyboard copy mode |
-| Activity | Tab indicators, work grouped by session or priority, and opt-in desktop notifications |
-| Hosts and files | Host management, SSH setup guidance, device pairing, paths, file insertion, and links |
+| Navigation | Global session and tab switcher and recent-tab history |
+| Workspace controls | Move, zoom, and balance panes, plus close-others and floating panes |
+| Scrollback | Prompt jumps and keyboard copy mode |
+| Activity | Work grouped by session or priority |
+| Hosts and files | Host management, SSH setup guidance, device pairing, paths, and file insertion |
 | Mouse | Divider resizing, tab context actions, and forwarding for terminal programs that request it |
+| Lua prompts | Support `rex.ui.input` and `rex.ui.pick` after the client can negotiate control API revision 17 or later |
 | Settings | Theme picking and import, key sequences and modes, and terminal display preferences |
+
+The command palette and jump to live output are available on the default branch. The Linux 0.1.1 archives predate those changes.
 
 After the keyboard workflows, the roadmap includes a richer input composer, optional terminal preloading, and a standalone view of an existing pane.
 

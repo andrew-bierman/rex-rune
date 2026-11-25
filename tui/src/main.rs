@@ -827,10 +827,59 @@ fn run(
                 };
                 screen.dirty = true;
             }
+            Event::Paste(paste) if screen.command_query.is_some() => {
+                let query = screen.command_query.as_mut().unwrap();
+                query.extend(
+                    paste
+                        .chars()
+                        .filter(|c| !c.is_control())
+                        .take(128usize.saturating_sub(query.chars().count())),
+                );
+                screen.command_index = 0;
+                screen.dirty = true;
+            }
             Event::Key(key) => {
                 let down = key.kind != KeyEventKind::Release;
-                let action = screen.settings.action(key);
+                let mut action = screen.settings.action(key);
+                if let Some(query) = &mut screen.command_query {
+                    consume_modal_key(&mut modal_keys, key, true);
+                    if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
+                    let commands = screen.settings.palette_actions(query, screen.sidebar);
+                    let mut selected = None;
+                    match (key.code, key.modifiers) {
+                        (KeyCode::Esc, KeyModifiers::NONE) => screen.command_query = None,
+                        (KeyCode::Up, KeyModifiers::NONE) => {
+                            screen.command_index = screen.command_index.saturating_sub(1);
+                        }
+                        (KeyCode::Down, KeyModifiers::NONE) => {
+                            screen.command_index =
+                                (screen.command_index + 1).min(commands.len().saturating_sub(1));
+                        }
+                        (KeyCode::Enter, KeyModifiers::NONE) => {
+                            selected = commands.get(screen.command_index).map(|command| command.0);
+                        }
+                        (KeyCode::Backspace, KeyModifiers::NONE) => {
+                            query.pop();
+                            screen.command_index = 0;
+                        }
+                        (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT)
+                            if query.chars().count() < 128 =>
+                        {
+                            query.push(c);
+                            screen.command_index = 0;
+                        }
+                        _ => {}
+                    }
+                    screen.dirty = true;
+                    let Some(selected) = selected else { continue };
+                    action = Some(selected);
+                    screen.command_query = None;
+                    screen.settings_open = false;
+                }
                 if screen.settings_open {
+                    consume_modal_key(&mut modal_keys, key, true);
                     if key.kind != KeyEventKind::Press {
                         continue;
                     }
@@ -843,6 +892,10 @@ fn run(
                     match (key.code, key.modifiers) {
                         (KeyCode::Esc, KeyModifiers::NONE) => screen.settings_open = false,
                         (KeyCode::Tab, KeyModifiers::NONE) => screen.help_tab = !screen.help_tab,
+                        (KeyCode::Char('/'), KeyModifiers::NONE) if screen.help_tab => {
+                            screen.command_query = Some(String::new());
+                            screen.command_index = 0;
+                        }
                         (KeyCode::Up, KeyModifiers::NONE) if screen.help_tab => {
                             screen.help_offset = screen.help_offset.min(last).saturating_sub(1);
                         }
