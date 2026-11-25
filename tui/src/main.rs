@@ -731,6 +731,7 @@ fn run(
         match input {
             Event::Resize(..) => screen.dirty = true,
             Event::Mouse(event) if selection_enabled => {
+                let copy_on_select = screen.settings.copy_on_select;
                 let link_event = if platform::LINKS_SUPPORTED {
                     let inbox = backend.inbox.lock().unwrap();
                     link_click.event(
@@ -769,7 +770,11 @@ fn run(
                     continue;
                 }
                 if !pointer_enabled {
-                    for request in screen.selection.mouse(&state, &screen.pane_grids, event) {
+                    for request in
+                        screen
+                            .selection
+                            .mouse(&state, &screen.pane_grids, event, copy_on_select)
+                    {
                         backend.send(request)?;
                         screen.dirty = true;
                     }
@@ -778,14 +783,23 @@ fn run(
                 match pointer.event(&state, &screen.pane_grids, event) {
                     PointerAction::None => {}
                     PointerAction::Selection(event) => {
-                        for request in screen.selection.mouse(&state, &screen.pane_grids, event) {
+                        for request in screen.selection.mouse(
+                            &state,
+                            &screen.pane_grids,
+                            event,
+                            copy_on_select,
+                        ) {
                             backend.send(request)?;
                         }
                     }
                     PointerAction::BeginDrag(down, drag) => {
                         for event in [down, drag] {
-                            for request in screen.selection.mouse(&state, &screen.pane_grids, event)
-                            {
+                            for request in screen.selection.mouse(
+                                &state,
+                                &screen.pane_grids,
+                                event,
+                                copy_on_select,
+                            ) {
                                 backend.send(request)?;
                             }
                         }

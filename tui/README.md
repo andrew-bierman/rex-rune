@@ -338,7 +338,9 @@ Dragging beyond a pane edge keeps the selection within the original pane.
 Copy uses OSC 52 to write to your terminal emulator's clipboard. Foot
 enables this by default. Hold **Shift** while selecting to use Foot's native
 selection instead, including its usual copy shortcut. Mouse selection and
-its copy shortcut are off by default.
+its copy shortcut are off by default. With mouse selection enabled, set
+`copy_on_select = true` in `[selection]` to copy a completed pane drag on
+release. Clicks and empty selections leave the clipboard alone.
 
 When mouse capture is enabled, the wheel scrolls the pane under the pointer.
 A mouse-tracking application in the selected pane receives wheel events.
