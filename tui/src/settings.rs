@@ -388,6 +388,7 @@ struct Experimental {
 #[serde(default, deny_unknown_fields)]
 struct SelectionConfig {
     mouse: bool,
+    copy_on_select: bool,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -432,6 +433,7 @@ pub struct Settings {
     pub sidebar: Sidebar,
     pub panes: Panes,
     pub mouse_selection: bool,
+    pub copy_on_select: bool,
     pub mouse_actions: bool,
     pub attention_notifications: bool,
     keys: BTreeMap<Action, Binding>,
@@ -545,6 +547,7 @@ impl Settings {
             panes: file.panes,
             mouse_selection,
             attention_notifications: file.notifications.attention,
+            copy_on_select: file.selection.copy_on_select,
             mouse_actions: file.experimental.mouse_actions,
             keys,
         })
@@ -762,6 +765,22 @@ pub mod tests {
                 Some(expected)
             );
         }
+    }
+
+    #[test]
+    fn copy_on_select_is_opt_in() {
+        assert!(!Settings::default().copy_on_select);
+        let legacy = toml::from_str("[selection]\nmouse = true").unwrap();
+        let legacy = Settings::from_file(legacy, Path::new("")).unwrap();
+        assert!(legacy.mouse_selection);
+        assert!(!legacy.copy_on_select);
+
+        let file = toml::from_str("[selection]\nmouse = true\ncopy_on_select = true").unwrap();
+        assert!(
+            Settings::from_file(file, Path::new(""))
+                .unwrap()
+                .copy_on_select
+        );
     }
 
     #[test]

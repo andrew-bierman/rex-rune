@@ -18,6 +18,7 @@ mouse_actions = false
 
 [selection]
 mouse = false
+copy_on_select = false
 
 [notifications]
 attention = false

@@ -33,12 +33,19 @@ impl Grid {
     }
 }
 
+#[derive(Clone, Copy)]
+enum CopyRequest {
+    Manual,
+    Automatic,
+}
+
 struct Gesture {
     grid: Grid,
     target: Value,
     first_revision: u64,
     final_revision: Option<u64>,
-    copy_requested: bool,
+    copy_requested: Option<CopyRequest>,
+    dragged: bool,
     anchor: Position,
     at: Position,
     reverse: bool,
@@ -122,7 +129,13 @@ impl Selection {
         None
     }
 
-    pub fn mouse(&mut self, state: &Value, grids: &[Grid], event: MouseEvent) -> Vec<Value> {
+    pub fn mouse(
+        &mut self,
+        state: &Value,
+        grids: &[Grid],
+        event: MouseEvent,
+        copy_on_select: bool,
+    ) -> Vec<Value> {
         if event.modifiers.contains(KeyModifiers::SHIFT) {
             return Vec::new();
         }
@@ -138,7 +151,8 @@ impl Selection {
                 target,
                 first_revision: self.revision + 1,
                 final_revision: None,
-                copy_requested: false,
+                copy_requested: None,
+                dragged: false,
                 anchor: at,
                 at,
                 reverse: false,
@@ -181,10 +195,16 @@ impl Selection {
             self.revision += 1;
             requests.push(gesture.request("move", self.revision));
         }
+        if !release {
+            gesture.dragged |= at != gesture.anchor;
+        }
         if release {
             self.revision += 1;
             gesture.final_revision = Some(self.revision);
             requests.push(gesture.request("up", self.revision));
+            if copy_on_select && gesture.dragged && at != gesture.anchor {
+                gesture.copy_requested = Some(CopyRequest::Automatic);
+            }
         }
         requests
     }
@@ -214,31 +234,32 @@ impl Selection {
         if gesture.final_revision.is_none() {
             return Err("Finish dragging before copying");
         }
-        gesture.copy_requested = true;
+        gesture.copy_requested = Some(CopyRequest::Manual);
         Ok(())
     }
 
     pub fn take_copy<'a>(&mut self, state: &'a Value) -> Option<Result<&'a str, &'static str>> {
-        let gesture = self
-            .gesture
-            .as_mut()
-            .filter(|gesture| gesture.copy_requested)?;
+        let gesture = self.gesture.as_mut()?;
+        let copy = gesture.copy_requested?;
         let revision = gesture.final_revision?;
         let frame = &gesture.pane(state)?["frame"];
         let actual = frame["selection_revision"].as_u64()?;
         if actual < revision {
             return None;
         }
-        gesture.copy_requested = false;
-        if actual != revision || !frame["selection_error"].is_null() {
-            return Some(Err("This pane selection could not be copied"));
-        }
-        Some(
+        gesture.copy_requested = None;
+        let result = if actual != revision || !frame["selection_error"].is_null() {
+            Err("This pane selection could not be copied")
+        } else {
             frame["selection_text"]
                 .as_str()
                 .filter(|text| !text.is_empty())
-                .ok_or("Select text inside a pane first"),
-        )
+                .ok_or("Select text inside a pane first")
+        };
+        match copy {
+            CopyRequest::Automatic => result.ok().filter(|text| !text.trim().is_empty()).map(Ok),
+            CopyRequest::Manual => Some(result),
+        }
     }
 }
 
@@ -307,19 +328,19 @@ mod tests {
         let mut selection = Selection::default();
         let mut down = mouse(MouseEventKind::Down(MouseButton::Left), 25, 5);
         down.modifiers = KeyModifiers::SHIFT;
-        assert!(selection.mouse(&state, &grids, down).is_empty());
+        assert!(selection.mouse(&state, &grids, down, false).is_empty());
         down.modifiers = KeyModifiers::NONE;
-        let request = selection.mouse(&state, &grids, down).pop().unwrap();
+        let request = selection.mouse(&state, &grids, down, false).pop().unwrap();
         assert_eq!(request["pane"], "left");
         assert_eq!(request["generation"], 2);
         let drag = mouse(MouseEventKind::Drag(MouseButton::Left), 2, 1);
-        let request = selection.mouse(&state, &grids, drag).pop().unwrap();
+        let request = selection.mouse(&state, &grids, drag, false).pop().unwrap();
         assert_eq!(
             (request["x"].as_u64(), request["y"].as_u64()),
             (Some(0), Some(0))
         );
         let up = mouse(MouseEventKind::Up(MouseButton::Left), 46, 12);
-        let request = selection.mouse(&state, &grids, up).pop().unwrap();
+        let request = selection.mouse(&state, &grids, up, false).pop().unwrap();
         assert_eq!(request["pane"], "left");
         assert_eq!(
             (request["x"].as_u64(), request["y"].as_u64()),
@@ -333,7 +354,7 @@ mod tests {
         let mut selection = Selection::default();
         let mut send = |kind, column, row| {
             selection
-                .mouse(&state, &grids, mouse(kind, column, row))
+                .mouse(&state, &grids, mouse(kind, column, row), false)
                 .into_iter()
                 .map(|packet| {
                     (
@@ -383,7 +404,8 @@ mod tests {
                 .mouse(
                     &state,
                     &grids,
-                    mouse(MouseEventKind::Down(MouseButton::Left), 2, 5)
+                    mouse(MouseEventKind::Down(MouseButton::Left), 2, 5),
+                    false,
                 )
                 .is_empty()
         );
@@ -391,6 +413,7 @@ mod tests {
             &state,
             &grids,
             mouse(MouseEventKind::Down(MouseButton::Left), 21, 5),
+            false,
         );
         assert!(selection.request_copy().is_err());
         let request = selection
@@ -398,6 +421,7 @@ mod tests {
                 &state,
                 &grids,
                 mouse(MouseEventKind::Up(MouseButton::Left), 25, 5),
+                false,
             )
             .pop()
             .unwrap();
@@ -418,17 +442,85 @@ mod tests {
     }
 
     #[test]
+    fn automatic_copy_waits_for_a_matching_release_and_only_copies_once() {
+        let (mut state, grids) = fixture();
+        let mut selection = Selection::default();
+        let press = mouse(MouseEventKind::Down(MouseButton::Left), 21, 5);
+        let drag = mouse(MouseEventKind::Drag(MouseButton::Left), 90, 5);
+        let release = mouse(MouseEventKind::Up(MouseButton::Left), 90, 5);
+        selection.mouse(&state, &grids, press, true);
+        let movement = selection.mouse(&state, &grids, drag, true).pop().unwrap();
+        state["panes"][0]["frame"]["selection_revision"] = movement["revision"].clone();
+        state["panes"][0]["frame"]["selection_text"] = json!("pane text");
+        assert!(selection.take_copy(&state).is_none(), "no copy during drag");
+
+        let released = selection
+            .mouse(&state, &grids, release, true)
+            .pop()
+            .unwrap();
+        assert_eq!(released["x"], grids[0].area.width - 1);
+        assert!(
+            selection.take_copy(&state).is_none(),
+            "no copy before release acknowledgement"
+        );
+        state["panes"][1]["frame"]["selection_revision"] = released["revision"].clone();
+        assert!(
+            selection.take_copy(&state).is_none(),
+            "wrong pane acknowledged"
+        );
+        state["panes"][0]["frame"]["selection_revision"] = released["revision"].clone();
+        assert_eq!(selection.take_copy(&state), Some(Ok("pane text")));
+        assert!(selection.take_copy(&state).is_none(), "copies exactly once");
+    }
+
+    #[test]
+    fn automatic_copy_ignores_disabled_click_empty_cancelled_and_stale_selections() {
+        let press = mouse(MouseEventKind::Down(MouseButton::Left), 21, 5);
+        let drag = mouse(MouseEventKind::Drag(MouseButton::Left), 25, 5);
+        let end = mouse(MouseEventKind::Up(MouseButton::Left), 25, 5);
+        let click = mouse(MouseEventKind::Up(MouseButton::Left), 21, 5);
+        for (enabled, movement, release, text, cancelled, stale) in [
+            (false, Some(drag), end, "text", false, false),
+            (true, None, click, "text", false, false),
+            (true, Some(drag), click, "text", false, false),
+            (true, Some(drag), end, "  ", false, false),
+            (true, Some(drag), end, "text", true, false),
+            (true, Some(drag), end, "text", false, true),
+        ] {
+            let (mut state, grids) = fixture();
+            let mut selection = Selection::default();
+            selection.mouse(&state, &grids, press, enabled);
+            if let Some(event) = movement {
+                selection.mouse(&state, &grids, event, enabled);
+            }
+            let released = selection
+                .mouse(&state, &grids, release, enabled)
+                .pop()
+                .unwrap();
+            if cancelled {
+                selection.reconcile(&state, &grids, false).unwrap();
+            }
+            if stale {
+                state["epoch"] = json!(2);
+            }
+            state["panes"][0]["frame"]["selection_revision"] = released["revision"].clone();
+            state["panes"][0]["frame"]["selection_text"] = json!(text);
+            assert!(selection.take_copy(&state).is_none());
+        }
+    }
+
+    #[test]
     fn changed_layout_or_modal_clears_gesture() {
         let (state, mut grids) = fixture();
         let mut selection = Selection::default();
         let down = mouse(MouseEventKind::Down(MouseButton::Left), 21, 5);
-        selection.mouse(&state, &grids, down);
+        selection.mouse(&state, &grids, down, false);
         grids[0].area.width = 6;
         assert_eq!(
             selection.reconcile(&state, &grids, true).unwrap()["phase"],
             "clear"
         );
-        selection.mouse(&state, &grids, down);
+        selection.mouse(&state, &grids, down, false);
         assert_eq!(
             selection.reconcile(&state, &grids, false).unwrap()["phase"],
             "clear"
