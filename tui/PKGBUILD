@@ -1,5 +1,5 @@
 pkgname=rex-tui
-pkgver=0.1.1
+pkgver=0.1.2
 pkgrel=1
 pkgdesc='Terminal interface for Rex servers'
 arch=('x86_64')

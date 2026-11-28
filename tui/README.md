@@ -19,7 +19,7 @@ mkdir -p "$PWD/dist"
   cd tui
   mise exec -- makepkg --clean
 )
-sudo pacman -U dist/rex-tui-0.1.1-1-x86_64.pkg.tar.zst
+sudo pacman -U dist/rex-tui-0.1.2-1-x86_64.pkg.tar.zst
 rex-tui
 ```
 
